@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{dataloader::error::VKMLEngineError, model::instruction::Instruction, tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData, tensor_desc::TensorDesc}};
+use crate::{dataloader::error::VKMLEngineError, model::instruction::Instruction, tensor::tensor_desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -107,15 +107,8 @@ impl Layer for ActivationLayer {
         
         let mut tensors = HashMap::new();
         
-        tensors.insert("input".to_string(), ComputeTensor {
-            desc: input_shape.clone(),
-            data: TensorData::Unallocated,
-        });
-        
-        tensors.insert("output".to_string(), ComputeTensor {
-            desc: input_shape.clone(),
-            data: TensorData::Unallocated,
-        });
+        tensors.insert("input".to_string(), input_shape.clone());
+        tensors.insert("output".to_string(), input_shape.clone());
         
         let mut instructions = Vec::new();
         

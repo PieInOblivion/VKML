@@ -1,3 +1,4 @@
 /src/shaders/*.spv
 /target
 Cargo.lock
+out.txt

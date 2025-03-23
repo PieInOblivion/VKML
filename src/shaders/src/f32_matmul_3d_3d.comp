@@ -1,0 +1,47 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; }; // 3D tensor [batch,m,k]
+layout(std430, binding = 1) buffer InBufferB { float b[]; }; // 3D tensor [batch,k,n]
+layout(std430, binding = 2) buffer OutBuffer { float c[]; }; // Result [batch,m,n]
+
+layout(push_constant) uniform PushConstants {
+    uint batch;         // Batch size
+    uint m;             // Height of matrix A slices and result slices
+    uint k;             // Width of matrix A slices, height of matrix B slices
+    uint n;             // Width of matrix B slices and result slices
+    uint stride_a0;     // Batch stride for tensor a
+    uint stride_a1;     // Row stride for tensor a slices
+    uint stride_a2;     // Column stride for tensor a slices
+    uint stride_b0;     // Batch stride for tensor b
+    uint stride_b1;     // Row stride for tensor b slices
+    uint stride_b2;     // Column stride for tensor b slices
+    uint stride_c0;     // Batch stride for result c
+    uint stride_c1;     // Row stride for result c slices
+    uint stride_c2;     // Column stride for result c slices
+} dims;
+
+void main() {
+    uint col = gl_GlobalInvocationID.x;
+    uint row = gl_GlobalInvocationID.y;
+    uint batch = gl_GlobalInvocationID.z;
+
+    // Check bounds
+    if (row >= dims.m || col >= dims.n || batch >= dims.batch) {
+        return;
+    }
+
+    float sum = 0.0;
+
+    // Batched matrix-batched matrix multiplication
+    for (uint i = 0; i < dims.k; i++) {
+        uint a_idx = batch * dims.stride_a0 + row * dims.stride_a1 + i * dims.stride_a2;
+        uint b_idx = batch * dims.stride_b0 + i * dims.stride_b1 + col * dims.stride_b2;
+        sum += a[a_idx] * b[b_idx];
+    }
+
+    // Store result
+    uint c_idx = batch * dims.stride_c0 + row * dims.stride_c1 + col * dims.stride_c2;
+    c[c_idx] = sum;
+}

@@ -1,0 +1,37 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; }; // Vector [k]
+layout(std430, binding = 1) buffer InBufferB { float b[]; }; // Matrix [k,n]
+layout(std430, binding = 2) buffer OutBuffer { float c[]; }; // Result [n]
+
+layout(push_constant) uniform PushConstants {
+    uint k;             // Length of vector and matrix rows
+    uint n;             // Width of matrix and result
+    uint stride_a;      // Stride for vector a
+    uint stride_b0;     // Row stride for matrix b
+    uint stride_b1;     // Column stride for matrix b
+    uint stride_c;      // Stride for result c
+} dims;
+
+void main() {
+    uint col = gl_GlobalInvocationID.x;
+
+    // Check bounds
+    if (col >= dims.n) {
+        return;
+    }
+
+    float sum = 0.0;
+
+    // Vector-matrix multiplication
+    for (uint i = 0; i < dims.k; i++) {
+        uint a_idx = i * dims.stride_a;
+        uint b_idx = i * dims.stride_b0 + col * dims.stride_b1;
+        sum += a[a_idx] * b[b_idx];
+    }
+
+    // Store result
+    c[col * dims.stride_c] = sum;
+}

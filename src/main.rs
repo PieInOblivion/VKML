@@ -1,13 +1,5 @@
 mod gpu;
 
-use compute::compute_manager::ComputeManager;
-use dataloader::{config::DataLoaderConfig, data_batch::DataBatch, dataloader::DatasetSplit, for_imagesdir::DirectoryImageLoader, par_iter::MultithreadedDataLoaderIterator};
-use gpu::vk_gpu::GPU;
-
-use layer::factory::Layers;
-use model::{graph_model::GraphModel, layer_connection::LayerConnection};
-use thread_pool::thread_pool::ThreadPool;
-
 mod thread_pool;
 
 mod compute;
@@ -19,6 +11,22 @@ mod dataloader;
 mod layer;
 
 mod tensor;
+
+mod tensor_graph;
+
+use compute::compute_manager::ComputeManager;
+use dataloader::{
+    config::DataLoaderConfig,
+    data_batch::DataBatch,
+    dataloader::{DatasetSplit, SourceFormat},
+    for_imagesdir::DirectoryImageLoader,
+    par_iter::MultithreadedDataLoaderIterator,
+};
+use gpu::vk_gpu::GPU;
+
+use layer::factory::Layers;
+use model::{graph_model::GraphModel, layer_connection::LayerConnection};
+use thread_pool::thread_pool::ThreadPool;
 
 /* Design descisions and some TODOs
     Current proof of concept implementation of image loader stores all file names in memory
@@ -38,7 +46,7 @@ mod tensor;
         Will use VK_EXT_memory_budget in the future as it seems to be the most commonly implemented extension
         Final implementation will not adjust live, will only keep it's own usage and initial usage from other processes
             With adjustable configuration for threshold, (95% of free, etc)
-    
+
     GPU checks filters by compute capability. In future might be able to use GPUs without compute flag?
 
     GPU to GPU movement will remain through the cpu for a while
@@ -59,7 +67,6 @@ mod tensor;
         In future we can send multiple commands to the queue at once and wait for all to finish. Maybe using our threadpool? Or vulkan native solution
 */
 
-
 fn main() {
     // Standard implementation, create one threadpool and share it.
     // Otherwise structs that require a threadpool will create their own.
@@ -78,7 +85,12 @@ fn main() {
     .build()
     .unwrap();
 
-    let dl = DirectoryImageLoader::new("/home/lucas/Documents/mnist_png/test/0", Some(config), thread_pool.clone()).unwrap();
+    let dl = DirectoryImageLoader::new(
+        "/home/lucas/Documents/mnist_png/test/0",
+        Some(config),
+        thread_pool.clone(),
+    )
+    .unwrap();
 
     //let dl = DataLoaderForImages::new_arc("/home/lucas/Documents/mnist_png/test/0", Some(config)).unwrap();
 
@@ -100,16 +112,19 @@ fn main() {
     // Own scope so GPU is cleared between testing areas
     // Drop GPU works properly
     {
-        let mut data_test1 = DataBatch {
-            data: vec![10, 20, 30, 15, 20, 30, 15, 10, 10, 20, 30, 15, 20, 30, 15, 10].into_boxed_slice(),
+        let data_test1 = DataBatch {
+            data: vec![
+                10, 20, 30, 15, 20, 30, 15, 10, 10, 20, 30, 15, 20, 30, 15, 10,
+            ]
+            .into_boxed_slice(),
             samples_in_batch: 0,
             bytes_per_sample: 0,
             format: dataloader::dataloader::SourceFormat::U8,
             labels: None,
             batch_number: 0,
         };
-        
-        let mut data_test2 = DataBatch {
+
+        let data_test2 = DataBatch {
             data: vec![1, 2, 3, 1, 2, 3, 1, 1, 1, 2, 3, 1, 2, 3, 1, 1].into_boxed_slice(),
             samples_in_batch: 0,
             bytes_per_sample: 0,
@@ -125,7 +140,7 @@ fn main() {
         let gpu_mem2 = gpu.move_to_gpu_as_f32(&data_test2.to_f32()).unwrap();
         gpu.add(&gpu_mem1, &gpu_mem2).unwrap();
 
-        println!("{:?}", gpu.read_memory(&gpu_mem1).unwrap());
+        println!("{:?}", gpu_mem1.read_memory().unwrap());
         println!("{:?}", gpu_mem2.read_memory().unwrap());
     }
 
@@ -137,90 +152,90 @@ fn main() {
 
     println!("{:?}", GPU::available_gpus());
 
-    let mut model = GraphModel::new(64);
+    // This creates two seperate models
+    // The design can detect that, and the two models run in parallel
+    // along with any layers within each graph that can do so
+    let mut small_model = GraphModel::new(5);
 
-   let input1_id = model.add_layer(Layers::input_buffer(100));
-   let input2_id = model.add_layer(Layers::input_buffer(50));
-   
-   let fc1_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::linear(100, 64),
-       vec![LayerConnection::DefaultOutput(input1_id)],
-       None
-   );
-   
-   let relu1_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::relu(),
-       vec![LayerConnection::DefaultOutput(fc1_id)],
-       None
-   );
-   
-   let fc2_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::linear(50, 32),
-       vec![LayerConnection::DefaultOutput(input2_id)],
-       None
-   );
-   
-   let relu2_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::relu(),
-       vec![LayerConnection::DefaultOutput(fc2_id)],
-       None
-   );
+    let input_id = small_model.add_layer(Layers::input_buffer(10));
+    let input_id2 = small_model.add_layer(Layers::input_buffer(10));
+    let fc1_id2 = small_model.add_layer_with(
+        small_model.next_available_id(),
+        Layers::linear(10, 4),
+        vec![LayerConnection::DefaultOutput(input_id2)],
+        None,
+    );
 
-   let fc3_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::linear(100, 32),
-       vec![LayerConnection::DefaultOutput(input1_id)],
-       None
-   );
-   
-   let relu3_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::relu(),
-       vec![LayerConnection::DefaultOutput(fc3_id)],
-       None
-   );
-   
-   let add_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::add(),
-       vec![
-           LayerConnection::DefaultOutput(relu2_id),
-           LayerConnection::DefaultOutput(relu3_id)
-       ],
-       None
-   );
-   
-   let concat_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::concat(1),
-       vec![
-           LayerConnection::DefaultOutput(relu1_id),
-           LayerConnection::DefaultOutput(add_id)
-       ],
-       None
-   );
-   
-   let final_fc_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::linear(96, 10),
-       vec![LayerConnection::DefaultOutput(concat_id)],
-       None
-   );
+    let fc1_id = small_model.add_layer_with(
+        small_model.next_available_id(),
+        Layers::linear(10, 4),
+        vec![LayerConnection::DefaultOutput(input_id)],
+        None,
+    );
 
-   let secondary_fc_id = model.add_layer_with(
-       model.next_available_id(),
-       Layers::linear(32, 5),
-       vec![LayerConnection::DefaultOutput(add_id)],
-       None
-   );
+    let relu1_id = small_model.add_layer_with(
+        small_model.next_available_id(),
+        Layers::relu(),
+        vec![LayerConnection::DefaultOutput(fc1_id)],
+        None,
+    );
 
-    let cm = ComputeManager::new(model, thread_pool.clone()).unwrap();
-    
-    cm.print_model_stats();
+    let fc2_id = small_model.add_layer_with(
+        small_model.next_available_id(),
+        Layers::linear(4, 1),
+        vec![LayerConnection::DefaultOutput(relu1_id)],
+        None,
+    );
 
-    cm.print_layer_values(2).unwrap();
+    small_model.verify().unwrap();
+
+    let mut small_cm = ComputeManager::new(small_model, thread_pool.clone()).unwrap();
+
+    small_cm.print_tensor_flow();
+
+    small_cm.print_model_stats();
+    let input_data: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
+    let mut input_bytes = Vec::with_capacity(input_data.len() * 4);
+    for value in input_data {
+        input_bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    let input_data2: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
+    let mut input_bytes2 = Vec::with_capacity(input_data2.len() * 4);
+    for value in input_data2 {
+        input_bytes2.extend_from_slice(&value.to_le_bytes());
+    }
+
+    let input_batch = DataBatch {
+        data: input_bytes.into_boxed_slice(),
+        samples_in_batch: 5,
+        bytes_per_sample: 4,
+        format: SourceFormat::F32,
+        labels: None,
+        batch_number: 0,
+    };
+    let input_batch2 = DataBatch {
+        data: input_bytes2.into_boxed_slice(),
+        samples_in_batch: 5,
+        bytes_per_sample: 4,
+        format: SourceFormat::F32,
+        labels: None,
+        batch_number: 0,
+    };
+    small_cm.print_layer_values(0).unwrap();
+    small_cm.print_layer_values(1).unwrap();
+    small_cm.print_layer_values(2).unwrap();
+    small_cm.print_layer_values(3).unwrap();
+
+    println!("\nRunning forward pass with input");
+    let output_batches = small_cm.forward(vec![input_batch, input_batch2]).unwrap();
+
+    println!("\nOutput: {:?}", output_batches[0].to_f32());
+    println!("\nOutput: {:?}", output_batches[1].to_f32());
+
+    println!("\nLayer Values:");
+    small_cm.print_layer_values(0).unwrap();
+    small_cm.print_layer_values(1).unwrap();
+    small_cm.print_layer_values(2).unwrap();
+    small_cm.print_layer_values(3).unwrap();
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{dataloader::error::VKMLEngineError, model::instruction::Instruction, tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData, tensor_desc::TensorDesc}};
+use crate::{dataloader::error::VKMLEngineError, model::instruction::Instruction, tensor::tensor_desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -99,20 +99,9 @@ impl Layer for ElementWiseLayer {
         
         let mut tensors = HashMap::new();
         
-        tensors.insert("input0".to_string(), ComputeTensor {
-            desc: first_shape.clone(),
-            data: TensorData::Unallocated,
-        });
-        
-        tensors.insert("input1".to_string(), ComputeTensor {
-            desc: first_shape.clone(),
-            data: TensorData::Unallocated,
-        });
-        
-        tensors.insert("output".to_string(), ComputeTensor {
-            desc: first_shape.clone(),
-            data: TensorData::Unallocated,
-        });
+        tensors.insert("input0".to_string(), first_shape.clone());
+        tensors.insert("input1".to_string(), first_shape.clone());
+        tensors.insert("output".to_string(), first_shape.clone());
         
         let mut instructions = Vec::new();
         

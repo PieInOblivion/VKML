@@ -1,0 +1,17 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer InBuffer { float a[]; };
+layout(std430, binding = 2) buffer OutBuffer { float b[]; };
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx < a.length()) {
+        // Approximation of GELU: x * 0.5 * (1.0 + tanh(sqrt(2.0/PI) * (x + 0.044715 * x^3)))
+        float x = a[idx];
+        float x3 = x * x * x;
+        float sqrt2_over_pi = 0.797885;
+        b[idx] = 0.5 * x * (1.0 + tanh(sqrt2_over_pi * (x + 0.044715 * x3)));
+    }
+}

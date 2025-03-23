@@ -4,10 +4,11 @@ layout(local_size_x = 256) in;
 
 layout(std430, binding = 0) buffer InBuffer1 { float a[]; };
 layout(std430, binding = 1) buffer InBuffer2 { float b[]; };
+layout(std430, binding = 1) buffer OutBuffer { float c[]; };
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx < a.length()) {
-        a[idx] -= b[idx];
+    if (idx < c.length()) {
+        c[idx] = a[idx] - b[idx];
     }
 }
