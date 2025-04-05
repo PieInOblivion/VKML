@@ -1,4 +1,9 @@
-use crate::{dataloader::error::VKMLEngineError, tensor::tensor_desc::TensorDesc};
+use std::collections::HashMap;
+
+use crate::{
+    dataloader::error::VKMLEngineError, tensor::tensor_desc::TensorDesc,
+    tensor_graph::tensor_graph::TensorId,
+};
 
 use super::execution::LayerExecution;
 
@@ -22,7 +27,7 @@ pub trait Layer {
     fn requires_gradients(&self) -> bool;
 
     // For parameterised layers, describes the required weight and bias tensors
-    fn parameter_shapes(&self, input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
+    fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
         None
     }
 
@@ -50,6 +55,15 @@ pub trait Layer {
     // Get output features
     fn out_features(&self) -> usize {
         0
+    }
+
+    fn map_input_tensors(&self, num_inputs: usize) -> HashMap<TensorId, (usize, TensorId)> {
+        let mut mappings = HashMap::new();
+        // Default implementation: first N tensors map directly to inputs
+        for i in 0..num_inputs {
+            mappings.insert(i, (i, 0)); // Local tensor i maps to input connection i, output 0
+        }
+        mappings
     }
 
     // Generate tensor descriptions, instructions, and outputs for this layer

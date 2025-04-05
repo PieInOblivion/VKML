@@ -1,6 +1,7 @@
-use std::collections::HashMap;
-
-use crate::{dataloader::error::VKMLEngineError, model::instruction::Instruction, tensor::tensor_desc::TensorDesc};
+use crate::{
+    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    tensor::tensor_desc::TensorDesc,
+};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -32,7 +33,7 @@ impl ActivationFunction for ActivationType {
             ActivationType::SiLU => "SiLU".to_string(),
         }
     }
-    
+
     fn to_string(&self) -> String {
         match self {
             ActivationType::ReLU => "ReLU".to_string(),
@@ -59,27 +60,32 @@ impl ActivationLayer {
 }
 
 impl Layer for ActivationLayer {
-    fn output_shapes(&self, batch_size: usize, input_shapes: &[&TensorDesc]) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    fn output_shapes(
+        &self,
+        _batch_size: usize,
+        input_shapes: &[&TensorDesc],
+    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLEngineError::VulkanLoadError(
-                format!("Activation layer requires exactly 1 input, got {}", input_shapes.len())
-            ));
+            return Err(VKMLEngineError::VulkanLoadError(format!(
+                "Activation layer requires exactly 1 input, got {}",
+                input_shapes.len()
+            )));
         }
-        
+
         // Activation functions preserve input shape - return as a single-element vector
         Ok(vec![input_shapes[0].clone()])
     }
-    
+
     fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
         // Activation layers only need memory for activations and gradients
         let activation_size = output_shape.size_in_bytes() as u64;
         activation_size * 2
     }
-    
+
     fn requires_gradients(&self) -> bool {
         true
     }
-    
+
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (1, Some(1))
     }
@@ -87,75 +93,53 @@ impl Layer for ActivationLayer {
     fn name(&self) -> String {
         self.activation_type.name()
     }
-    
+
     fn config_string(&self) -> Option<String> {
         match &self.activation_type {
             ActivationType::LeakyReLU(alpha) => Some(format!("alpha={}", alpha)),
             ActivationType::Softmax(dim) => Some(format!("dim={}", dim)),
-            _ => None
+            _ => None,
         }
     }
 
-    fn build_layer_exec(&self, batch_size: usize, input_shapes: &[&TensorDesc]) -> Result<LayerExecution, VKMLEngineError> {
+    fn build_layer_exec(
+        &self,
+        _batch_size: usize,
+        input_shapes: &[&TensorDesc],
+    ) -> Result<LayerExecution, VKMLEngineError> {
         if input_shapes.is_empty() {
             return Err(VKMLEngineError::VulkanLoadError(
-                "Activation layer requires an input".to_string()
+                "Activation layer requires an input".to_string(),
             ));
         }
-        
+
         let input_shape = input_shapes[0];
-        
-        let mut tensors = HashMap::new();
-        
-        tensors.insert("input".to_string(), input_shape.clone());
-        tensors.insert("output".to_string(), input_shape.clone());
-        
-        let mut instructions = Vec::new();
-        
-        instructions.push(Instruction::ReadInput {
-            layer_idx: 0,
-            layer_tensor_idx: 0,
-            dst: "input".to_string(),
-        });
-        
+        let mut tensors = Vec::new();
+
+        // input = 0
+        tensors.push(input_shape.clone());
+
+        // output = 1
+        tensors.push(input_shape.clone());
+
         let activation_instruction = match &self.activation_type {
-            ActivationType::ReLU => Instruction::ReLU {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-            },
-            ActivationType::LeakyReLU(alpha) => Instruction::LeakyReLU {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-                alpha: *alpha,
-            },
-            ActivationType::Sigmoid => Instruction::Sigmoid {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-            },
-            ActivationType::Softmax(dim) => Instruction::Softmax {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-                dim: *dim,
-            },
-            ActivationType::Tanh => Instruction::Tanh {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-            },
-            ActivationType::GELU => Instruction::GELU {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-            },
-            ActivationType::SiLU => Instruction::SiLU {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-            },
+            ActivationType::ReLU => Instructions::relu(0, 1),
+            ActivationType::LeakyReLU(alpha) => Instructions::leaky_relu(0, 1, *alpha),
+            ActivationType::Sigmoid => Instructions::sigmoid(0, 1),
+            ActivationType::Softmax(dim) => Instructions::softmax(0, 1, *dim),
+            ActivationType::Tanh => Instructions::tanh(0, 1),
+            ActivationType::GELU => Instructions::gelu(0, 1),
+            ActivationType::SiLU => Instructions::silu(0, 1),
         };
-        instructions.push(activation_instruction);
-        
+
+        // Get input mappings using the trait method
+        let input_mappings = self.map_input_tensors(input_shapes.len());
+
         Ok(LayerExecution {
             tensors,
-            instructions,
-            outputs: vec!["output".to_string()],
+            instructions: vec![activation_instruction],
+            outputs: vec![1],
+            input_mappings,
         })
     }
 }

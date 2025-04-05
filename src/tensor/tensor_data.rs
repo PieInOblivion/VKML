@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 
 use crate::{dataloader::error::VKMLEngineError, gpu::gpu_memory::GPUMemory};
 
@@ -21,8 +21,28 @@ impl TensorData {
         }
     }
 
-    pub fn get_data_safe(&self) -> Vec<f32> {
-        self.get_data().unwrap_or(Vec::new())
+    pub fn borrow_cpu_data(&self) -> Result<Ref<Vec<f32>>, VKMLEngineError> {
+        match self {
+            TensorData::CPU(cell) => Ok(cell.borrow()),
+            TensorData::GPU { .. } => Err(VKMLEngineError::VulkanLoadError(
+                "Expected CPU tensor, found GPU tensor".to_string(),
+            )),
+            TensorData::Unallocated => Err(VKMLEngineError::VulkanLoadError(
+                "Cannot borrow data from unallocated tensor".to_string(),
+            )),
+        }
+    }
+
+    pub fn borrow_mut_cpu_data(&self) -> Result<RefMut<Vec<f32>>, VKMLEngineError> {
+        match self {
+            TensorData::CPU(cell) => Ok(cell.borrow_mut()),
+            TensorData::GPU { .. } => Err(VKMLEngineError::VulkanLoadError(
+                "Expected CPU tensor, found GPU tensor".to_string(),
+            )),
+            TensorData::Unallocated => Err(VKMLEngineError::VulkanLoadError(
+                "Cannot borrow data from unallocated tensor".to_string(),
+            )),
+        }
     }
 
     pub fn update_data(&self, data: Vec<f32>) -> Result<(), VKMLEngineError> {

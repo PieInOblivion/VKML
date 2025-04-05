@@ -1,13 +1,14 @@
 use crate::{
     dataloader::error::VKMLEngineError,
     gpu::gpu_memory::GPUMemory,
+    instruction::instruction::Instruction,
     layer::execution::LayerExecution,
-    model::{graph_model::GraphModel, instruction::Instruction, layer_connection::LayerId},
+    model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData, tensor_desc::TensorDesc},
 };
 use std::collections::{HashMap, HashSet};
 
-// TODO: 
+// TODO:
 // This representation of tensor dag needs changing.
 // Currently it stores layer information as an easy way to transition the layer graph into a tensor graph
 // But the human readability should be able to be added a more effecient way
@@ -16,60 +17,21 @@ use std::collections::{HashMap, HashSet};
 // Currently we will stick with the two forms of representation.
 
 // Unique identifier for a tensor operation
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct OperationId(pub LayerId, pub usize); // (layer_id, instruction_index)
+pub type OperationId = usize;
 
 // Unique identifier for a tensor
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct TensorId(pub LayerId, pub String); // (layer_id, tensor_name)
+pub type TensorId = usize;
 
 pub struct TensorGraph {
-    pub tensors: HashMap<TensorId, ComputeTensor>,
-    pub operations: HashMap<OperationId, Instruction>,
+    pub tensors: Vec<ComputeTensor>, // Indexed by global TensorId
+    pub operations: Vec<Box<dyn Instruction>>, // Using global TensorIds
+
+    // Graph entry and exit points
     pub input_tensors: Vec<TensorId>,
     pub output_tensors: Vec<TensorId>,
 
-    // Dependency tracking at tensor level
-    pub tensor_dependencies: HashMap<TensorId, HashSet<OperationId>>, // Which operations produce this tensor
-    pub operation_inputs: HashMap<OperationId, HashSet<TensorId>>, // Which tensors an operation reads
-    pub operation_outputs: HashMap<OperationId, HashSet<TensorId>>, // Which tensors an operation writes
-}
-
-fn handle_circular_dependency(
-    tensors: &mut HashMap<TensorId, ComputeTensor>,
-    tensor_dependencies: &mut HashMap<TensorId, HashSet<OperationId>>,
-    op_id: &OperationId,
-    tensor_id: &TensorId,
-    is_circular: bool,
-) -> TensorId {
-    if !is_circular {
-        // No circular dependency, use original tensor
-        if let Some(deps) = tensor_dependencies.get_mut(tensor_id) {
-            deps.insert(op_id.clone());
-        }
-        return tensor_id.clone();
-    }
-
-    // Create temporary tensor to break cycle
-    let temp_id = TensorId(tensor_id.0, format!("{}_temp", tensor_id.1));
-
-    if let Some(original) = tensors.get(tensor_id) {
-        // Clone the tensor with same descriptor but unallocated
-        tensors.insert(
-            temp_id.clone(),
-            ComputeTensor {
-                desc: original.desc.clone(),
-                data: TensorData::Unallocated,
-            },
-        );
-
-        // Create dependency entry for the temp tensor
-        let mut deps = HashSet::new();
-        deps.insert(op_id.clone());
-        tensor_dependencies.insert(temp_id.clone(), deps);
-    }
-
-    temp_id
+    // Vector mapping from tensor indices to layer IDs
+    pub tensor_to_layer: Vec<Option<LayerId>>,
 }
 
 impl TensorGraph {
@@ -81,29 +43,24 @@ impl TensorGraph {
         }
 
         let execution_order = &model.verified.as_ref().unwrap().execution_order;
-        let mut tensors: HashMap<TensorId, ComputeTensor> = HashMap::new();
-        let mut operations = HashMap::new();
+        let mut tensors = Vec::new();
+        let mut operations = Vec::new();
         let mut input_tensors = Vec::new();
         let mut output_tensors = Vec::new();
-        let mut tensor_dependencies = HashMap::new();
-        let mut operation_inputs = HashMap::new();
-        let mut operation_outputs = HashMap::new();
-        let mut layer_id_map = HashMap::new();
 
-        // Mapping from layer output to actual tensor ID
-        let mut layer_output_mapping: HashMap<(LayerId, usize), TensorId> = HashMap::new();
-        let mut layer_executions: HashMap<LayerId, LayerExecution> = HashMap::new();
+        // Map from (layer_id, local_tensor_idx) to global tensor index
+        let mut tensor_mapping = HashMap::new();
 
-        // Set to track parameter tensors (weights, biases)
-        let mut parameter_tensors = HashSet::new();
+        let mut tensor_to_layer = Vec::new();
 
-        // PHASE 1: First build all tensors and their shapes
+        // First pass: Build layer executions
+        let mut layer_executions: HashMap<usize, LayerExecution> = HashMap::new();
         for &layer_id in execution_order {
             let layer = model.layers.get(&layer_id).ok_or_else(|| {
                 VKMLEngineError::VulkanLoadError(format!("Layer {} not found in model", layer_id))
             })?;
 
-            // Get input shapes from connected layers
+            // Get input shapes
             let input_shapes: Vec<TensorDesc> = layer
                 .input_connections
                 .iter()
@@ -111,15 +68,10 @@ impl TensorGraph {
                     let input_id = connection.get_layerid();
                     let output_idx = connection.get_outputidx();
 
-                    // Lookup the actual tensor from the layer's output
                     if let Some(exec) = layer_executions.get(&input_id) {
                         if output_idx < exec.outputs.len() {
-                            let output_name = &exec.outputs[output_idx];
-                            if let Some(tensor) =
-                                tensors.get(&TensorId(input_id, output_name.clone()))
-                            {
-                                return Ok(tensor.desc.clone());
-                            }
+                            let output_tensor_idx = exec.outputs[output_idx];
+                            return Ok(exec.tensors[output_tensor_idx].clone());
                         }
                     }
 
@@ -132,145 +84,117 @@ impl TensorGraph {
 
             let input_shape_refs: Vec<&TensorDesc> = input_shapes.iter().collect();
 
-            // Build layer execution using the correct input shapes
+            // Build layer execution
             let layer_exec = layer
                 .layer
                 .build_layer_exec(model.batch_size, &input_shape_refs)?;
 
-            // Create tensors for this layer
-            for (name, tensor_desc) in &layer_exec.tensors {
-                let tensor_id = TensorId(layer_id, name.clone());
-
-                let compute_tensor = ComputeTensor {
-                    desc: tensor_desc.clone(),
-                    data: TensorData::Unallocated,
-                };
-
-                tensors.insert(tensor_id.clone(), compute_tensor);
-                tensor_dependencies.insert(tensor_id.clone(), HashSet::new());
-
-                // Identify parameter tensors by checking if they have no dependencies
-                // (rather than by name)
-            }
-
-            // Map layer outputs to actual tensor IDs
-            for (idx, output_name) in layer_exec.outputs.iter().enumerate() {
-                layer_output_mapping
-                    .insert((layer_id, idx), TensorId(layer_id, output_name.clone()));
-            }
-
-            // Identify model inputs and outputs
-            if layer.input_connections.is_empty() {
-                for output_name in &layer_exec.outputs {
-                    let tensor_id = TensorId(layer_id, output_name.clone());
-                    input_tensors.push(tensor_id);
-                }
-            }
-
-            if layer.output_connections.is_empty() {
-                for output_name in &layer_exec.outputs {
-                    let tensor_id = TensorId(layer_id, output_name.clone());
-                    output_tensors.push(tensor_id);
-                }
-            }
-
-            // Store the layer execution for phase 2
+            // Store layer execution for later use
             layer_executions.insert(layer_id, layer_exec);
         }
 
-        // PHASE 2: Create operations and establish dependencies
+        // Second pass: Process non-input tensors and create global array
+        for &layer_id in execution_order {
+            let layer_exec = layer_executions.get(&layer_id).unwrap();
+
+            // Get the set of local tensor indices that are inputs
+            let input_tensor_indices: HashSet<TensorId> =
+                layer_exec.input_mappings.keys().cloned().collect();
+
+            // Process each tensor that isn't an input reference
+            for local_idx in 0..layer_exec.tensors.len() {
+                if !input_tensor_indices.contains(&local_idx) {
+                    let global_idx = tensors.len();
+                    tensor_mapping.insert((layer_id, local_idx), global_idx);
+                    tensors.push(ComputeTensor {
+                        desc: layer_exec.tensors[local_idx].clone(),
+                        data: TensorData::Unallocated,
+                    });
+                    tensor_to_layer.push(Some(layer_id));
+                }
+            }
+        }
+
+        // Third pass: Process input mappings to connect tensors across layers
         for &layer_id in execution_order {
             let layer = model.layers.get(&layer_id).unwrap();
             let layer_exec = layer_executions.get(&layer_id).unwrap();
 
-            let mut layer_ops = HashSet::new();
-
-            // Process each instruction
-            for (instr_idx, instruction) in layer_exec.instructions.iter().enumerate() {
-                let op_id = OperationId(layer_id, instr_idx);
-                operations.insert(op_id.clone(), instruction.clone());
-                layer_ops.insert(op_id.clone());
-
-                let mut op_inputs = HashSet::new();
-                let mut op_outputs = HashSet::new();
-
-                match instruction.get_all_input_tensor_ids(
-                    layer_id,
-                    &layer.input_connections,
-                    &layer_executions,
-                    &tensors,
-                ) {
-                    Ok(inputs) => op_inputs.extend(inputs),
-                    Err(e) => {
-                        println!(
-                            "Warning: Failed to resolve inputs for operation {:?}: {}",
-                            op_id, e
-                        );
-                    }
+            for (local_idx, (input_idx, output_idx)) in &layer_exec.input_mappings {
+                if *input_idx >= layer.input_connections.len() {
+                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                        "Invalid input index {} in layer {}, only has {} inputs",
+                        input_idx,
+                        layer_id,
+                        layer.input_connections.len()
+                    )));
                 }
 
-                // Process all output tensors, handling circular dependencies
-                let output_tensor_ids = instruction.get_output_tensor_ids(layer_id);
+                // Find the source layer and tensor
+                let connection = &layer.input_connections[*input_idx];
+                let source_layer_id = connection.get_layerid();
+                let source_output_idx = connection.get_outputidx();
 
-                for dst_tensor_id in output_tensor_ids {
-                    //TODO: Is circular dep checking at the tensor level ever required?
-                    // At the layer level already done, so it will have to be in-layer intentional
-                    let output_id = handle_circular_dependency(
-                        &mut tensors,
-                        &mut tensor_dependencies,
-                        &op_id,
-                        &dst_tensor_id,
-                        false,
-                    );
-
-                    op_outputs.insert(output_id);
+                let source_exec = layer_executions.get(&source_layer_id).unwrap();
+                if source_output_idx >= source_exec.outputs.len() {
+                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                        "Invalid output index {} in layer {}, only has {} outputs",
+                        source_output_idx,
+                        source_layer_id,
+                        source_exec.outputs.len()
+                    )));
                 }
 
-                // Store the operation's inputs and outputs
-                operation_inputs.insert(op_id.clone(), op_inputs);
-                operation_outputs.insert(op_id.clone(), op_outputs);
-            }
+                let source_local_idx = source_exec.outputs[source_output_idx];
 
-            // Map layer to its operations
-            layer_id_map.insert(layer_id, layer_ops);
-        }
-
-        // Identify parameter tensors by their dependency patterns
-        for (tensor_id, deps) in &tensor_dependencies {
-            // Parameters have no producers and are not inputs
-            if deps.is_empty() && !input_tensors.contains(tensor_id) {
-                parameter_tensors.insert(tensor_id.clone());
+                // Map this tensor to the global index of its source
+                let source_global_idx = tensor_mapping[&(source_layer_id, source_local_idx)];
+                tensor_mapping.insert((layer_id, *local_idx), source_global_idx);
             }
         }
 
-        // PHASE 3: Verify dependencies and fix any issues
-        let mut missing_deps = 0;
+        // Fourth pass: Process instructions
+        for &layer_id in execution_order {
+            let layer_exec = layer_executions.get(&layer_id).unwrap();
 
-        // Check each operation's inputs
-        for (op_id, inputs) in &operation_inputs {
-            for input in inputs {
-                if !tensors.contains_key(input) {
-                    println!(
-                        "Warning: Operation {:?} depends on non-existent tensor {:?}",
-                        op_id, input
-                    );
-                    missing_deps += 1;
-                } else if !tensor_dependencies.contains_key(input)
-                    || tensor_dependencies[input].is_empty()
-                {
-                    // Input exists but has no producers - this is fine for parameters and inputs
-                    if !input_tensors.contains(input) && !parameter_tensors.contains(input) {
-                        println!(
-                            "Warning: Tensor {:?} has no producers but is not a model input or parameter",
-                            input
-                        );
-                    }
-                }
+            for instruction in &layer_exec.instructions {
+                // Get input and output tensor indices
+                let local_inputs = instruction.get_input_tensor_ids();
+                let local_outputs = instruction.get_output_tensor_ids();
+
+                // Map to global indices
+                let global_inputs: Vec<usize> = local_inputs
+                    .iter()
+                    .map(|&local_id| tensor_mapping[&(layer_id, local_id)])
+                    .collect();
+
+                let global_outputs: Vec<usize> = local_outputs
+                    .iter()
+                    .map(|&local_id| tensor_mapping[&(layer_id, local_id)])
+                    .collect();
+
+                // Create instruction with global indices
+                let mut remapped = instruction.clone();
+                remapped.remap_tensor_ids(&global_inputs, &global_outputs);
+                operations.push(remapped);
             }
         }
 
-        if missing_deps > 0 {
-            println!("Warning: {} missing dependencies found", missing_deps);
+        // Fifth pass: Identify model input and output tensors
+        for &layer_id in &model.verified.as_ref().unwrap().entry_points {
+            let layer_exec = layer_executions.get(&layer_id).unwrap();
+            for &output_idx in &layer_exec.outputs {
+                let global_idx = tensor_mapping[&(layer_id, output_idx)];
+                input_tensors.push(global_idx);
+            }
+        }
+
+        for &layer_id in &model.verified.as_ref().unwrap().exit_points {
+            let layer_exec = layer_executions.get(&layer_id).unwrap();
+            for &output_idx in &layer_exec.outputs {
+                let global_idx = tensor_mapping[&(layer_id, output_idx)];
+                output_tensors.push(global_idx);
+            }
         }
 
         Ok(TensorGraph {
@@ -278,142 +202,135 @@ impl TensorGraph {
             operations,
             input_tensors,
             output_tensors,
-            tensor_dependencies,
-            operation_inputs,
-            operation_outputs,
+            tensor_to_layer,
         })
     }
 
     pub fn create_execution_plan(&self) -> Vec<Vec<OperationId>> {
-        // First, let's build a directed graph of operation dependencies
-        let mut op_dependencies: HashMap<OperationId, HashSet<OperationId>> = HashMap::new();
-        let mut op_dependents: HashMap<OperationId, HashSet<OperationId>> = HashMap::new();
-
-        // Initialise with empty sets
-        for op_id in self.operations.keys() {
-            op_dependencies.insert(op_id.clone(), HashSet::new());
-            op_dependents.insert(op_id.clone(), HashSet::new());
-        }
-
-        // First pass: Identify direct dependencies based on tensor flows
-        for (op_id, inputs) in &self.operation_inputs {
-            for input_tensor in inputs {
-                // Find all operations that produce this input tensor
-                if let Some(producers) = self.tensor_dependencies.get(input_tensor) {
-                    // This operation depends on all producers of its input tensors
-                    for producer in producers {
-                        // Skip self-dependencies
-                        if producer != op_id {
-                            op_dependencies
-                                .entry(op_id.clone())
-                                .or_insert_with(HashSet::new)
-                                .insert(producer.clone());
-
-                            op_dependents
-                                .entry(producer.clone())
-                                .or_insert_with(HashSet::new)
-                                .insert(op_id.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Second pass: Handle operations that modify tensors in-place
-        // (same tensor as both input and output)
-        let mut inplace_ops = HashSet::new();
-        let mut tensor_modifiers: HashMap<TensorId, HashSet<OperationId>> = HashMap::new();
-
-        for (op_id, outputs) in &self.operation_outputs {
-            if let Some(inputs) = self.operation_inputs.get(op_id) {
-                // Find tensors that are both input and output
-                for tensor_id in inputs.intersection(outputs) {
-                    inplace_ops.insert(op_id.clone());
-
-                    // Record this operation as a modifier of this tensor
-                    tensor_modifiers
-                        .entry(tensor_id.clone())
-                        .or_insert_with(HashSet::new)
-                        .insert(op_id.clone());
-                }
-            }
-        }
-
-        // Third pass: Ensure operations that read a tensor depend on all operations
-        // that modify it in-place
-        for (tensor_id, modifiers) in &tensor_modifiers {
-            // Find all operations that read this tensor
-            for (op_id, inputs) in &self.operation_inputs {
-                if inputs.contains(tensor_id) && !modifiers.contains(op_id) {
-                    // This operation reads the tensor but doesn't modify it
-                    for modifier in modifiers {
-                        // Make the reader depend on the modifier
-                        if modifier != op_id {
-                            // Avoid self-dependencies
-                            op_dependencies
-                                .entry(op_id.clone())
-                                .or_insert_with(HashSet::new)
-                                .insert(modifier.clone());
-
-                            op_dependents
-                                .entry(modifier.clone())
-                                .or_insert_with(HashSet::new)
-                                .insert(op_id.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Topological sort, Kahn's algorithm
         let mut execution_plan = Vec::new();
-        let mut remaining_ops: HashSet<_> = self.operations.keys().cloned().collect();
-        let mut dependencies = op_dependencies.clone();
+        let mut pending_ops = Vec::new();
+        let mut tensor_ready = vec![false; self.tensors.len()];
 
-        // Continue until all operations are scheduled
-        while !remaining_ops.is_empty() {
-            // Find operations with no dependencies
+        // Build operation dependencies
+        let mut operation_inputs: Vec<Vec<usize>> = Vec::with_capacity(self.operations.len());
+        let mut operation_outputs: Vec<Vec<usize>> = Vec::with_capacity(self.operations.len());
+
+        // Process operations to build dependency information
+        for (op_idx, op) in self.operations.iter().enumerate() {
+            // Track which tensors each operation reads
+            let inputs = op.get_input_tensor_ids();
+            operation_inputs.push(inputs.clone());
+
+            // Track which tensors each operation writes
+            let outputs = op.get_output_tensor_ids();
+            operation_outputs.push(outputs.clone());
+
+            // Initialize pending operations list
+            pending_ops.push(op_idx);
+        }
+
+        // Mark input tensors as ready
+        for &tensor_id in &self.input_tensors {
+            tensor_ready[tensor_id] = true;
+        }
+
+        // Build parameter tensor set - these tensors have no producers
+        let mut tensor_has_producer = vec![false; self.tensors.len()];
+        for op in &self.operations {
+            for &output_id in &op.get_output_tensor_ids() {
+                tensor_has_producer[output_id] = true;
+            }
+        }
+
+        // Mark parameter tensors as ready
+        for (tensor_idx, has_producer) in tensor_has_producer.iter().enumerate() {
+            if !has_producer && !self.input_tensors.contains(&tensor_idx) {
+                tensor_ready[tensor_idx] = true;
+            }
+        }
+
+        // Build execution plan until all operations are scheduled
+        while !pending_ops.is_empty() {
             let mut ready_ops = Vec::new();
+            let mut stage_read_tensors = HashSet::new(); // Tensors read in this stage
+            let mut stage_write_tensors = HashSet::new(); // Tensors written in this stage
 
-            for op_id in &remaining_ops {
-                let deps = dependencies.get(op_id);
-                if deps.is_none() || deps.unwrap().is_empty() {
-                    ready_ops.push(op_id.clone());
+            // Find operations whose inputs are all ready and don't conflict with operations in this stage
+            let mut i = 0;
+            while i < pending_ops.len() {
+                let op_idx = pending_ops[i];
+
+                // Check if all inputs are ready
+                let all_inputs_ready = operation_inputs[op_idx]
+                    .iter()
+                    .all(|&input_id| tensor_ready[input_id]);
+
+                if all_inputs_ready {
+                    // Check for conflicts with operations already in this stage
+                    let op_inputs = &operation_inputs[op_idx];
+                    let op_outputs = &operation_outputs[op_idx];
+
+                    // Check for write-read conflicts:
+                    // If this op reads a tensor that another op in this stage writes to
+                    let read_conflict = op_inputs
+                        .iter()
+                        .any(|&input_id| stage_write_tensors.contains(&input_id));
+
+                    // Check for write-write conflicts and read-write conflicts:
+                    // If this op writes to a tensor that another op in this stage reads from or writes to
+                    let write_conflict = op_outputs.iter().any(|&output_id| {
+                        stage_read_tensors.contains(&output_id)
+                            || stage_write_tensors.contains(&output_id)
+                    });
+
+                    if !read_conflict && !write_conflict {
+                        // Add operation to this stage
+                        ready_ops.push(op_idx);
+
+                        // Track tensors read and written by this operation
+                        for &input_id in op_inputs {
+                            stage_read_tensors.insert(input_id);
+                        }
+
+                        for &output_id in op_outputs {
+                            stage_write_tensors.insert(output_id);
+                        }
+
+                        // Remove the operation from pending list
+                        pending_ops.swap_remove(i);
+                    } else {
+                        // This operation has conflicts, try it in the next stage
+                        i += 1;
+                    }
+                } else {
+                    // Inputs not ready, try next operation
+                    i += 1;
                 }
             }
 
-            // If no operations are ready, we may have a cycle
-            if ready_ops.is_empty() {
-                // Find the operation in a cycle with the fewest dependencies
-                let op_id = remaining_ops
-                    .iter()
-                    .min_by_key(|op_id| dependencies.get(*op_id).map_or(0, |deps| deps.len()))
-                    .cloned()
-                    .unwrap();
-
-                ready_ops.push(op_id);
-
-                // Log a cycle breaking event
+            // Handle potential dependency issues (cycles, etc.)
+            if ready_ops.is_empty() && !pending_ops.is_empty() {
                 eprintln!(
-                    "Warning: Breaking dependency cycle at operation {:?}",
-                    ready_ops[0]
+                    "Warning: No operations ready but {} pending. Possible dependency issue.",
+                    pending_ops.len()
                 );
+                // As a fallback, pick the first pending operation
+                let op_idx = pending_ops.remove(0);
+                ready_ops.push(op_idx);
             }
 
-            // Add these operations to the current stage of the execution plan
-            execution_plan.push(ready_ops.clone());
+            // Add this stage to the execution plan
+            if !ready_ops.is_empty() {
+                // Convert to OperationId type for the final result
+                let ready_op_ids: Vec<OperationId> = ready_ops.iter().map(|&idx| idx).collect();
 
-            // Remove these operations from the dependency graph
-            for op_id in &ready_ops {
-                // Remove this operation from remaining
-                remaining_ops.remove(op_id);
+                execution_plan.push(ready_op_ids);
 
-                // Update dependencies for all operations that depend on this one
-                if let Some(dependents) = op_dependents.get(op_id) {
-                    for dependent in dependents {
-                        if let Some(deps) = dependencies.get_mut(dependent) {
-                            deps.remove(op_id);
-                        }
+                // Mark output tensors from these operations as ready
+                for &op_idx in &ready_ops {
+                    let outputs = &operation_outputs[op_idx];
+                    for &output_id in outputs {
+                        tensor_ready[output_id] = true;
                     }
                 }
             }
@@ -422,112 +339,85 @@ impl TensorGraph {
         execution_plan
     }
 
-    pub fn get_tensor(&self, layer_id: LayerId, name: &str) -> Option<&ComputeTensor> {
-        self.tensors.get(&TensorId(layer_id, name.to_string()))
+    pub fn get_gpu_memory_or_panic(&self, tensor_id: &TensorId) -> &GPUMemory {
+        match &self.tensors[*tensor_id].data {
+            TensorData::GPU { memory, .. } => memory,
+            TensorData::CPU(_) => {
+                panic!("Tensor {} is in CPU memory, expected GPU memory", tensor_id)
+            }
+            TensorData::Unallocated => {
+                panic!("Tensor {} is unallocated, expected GPU memory", tensor_id)
+            }
+        }
     }
 
-    pub fn get_tensor_mut(&mut self, layer_id: LayerId, name: &str) -> Option<&mut ComputeTensor> {
-        self.tensors.get_mut(&TensorId(layer_id, name.to_string()))
+    pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {
+        self.operations
+            .get(idx)
+            .map(|boxed| boxed.as_ref())
+            .unwrap_or_else(|| panic!("Instruction index {} is out of bounds", idx))
+    }
+
+    // Get all operations that produce a given tensor
+    pub fn get_tensor_producers(&self, tensor_id: usize) -> Vec<usize> {
+        self.operations
+            .iter()
+            .enumerate()
+            .filter_map(|(op_idx, op)| {
+                if op.get_output_tensor_ids().contains(&tensor_id) {
+                    Some(op_idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    // Get all operations that consume a given tensor
+    pub fn get_tensor_consumers(&self, tensor_id: usize) -> Vec<usize> {
+        self.operations
+            .iter()
+            .enumerate()
+            .filter_map(|(op_idx, op)| {
+                if op.get_input_tensor_ids().contains(&tensor_id) {
+                    Some(op_idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    // Get all input tensors for a given operation
+    pub fn get_operation_inputs(&self, op_idx: usize) -> Vec<usize> {
+        if op_idx < self.operations.len() {
+            self.operations[op_idx].get_input_tensor_ids()
+        } else {
+            Vec::new()
+        }
+    }
+
+    // Get all output tensors for a given operation
+    pub fn get_operation_outputs(&self, op_idx: usize) -> Vec<usize> {
+        if op_idx < self.operations.len() {
+            self.operations[op_idx].get_output_tensor_ids()
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn calculate_memory_requirements(&self) -> u64 {
         self.tensors
-            .values()
+            .iter()
             .map(|tensor| tensor.desc.size_in_bytes() as u64)
             .sum()
     }
 
-    pub fn calculate_layer_memory(&self, layer_id: LayerId) -> u64 {
-        self.tensors
-            .iter()
-            .filter_map(|(id, tensor)| {
-                if id.0 == layer_id {
-                    Some(tensor.desc.size_in_bytes() as u64)
-                } else {
-                    None
-                }
-            })
-            .sum()
-    }
-
-    pub fn get_layer_tensor_ids(&self, layer_id: LayerId) -> Vec<TensorId> {
-        self.tensors
-            .keys()
-            .filter_map(|id| {
-                if id.0 == layer_id {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn get_input_tensor_ids(&self) -> &[TensorId] {
+    pub fn get_dag_input_tensor_ids(&self) -> &[TensorId] {
         &self.input_tensors
     }
 
-    pub fn get_output_tensor_ids(&self) -> &[TensorId] {
+    pub fn get_dag_output_tensor_ids(&self) -> &[TensorId] {
         &self.output_tensors
-    }
-
-    pub fn get_tensor_descriptor(&self, tensor_id: &TensorId) -> Option<&TensorDesc> {
-        self.tensors.get(tensor_id).map(|tensor| &tensor.desc)
-    }
-
-    pub fn get_input_descriptors(&self) -> HashMap<TensorId, TensorDesc> {
-        self.input_tensors
-            .iter()
-            .filter_map(|tensor_id| {
-                self.get_tensor_descriptor(tensor_id)
-                    .map(|desc| (tensor_id.clone(), desc.clone()))
-            })
-            .collect()
-    }
-
-    pub fn get_output_descriptors(&self) -> HashMap<TensorId, TensorDesc> {
-        self.output_tensors
-            .iter()
-            .filter_map(|tensor_id| {
-                self.get_tensor_descriptor(tensor_id)
-                    .map(|desc| (tensor_id.clone(), desc.clone()))
-            })
-            .collect()
-    }
-
-    pub fn get_tensor_by_id_or_error(
-        &self,
-        id: &TensorId,
-    ) -> Result<&ComputeTensor, VKMLEngineError> {
-        self.tensors
-            .get(id)
-            .ok_or_else(|| VKMLEngineError::TensorNotFound(id.0, id.1.clone()))
-    }
-
-    pub fn get_operation_inputs_or_error(
-        &self,
-        op_id: &OperationId,
-    ) -> Result<&HashSet<TensorId>, VKMLEngineError> {
-        self.operation_inputs
-            .get(op_id)
-            .ok_or_else(|| VKMLEngineError::OperationNotFound(op_id.clone()))
-    }
-
-    pub fn get_operation_outputs_or_error(
-        &self,
-        op_id: &OperationId,
-    ) -> Result<&HashSet<TensorId>, VKMLEngineError> {
-        self.operation_outputs
-            .get(op_id)
-            .ok_or_else(|| VKMLEngineError::OperationNotFound(op_id.clone()))
-    }
-
-    pub fn get_gpu_memory_or_panic(&self, tensor_id: &TensorId) -> &GPUMemory {
-        let tensor = self.get_tensor_by_id_or_error(tensor_id).unwrap();
-
-        match &tensor.data {
-            TensorData::GPU { memory, .. } => memory,
-            _ => panic!("Tensor {:?} is not on GPU", tensor_id),
-        }
     }
 }

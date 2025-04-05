@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::{
-    dataloader::error::VKMLEngineError, model::instruction::Instruction,
+    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -153,47 +151,37 @@ impl Layer for LinearLayer {
             )));
         }
 
-        let mut tensors = HashMap::new();
-
-        tensors.insert("input".to_string(), input_shape.clone());
-        tensors.insert(
-            "weights".to_string(),
-            TensorDesc::new(vec![self.out_features, self.in_features]),
-        );
-        tensors.insert(
-            "output".to_string(),
-            TensorDesc::new(vec![batch_size, self.out_features]),
-        );
-
+        let mut tensors = Vec::new();
         let mut instructions = Vec::new();
 
-        instructions.push(Instruction::ReadInput {
-            layer_idx: 0,
-            layer_tensor_idx: 0,
-            dst: "input".to_string(),
-        });
+        // input = 0
+        tensors.push(input_shape.clone());
 
-        instructions.push(Instruction::MatMul {
-            src1: "input".to_string(),
-            src2: "weights".to_string(),
-            dst: "output".to_string(),
-        });
+        // weights = 1
+        tensors.push(TensorDesc::new(vec![self.out_features, self.in_features]));
+
+        // output = 2
+        tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
+
+        // Create MatMul instruction
+        instructions.push(Instructions::matmul(0, 1, 2));
 
         // If using bias, add it
         if self.bias {
-            tensors.insert("bias".to_string(), TensorDesc::new(vec![self.out_features]));
+            // bias = 3
+            tensors.push(TensorDesc::new(vec![self.out_features]));
 
-            instructions.push(Instruction::Add {
-                src1: "output".to_string(),
-                src2: "bias".to_string(),
-                dst: "output".to_string(),
-            });
+            instructions.push(Instructions::add(2, 3, 2));
         }
+
+        // Get input mappings using the trait method
+        let input_mappings = self.map_input_tensors(input_shapes.len());
 
         Ok(LayerExecution {
             tensors,
             instructions,
-            outputs: vec!["output".to_string()],
+            outputs: vec![2],
+            input_mappings,
         })
     }
 }

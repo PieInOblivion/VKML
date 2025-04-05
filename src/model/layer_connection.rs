@@ -1,5 +1,8 @@
 pub type LayerId = usize;
 
+// Realistically, this could be a tuple (usize, usize)
+// That would require slightly more knowledge to make a basic sequential model
+// and having that be as easy as possible is a goal of this project.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayerConnection {
     DefaultOutput(LayerId),
@@ -13,7 +16,7 @@ impl LayerConnection {
             LayerConnection::SpecificOutput(id, _) => *id,
         }
     }
-    
+
     pub fn get_outputidx(&self) -> usize {
         match self {
             LayerConnection::DefaultOutput(_) => 0,

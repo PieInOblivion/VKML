@@ -12,7 +12,10 @@ mod layer;
 
 mod tensor;
 
+mod instruction;
 mod tensor_graph;
+
+use std::sync::Arc;
 
 use compute::compute_manager::ComputeManager;
 use dataloader::{
@@ -111,7 +114,7 @@ fn main() {
     // We can interact with GPU instances to test, but all models should use a compute_manager instead
     // Own scope so GPU is cleared between testing areas
     // Drop GPU works properly
-    {
+    /*{
         let data_test1 = DataBatch {
             data: vec![
                 10, 20, 30, 15, 20, 30, 15, 10, 10, 20, 30, 15, 20, 30, 15, 10,
@@ -142,7 +145,7 @@ fn main() {
 
         println!("{:?}", gpu_mem1.read_memory().unwrap());
         println!("{:?}", gpu_mem2.read_memory().unwrap());
-    }
+    }*/
 
     // Turns out NVIDIA vulkan can eat .spv that is still text
     // while intel needs it validated and compiled...
@@ -151,91 +154,223 @@ fn main() {
     // - - - - Model and Compute Manager testing - - - -
 
     println!("{:?}", GPU::available_gpus());
+    /*{
+        // This creates two seperate models
+        // The design can detect that, and the two models run in parallel
+        // along with any layers within each graph that can do so
+        let mut small_model = GraphModel::new(5);
 
-    // This creates two seperate models
-    // The design can detect that, and the two models run in parallel
-    // along with any layers within each graph that can do so
-    let mut small_model = GraphModel::new(5);
+        let input_id = small_model.add_layer(Layers::input_buffer(10));
+        let input_id2 = small_model.add_layer(Layers::input_buffer(10));
+        let fc1_id2 = small_model.add_layer_with(
+            small_model.next_available_id(),
+            Layers::linear(10, 4),
+            vec![LayerConnection::DefaultOutput(input_id2)],
+            None,
+        );
 
-    let input_id = small_model.add_layer(Layers::input_buffer(10));
-    let input_id2 = small_model.add_layer(Layers::input_buffer(10));
-    let fc1_id2 = small_model.add_layer_with(
-        small_model.next_available_id(),
-        Layers::linear(10, 4),
-        vec![LayerConnection::DefaultOutput(input_id2)],
+        let fc1_id = small_model.add_layer_with(
+            small_model.next_available_id(),
+            Layers::linear(10, 4),
+            vec![LayerConnection::DefaultOutput(input_id)],
+            None,
+        );
+
+        let relu1_id = small_model.add_layer_with(
+            small_model.next_available_id(),
+            Layers::relu(),
+            vec![LayerConnection::DefaultOutput(fc1_id)],
+            None,
+        );
+
+        let lin1 = small_model.add_layer_with(
+            small_model.next_available_id(),
+            Layers::linear(4, 4),
+            vec![LayerConnection::DefaultOutput(relu1_id)],
+            None,
+        );
+
+        let fin = small_model.add_layer_with(
+            small_model.next_available_id(),
+            Layers::add(),
+            vec![
+                LayerConnection::DefaultOutput(lin1),
+                LayerConnection::DefaultOutput(fc1_id2),
+            ],
+            None,
+        );
+
+        small_model.verify().unwrap();
+
+        let mut small_cm = ComputeManager::new(small_model, thread_pool.clone()).unwrap();
+
+        small_cm.print_tensor_flow();
+
+        small_cm.print_model_stats();
+        let input_data: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
+        let mut input_bytes = Vec::with_capacity(input_data.len() * 4);
+        for value in input_data {
+            input_bytes.extend_from_slice(&value.to_le_bytes());
+        }
+
+        let input_data2: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
+        let mut input_bytes2 = Vec::with_capacity(input_data2.len() * 4);
+        for value in input_data2 {
+            input_bytes2.extend_from_slice(&value.to_le_bytes());
+        }
+
+        let input_batch = DataBatch {
+            data: input_bytes.into_boxed_slice(),
+            samples_in_batch: 5,
+            bytes_per_sample: 4,
+            format: SourceFormat::F32,
+            labels: None,
+            batch_number: 0,
+        };
+        let input_batch2 = DataBatch {
+            data: input_bytes2.into_boxed_slice(),
+            samples_in_batch: 5,
+            bytes_per_sample: 4,
+            format: SourceFormat::F32,
+            labels: None,
+            batch_number: 0,
+        };
+        small_cm.print_layer_values(0).unwrap();
+        small_cm.print_layer_values(1).unwrap();
+        small_cm.print_layer_values(2).unwrap();
+        small_cm.print_layer_values(3).unwrap();
+
+        println!("\nRunning forward pass with input");
+        let output_batches = small_cm.forward(vec![input_batch, input_batch2]).unwrap();
+
+        println!("\nOutput: {:?}", output_batches[0].to_f32());
+
+        println!("\nLayer Values:");
+        small_cm.print_layer_values(0).unwrap();
+        small_cm.print_layer_values(1).unwrap();
+        small_cm.print_layer_values(2).unwrap();
+        small_cm.print_layer_values(3).unwrap();
+    }*/
+
+    test_device_transfer(thread_pool);
+}
+
+fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== MEMORY TRANSFER TEST ===\n");
+
+    // First check available GPUs
+    println!("Available GPUs:");
+    let gpu_info = GPU::available_gpus()?;
+    for (i, info) in gpu_info.iter().enumerate() {
+        println!(
+            "  GPU {}: {} - {:.2} GB",
+            i,
+            info.name,
+            info.total_memory as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+    }
+
+    // Create a model that will exceed GPU memory but fit in combined memory
+    let batch_size = 64;
+    let mut model = GraphModel::new(batch_size);
+
+    // Define layer sizes to consume around 10GB total
+    // For weights: in_features * out_features * 4 bytes per f32
+    // Each linear layer of 16K x 16K = 1GB for weights
+    let feature_size = 16 * 1024; // 16K features
+
+    println!("\nBuilding model with layers that consume ~10GB memory...");
+
+    // Input layer
+    let input_id = model.add_layer(Layers::input_buffer(feature_size));
+    println!("  Added input layer with {} features", feature_size);
+
+    // Add linear layers to consume memory
+    let mut prev_layer_id = input_id;
+    for i in 0..1 {
+        // Add 7 large layers (plus input = 10 total)
+        let next_id = model.add_layer_with(
+            model.next_available_id(),
+            Layers::linear_with(feature_size, feature_size, true), // With bias
+            vec![LayerConnection::DefaultOutput(prev_layer_id)],
+            None,
+        );
+
+        println!(
+            "  Added linear layer {}: {} x {} features (~1GB)",
+            i + 1,
+            feature_size,
+            feature_size
+        );
+
+        prev_layer_id = next_id;
+    }
+
+    // Add one final smaller layer to produce output
+    let output_id = model.add_layer_with(
+        model.next_available_id(),
+        Layers::linear(feature_size, 10),
+        vec![LayerConnection::DefaultOutput(prev_layer_id)],
         None,
     );
+    println!("  Added output layer: {} x 10 features", feature_size);
 
-    let fc1_id = small_model.add_layer_with(
-        small_model.next_available_id(),
-        Layers::linear(10, 4),
-        vec![LayerConnection::DefaultOutput(input_id)],
-        None,
+    // Verify the model
+    println!("\nVerifying model...");
+    model.verify()?;
+    println!("Model verified successfully");
+
+    // Create compute manager (which will trigger tensor allocation)
+    println!("\nCreating compute manager and allocating tensors...");
+    let mut compute_manager = ComputeManager::new(model, thread_pool.clone())?;
+    println!("Compute manager created successfully");
+
+    // Print model stats to see memory distribution
+    println!("\nModel Memory Distribution:");
+    compute_manager.print_model_stats();
+
+    compute_manager.print_tensor_flow();
+
+    // Run a forward pass with random input
+    println!("\nTesting forward pass with random input...");
+    let input_data = create_random_input(batch_size, feature_size);
+    let output = compute_manager.forward(vec![input_data])?;
+
+    println!("\nForward pass completed successfully");
+    println!(
+        "Output shape: batch size = {}, features = {}",
+        output[0].samples_in_batch,
+        output[0].data.len() / output[0].samples_in_batch / 4
     );
 
-    let relu1_id = small_model.add_layer_with(
-        small_model.next_available_id(),
-        Layers::relu(),
-        vec![LayerConnection::DefaultOutput(fc1_id)],
-        None,
-    );
+    // Print tensor flow to see if there are transfer operations
+    println!("\nTensor flow and transfer operations:");
+    compute_manager.print_tensor_flow();
 
-    let fc2_id = small_model.add_layer_with(
-        small_model.next_available_id(),
-        Layers::linear(4, 1),
-        vec![LayerConnection::DefaultOutput(relu1_id)],
-        None,
-    );
+    println!("\n=== MEMORY TRANSFER TEST COMPLETED SUCCESSFULLY ===\n");
 
-    small_model.verify().unwrap();
+    Ok(())
+}
 
-    let mut small_cm = ComputeManager::new(small_model, thread_pool.clone()).unwrap();
+fn create_random_input(batch_size: usize, feature_size: usize) -> DataBatch {
+    // Create random input data
+    let mut input_data = Vec::with_capacity(batch_size * feature_size);
+    for _ in 0..(batch_size * feature_size) {
+        input_data.push(rand::random::<f32>());
+    }
 
-    small_cm.print_tensor_flow();
-
-    small_cm.print_model_stats();
-    let input_data: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
+    // Convert to byte buffer
     let mut input_bytes = Vec::with_capacity(input_data.len() * 4);
     for value in input_data {
         input_bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    let input_data2: Vec<f32> = (0..50).map(|_| rand::random::<f32>()).collect();
-    let mut input_bytes2 = Vec::with_capacity(input_data2.len() * 4);
-    for value in input_data2 {
-        input_bytes2.extend_from_slice(&value.to_le_bytes());
-    }
-
-    let input_batch = DataBatch {
+    DataBatch {
         data: input_bytes.into_boxed_slice(),
-        samples_in_batch: 5,
-        bytes_per_sample: 4,
+        samples_in_batch: batch_size,
+        bytes_per_sample: feature_size * 4,
         format: SourceFormat::F32,
         labels: None,
         batch_number: 0,
-    };
-    let input_batch2 = DataBatch {
-        data: input_bytes2.into_boxed_slice(),
-        samples_in_batch: 5,
-        bytes_per_sample: 4,
-        format: SourceFormat::F32,
-        labels: None,
-        batch_number: 0,
-    };
-    small_cm.print_layer_values(0).unwrap();
-    small_cm.print_layer_values(1).unwrap();
-    small_cm.print_layer_values(2).unwrap();
-    small_cm.print_layer_values(3).unwrap();
-
-    println!("\nRunning forward pass with input");
-    let output_batches = small_cm.forward(vec![input_batch, input_batch2]).unwrap();
-
-    println!("\nOutput: {:?}", output_batches[0].to_f32());
-    println!("\nOutput: {:?}", output_batches[1].to_f32());
-
-    println!("\nLayer Values:");
-    small_cm.print_layer_values(0).unwrap();
-    small_cm.print_layer_values(1).unwrap();
-    small_cm.print_layer_values(2).unwrap();
-    small_cm.print_layer_values(3).unwrap();
+    }
 }

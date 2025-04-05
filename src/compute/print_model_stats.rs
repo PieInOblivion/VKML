@@ -6,7 +6,6 @@ use crate::{
 };
 
 pub fn print_model_stats(cm: &ComputeManager) {
-    let mut total_params = 0usize;
     let mut total_memory = 0u64;
 
     println!("\nModel Statistics");
@@ -15,16 +14,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
     println!("\nLayer Details:");
     println!("{:-<125}", "");
     println!(
-        "{:<4} {:<12} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} {}",
-        "ID",
-        "Type",
-        "Params",
-        "Memory",
-        "Input Shape",
-        "Output Shape",
-        "Device",
-        "Connections",
-        "Config"
+        "{:<4} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} {}",
+        "ID", "Type", "Memory", "Input Shape", "Output Shape", "Device", "Connections", "Config"
     );
     println!("{:-<125}", "");
 
@@ -41,47 +32,48 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
     for &layer_id in &ordered_layer_ids {
         if let Some(layer) = cm.model.layers.get(&layer_id) {
-            let layer_tensor_ids = cm.tensor_graph.get_layer_tensor_ids(layer_id);
+            let layer_tensor_ids: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+                .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
+                .collect();
 
             let is_output_layer = layer.output_connections.is_empty();
 
-            let layer_output_tensors: Vec<&TensorId> = if is_output_layer {
+            let layer_output_tensors: Vec<TensorId> = if is_output_layer {
                 cm.tensor_graph
                     .output_tensors
                     .iter()
-                    .filter(|id| id.0 == layer_id)
+                    .filter(|&&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
+                    .cloned()
                     .collect()
             } else {
                 // For non-output layers, find tensors that other layers consume
-                // by checking which tensors from this layer are inputs to operations in other layers
                 layer_tensor_ids
                     .iter()
-                    .filter(|tensor_id| {
-                        cm.tensor_graph.operation_inputs.iter().any(
-                            |(op_id, inputs)| {
-                                op_id.0 != layer_id && // different layer's operation
-                                inputs.contains(tensor_id)
-                            }, // uses this tensor as input
-                        )
+                    .filter(|&&tensor_id| {
+                        cm.tensor_graph
+                            .get_tensor_consumers(tensor_id)
+                            .iter()
+                            .any(|&op_id| {
+                                let op_inputs = cm.tensor_graph.get_operation_inputs(op_id);
+                                let first_input = op_inputs.first().cloned();
+                                let op_layer = first_input.and_then(|id| {
+                                    cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten()
+                                });
+                                op_layer.is_some() && op_layer != Some(layer_id)
+                            })
                     })
+                    .cloned()
                     .collect()
             };
 
             // Get representative output tensor for shape info
-            // First try to use a tensor that's actually used as output, otherwise fall back to any tensor
             let output_tensor = if !layer_output_tensors.is_empty() {
                 layer_output_tensors[0]
             } else if !layer_tensor_ids.is_empty() {
                 // No explicit outputs, use any tensor (preferably one produced by an operation)
-                layer_tensor_ids
+                *layer_tensor_ids
                     .iter()
-                    .find(|id| {
-                        cm.tensor_graph
-                            .tensor_dependencies
-                            .get(id)
-                            .map(|deps| !deps.is_empty())
-                            .unwrap_or(false)
-                    })
+                    .find(|&&id| !cm.tensor_graph.get_tensor_producers(id).is_empty())
                     .unwrap_or(&layer_tensor_ids[0])
             } else {
                 // No tensors found at all - should never happen
@@ -101,11 +93,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
                         let connected_layer_outputs = get_layer_output_tensors(cm, source_layer_id);
 
                         if output_idx < connected_layer_outputs.len() {
-                            let output_tensor_id = &connected_layer_outputs[output_idx];
-                            if let Some(tensor) = cm
-                                .tensor_graph
-                                .get_tensor(output_tensor_id.0, &output_tensor_id.1)
-                            {
+                            let output_tensor_id = connected_layer_outputs[output_idx];
+                            if let Some(tensor) = cm.tensor_graph.tensors.get(output_tensor_id) {
                                 let dims = tensor.desc.to_dims();
                                 return Some(format_dimensions(&dims));
                             }
@@ -116,9 +105,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
                     .join(", ")
             };
 
-            let output_shapes_str = if let Some(tensor) = cm
-                .tensor_graph
-                .get_tensor(output_tensor.0, &output_tensor.1)
+            let output_shapes_str = if let Some(tensor) = cm.tensor_graph.tensors.get(output_tensor)
             {
                 format_dimensions(&tensor.desc.to_dims())
             } else {
@@ -128,20 +115,27 @@ pub fn print_model_stats(cm: &ComputeManager) {
             let connections_str =
                 format_layer_connections(&layer.input_connections, &layer.output_connections);
 
-            let memory_bytes = cm.tensor_graph.calculate_layer_memory(layer_id);
+            let memory_bytes = layer_tensor_ids
+                .iter()
+                .filter_map(|&id| cm.tensor_graph.tensors.get(id))
+                .map(|t| t.desc.size_in_bytes() as u64)
+                .sum();
 
-            let params = cm.calculate_layer_parameters(layer_id);
-
-            let device_location = cm.get_device_description(output_tensor);
+            let device_location = match &cm.tensor_graph.tensors[output_tensor].data {
+                crate::tensor::tensor_data::TensorData::CPU(_) => "CPU".to_string(),
+                crate::tensor::tensor_data::TensorData::GPU { gpu_idx, .. } => {
+                    format!("GPU {}", gpu_idx)
+                }
+                crate::tensor::tensor_data::TensorData::Unallocated => "Unallocated".to_string(),
+            };
 
             let layer_type = layer.layer.name();
             let layer_config = layer.layer.config_string().unwrap_or_default();
 
             println!(
-                "{:<4} {:<12} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} {}",
+                "{:<4} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} {}",
                 layer_id,
                 layer_type,
-                params,
                 cm.format_memory_mb(memory_bytes),
                 input_shapes_str,
                 output_shapes_str,
@@ -150,7 +144,6 @@ pub fn print_model_stats(cm: &ComputeManager) {
                 layer_config
             );
 
-            total_params += params;
             total_memory += memory_bytes;
         }
     }
@@ -161,24 +154,26 @@ pub fn print_model_stats(cm: &ComputeManager) {
         .tensor_graph
         .input_tensors
         .iter()
-        .map(|id| id.0)
+        .filter_map(|&id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten())
         .collect::<Vec<_>>();
+
     let mut exit_points = cm
         .tensor_graph
         .output_tensors
         .iter()
-        .map(|id| id.0)
+        .filter_map(|&id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten())
         .collect::<Vec<_>>();
 
     entry_points.sort();
     exit_points.sort();
+    entry_points.dedup();
+    exit_points.dedup();
 
     println!("\nGraph Structure:");
     println!("Entry points: {:?}", entry_points);
     println!("Exit points: {:?}", exit_points);
 
     println!("\nModel Summary:");
-    println!("Total Parameters: {}", total_params);
     println!("Total Memory: {}", cm.format_memory_mb(total_memory));
 
     println!("\nMemory Allocation:");
@@ -200,11 +195,17 @@ fn format_dimensions(dims: &[usize]) -> String {
 }
 
 fn get_layer_output_tensors(cm: &ComputeManager, layer_id: LayerId) -> Vec<TensorId> {
-    let layer_tensors = cm.tensor_graph.get_layer_tensor_ids(layer_id);
+    // Get all tensors belonging to this layer
+    let layer_tensors: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+        .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
+        .collect();
 
-    let explicit_outputs: Vec<TensorId> = layer_tensors
+    // First check explicit output tensors
+    let explicit_outputs: Vec<TensorId> = cm
+        .tensor_graph
+        .output_tensors
         .iter()
-        .filter(|id| cm.tensor_graph.output_tensors.contains(id))
+        .filter(|&&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
         .cloned()
         .collect();
 
@@ -219,28 +220,28 @@ fn get_layer_output_tensors(cm: &ComputeManager, layer_id: LayerId) -> Vec<Tenso
             // This is a final layer, so all its tensors could be outputs
             outputs.extend(layer_tensors.clone());
         } else {
-            for tensor_id in &layer_tensors {
-                let is_consumed_by_other_layer = cm.tensor_graph.operation_inputs.iter().any(
-                    |(op_id, inputs)| {
-                        op_id.0 != layer_id && // operation in different layer
-                        inputs.contains(tensor_id)
-                    }, // uses this tensor
-                );
+            for &tensor_id in &layer_tensors {
+                let consumers = cm.tensor_graph.get_tensor_consumers(tensor_id);
+                let is_consumed_by_other_layer = consumers.iter().any(|&op_id| {
+                    let op_inputs = cm.tensor_graph.get_operation_inputs(op_id);
+                    let first_input = op_inputs.first().cloned();
+                    let op_layer = first_input
+                        .and_then(|id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten());
+                    op_layer.is_some() && op_layer != Some(layer_id)
+                });
 
                 if is_consumed_by_other_layer {
-                    outputs.push(tensor_id.clone());
+                    outputs.push(tensor_id);
                 }
             }
         }
     }
 
-    // If we still haven't found outputs, include all tensors that are outputs of operations
+    // If we still haven't found outputs, include all tensors that have producers
     if outputs.is_empty() {
-        for tensor_id in &layer_tensors {
-            if cm.tensor_graph.tensor_dependencies.contains_key(tensor_id)
-                && !cm.tensor_graph.tensor_dependencies[tensor_id].is_empty()
-            {
-                outputs.push(tensor_id.clone());
+        for &tensor_id in &layer_tensors {
+            if !cm.tensor_graph.get_tensor_producers(tensor_id).is_empty() {
+                outputs.push(tensor_id);
             }
         }
     }
@@ -302,36 +303,17 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         }
     };
 
-    let tensor_ids = cm.tensor_graph.get_layer_tensor_ids(layer_id);
+    // Get all tensors belonging to this layer
+    let tensor_ids: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+        .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
+        .collect();
 
     for tensor_id in &tensor_ids {
-        let tensor = cm
-            .tensor_graph
-            .get_tensor(tensor_id.0, &tensor_id.1)
-            .unwrap();
-
-        let data = cm
-            .tensor_graph
-            .get_tensor_by_id_or_error(tensor_id)?
-            .data
-            .get_data()?;
+        let tensor = &cm.tensor_graph.tensors[*tensor_id];
+        let data = tensor.data.get_data()?;
         let gpu_idx = tensor.data.get_gpu_idx();
 
-        // Determine tensor role structurally
-        let role = if cm.tensor_graph.input_tensors.contains(tensor_id) {
-            "INPUT"
-        } else if cm.tensor_graph.output_tensors.contains(tensor_id) {
-            "OUTPUT"
-        } else if !cm.tensor_graph.tensor_dependencies.contains_key(tensor_id)
-            || cm.tensor_graph.tensor_dependencies[tensor_id].is_empty()
-        {
-            "PARAMETER"
-        } else {
-            "INTERMEDIATE"
-        };
-
-        // Display tensor name in quotes to indicate it's arbitrary
-        println!("\nTensor \"{}\" [{}]:", tensor_id.1, role);
+        println!("\nTensor {}:", tensor_id);
         println!(
             "  Location: {}",
             match gpu_idx {
@@ -353,25 +335,26 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
 
     let output_tensors: Vec<_> = tensor_ids
         .iter()
-        .filter(|id| {
+        .filter(|&&id| {
             // Output tensor is either:
             // 1. Explicitly marked as model output
-            cm.tensor_graph.output_tensors.contains(id) ||
+            cm.tensor_graph.output_tensors.contains(&id) ||
             // 2. Used as input by operations in other layers
-            cm.tensor_graph.operation_inputs.iter().any(|(op_id, inputs)|
-                op_id.0 != layer_id && inputs.contains(id)
-            )
+            cm.tensor_graph.get_tensor_consumers(id).iter().any(|&op_id| {
+                let op_inputs = cm.tensor_graph.get_operation_inputs(op_id);
+                let first_input = op_inputs.first().cloned();
+                let op_layer = first_input.and_then(|id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten());
+                op_layer.is_some() && op_layer != Some(layer_id)
+            })
         })
         .collect();
 
     if output_tensors.is_empty() {
         println!("  No explicit output tensors found");
     } else {
-        for tensor_id in output_tensors {
-            if let Some(tensor) = cm.tensor_graph.get_tensor(tensor_id.0, &tensor_id.1) {
-                // tensor name in quotes to indicate it's arbitrary
-                println!("  \"{}\" Shape: {:?}", tensor_id.1, tensor.desc.to_dims());
-            }
+        for &tensor_id in output_tensors {
+            let tensor = &cm.tensor_graph.tensors[tensor_id];
+            println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.to_dims());
         }
     }
 

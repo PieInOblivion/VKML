@@ -69,7 +69,7 @@ impl ComputePipelines {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::COMPUTE,
             offset: 0,
-            size: 8, // Allow up to 8 bytes for push constants (enough for LeakyReLU alpha and Softmax dimensions)
+            size: 128, // TODO: For now, have 128 bytes of push constant space
         };
 
         let pipeline_layout = unsafe {

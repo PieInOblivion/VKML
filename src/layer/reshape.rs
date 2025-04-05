@@ -1,8 +1,5 @@
-// reshape.rs
-use std::collections::HashMap;
-
 use crate::{
-    dataloader::error::VKMLEngineError, model::instruction::Instruction,
+    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -166,33 +163,28 @@ impl Layer for ReshapeLayer {
         }
 
         let input_shape = input_shapes[0];
+        let mut tensors = Vec::new();
 
-        let mut tensors = HashMap::new();
-
-        tensors.insert("input".to_string(), input_shape.clone());
+        // input = 0
+        tensors.push(input_shape.clone());
 
         let output_shapes = self.output_shapes(batch_size, &[input_shape])?;
         let output_shape = output_shapes[0].clone();
 
-        tensors.insert("output".to_string(), output_shape.clone());
+        // output = 1
+        tensors.push(output_shape.clone());
 
-        let instructions = vec![
-            Instruction::ReadInput {
-                layer_idx: 0,
-                layer_tensor_idx: 0,
-                dst: "input".to_string(),
-            },
-            Instruction::Reshape {
-                src: "input".to_string(),
-                dst: "output".to_string(),
-                new_shape: output_shape,
-            },
-        ];
+        // Create Reshape instruction
+        let instruction = Instructions::reshape(0, 1, output_shape);
+
+        // Get input mappings using the trait method
+        let input_mappings = self.map_input_tensors(input_shapes.len());
 
         Ok(LayerExecution {
             tensors,
-            instructions,
-            outputs: vec!["output".to_string()],
+            instructions: vec![instruction],
+            outputs: vec![1],
+            input_mappings,
         })
     }
 }

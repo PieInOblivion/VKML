@@ -86,29 +86,22 @@ impl Layer for InputLayer {
         _input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLEngineError> {
         // Input layers don't need input_shapes - they create their own shapes
+        let mut tensors = Vec::new();
 
-        let mut tensors = HashMap::new();
-
-        tensors.insert(
-            "output".to_string(),
-            TensorDesc::new(vec![batch_size, self.out_features]),
-        );
+        // output = 0
+        tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
 
         // Add gradient tensor if tracking gradients
         if self.track_gradients {
-            tensors.insert(
-                "grad_output".to_string(),
-                TensorDesc::new(vec![batch_size, self.out_features]),
-            );
+            // gradients = 1
+            tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
         }
-
-        // No instructions needed - data will be transferred directly
-        let instructions = vec![];
 
         Ok(LayerExecution {
             tensors,
-            instructions,
-            outputs: vec!["output".to_string()],
+            instructions: vec![],
+            outputs: vec![0],
+            input_mappings: HashMap::new(),
         })
     }
 }

@@ -132,6 +132,7 @@ impl GPU {
             let command_pool = device.create_command_pool(&command_pool_info, None)?;
 
             let bindings = [
+                // Input buffer 1 (used by all operations)
                 vk::DescriptorSetLayoutBinding {
                     binding: 0,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
@@ -140,8 +141,27 @@ impl GPU {
                     p_immutable_samplers: ptr::null(),
                     _marker: std::marker::PhantomData,
                 },
+                // Input buffer 2 (used by binary operations like Add, Mul, etc.)
                 vk::DescriptorSetLayoutBinding {
                     binding: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::COMPUTE,
+                    p_immutable_samplers: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // Output buffer (binding used by most operations)
+                vk::DescriptorSetLayoutBinding {
+                    binding: 2,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::COMPUTE,
+                    p_immutable_samplers: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // Additional bindings if needed (bias buffer for Conv2D, etc.)
+                vk::DescriptorSetLayoutBinding {
+                    binding: 3,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
@@ -164,14 +184,14 @@ impl GPU {
 
             let pool_sizes = [vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 100,
+                descriptor_count: 1000, // TODO: check how high this actually needs to be
             }];
 
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 50,
+                max_sets: 500, // TODO: check how high this actually needs to be
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
                 _marker: std::marker::PhantomData,
@@ -207,7 +227,7 @@ impl GPU {
                 descriptor_pool,
                 descriptor_set_layout,
                 compute_pipelines,
-                memory_tracker: MemoryTracker::new(total_memory),
+                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64),
             })
         }
     }
@@ -410,145 +430,6 @@ impl GPU {
 
             Err("Failed to find suitable memory type".into())
         }
-    }
-
-    fn execute_operation(
-        &self,
-        src1: &GPUMemory,
-        src2: &GPUMemory,
-        operation: GPUMemoryOperation,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        unsafe {
-            let alloc_info = vk::CommandBufferAllocateInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                p_next: ptr::null(),
-                command_pool: self.command_pool,
-                level: vk::CommandBufferLevel::PRIMARY,
-                command_buffer_count: 1,
-                _marker: std::marker::PhantomData,
-            };
-
-            let command_buffer = self.device.allocate_command_buffers(&alloc_info)?[0];
-
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                p_next: ptr::null(),
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                p_inheritance_info: ptr::null(),
-                _marker: std::marker::PhantomData,
-            };
-
-            self.device
-                .begin_command_buffer(command_buffer, &begin_info)?;
-
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer: src2.buffer,
-                offset: 0,
-                range: src2.size,
-            };
-
-            // Use binding 1 for second buffer
-            let write_descriptor_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: ptr::null(),
-                dst_set: src1.descriptor_set,
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_info,
-                p_image_info: ptr::null(),
-                p_texel_buffer_view: ptr::null(),
-                _marker: std::marker::PhantomData,
-            };
-
-            self.device
-                .update_descriptor_sets(&[write_descriptor_set], &[]);
-
-            let pipeline = self
-                .compute_pipelines
-                .get_pipeline(operation)
-                .ok_or("Invalid operation")?;
-
-            self.device
-                .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline);
-
-            // Bind the descriptor set from src1 (which now has both buffers)
-            self.device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                self.compute_pipelines.get_layout(),
-                0,
-                &[src1.descriptor_set],
-                &[],
-            );
-
-            // Calculate workgroup dispatch size
-            // TODO: Can we optimise this value per gpu? per instruction sent to it?
-            // Per shader?
-            let workgroup_size = 256;
-            let num_workgroups = (src1.size + workgroup_size as u64 - 1) / workgroup_size as u64;
-
-            self.device
-                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
-
-            self.device.end_command_buffer(command_buffer)?;
-
-            let submit_info = vk::SubmitInfo {
-                s_type: vk::StructureType::SUBMIT_INFO,
-                p_next: ptr::null(),
-                wait_semaphore_count: 0,
-                p_wait_semaphores: ptr::null(),
-                p_wait_dst_stage_mask: ptr::null(),
-                command_buffer_count: 1,
-                p_command_buffers: &command_buffer,
-                signal_semaphore_count: 0,
-                p_signal_semaphores: ptr::null(),
-                _marker: std::marker::PhantomData,
-            };
-
-            self.device
-                .queue_submit(self.compute_queues[0], &[submit_info], vk::Fence::null())?;
-
-            self.device.queue_wait_idle(self.compute_queues[0])?;
-
-            self.device
-                .free_command_buffers(self.command_pool, &[command_buffer]);
-
-            Ok(())
-        }
-    }
-
-    pub fn add(
-        &self,
-        src1: &GPUMemory,
-        src2: &GPUMemory,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_operation(src1, src2, GPUMemoryOperation::Add)
-    }
-
-    pub fn sub(
-        &self,
-        src1: &GPUMemory,
-        src2: &GPUMemory,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_operation(src1, src2, GPUMemoryOperation::Subtract)
-    }
-
-    pub fn mul(
-        &self,
-        src1: &GPUMemory,
-        src2: &GPUMemory,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_operation(src1, src2, GPUMemoryOperation::Multiply)
-    }
-
-    pub fn div(
-        &self,
-        src1: &GPUMemory,
-        src2: &GPUMemory,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_operation(src1, src2, GPUMemoryOperation::Divide)
     }
 
     pub fn allocate_memory(&self, size: u64) -> Result<(), VKMLEngineError> {

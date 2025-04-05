@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::{
-    dataloader::error::VKMLEngineError, model::instruction::Instruction,
+    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -214,54 +212,52 @@ impl Layer for Conv2DLayer {
         let out_height = ((in_height + 2 * self.padding_h - self.kernel_h) / self.stride_h) + 1;
         let out_width = ((in_width + 2 * self.padding_w - self.kernel_w) / self.stride_w) + 1;
 
-        let mut tensors = HashMap::new();
+        let mut tensors = Vec::new();
 
-        tensors.insert("input".to_string(), input_shape.clone());
+        // input = 0
+        tensors.push(input_shape.clone());
 
-        tensors.insert(
-            "weights".to_string(),
-            TensorDesc::new(vec![
-                self.out_features,
-                self.in_features,
-                self.kernel_h,
-                self.kernel_w,
-            ]),
-        );
+        // weights = 1
+        tensors.push(TensorDesc::new(vec![
+            self.out_features,
+            self.in_features,
+            self.kernel_h,
+            self.kernel_w,
+        ]));
 
-        tensors.insert(
-            "output".to_string(),
-            TensorDesc::new(vec![batch_size, self.out_features, out_height, out_width]),
-        );
+        // output = 2
+        tensors.push(TensorDesc::new(vec![
+            batch_size,
+            self.out_features,
+            out_height,
+            out_width,
+        ]));
 
+        let mut bias_idx = None;
         if self.bias {
-            tensors.insert("bias".to_string(), TensorDesc::new(vec![self.out_features]));
+            // bias = 3
+            bias_idx = Some(tensors.len());
+            tensors.push(TensorDesc::new(vec![self.out_features]));
         }
 
-        let mut instructions = Vec::new();
+        // Create Conv2D instruction
+        let instruction = Instructions::conv2d(
+            0,
+            1,
+            bias_idx,
+            2,
+            (self.stride_h, self.stride_w),
+            (self.padding_h, self.padding_w),
+        );
 
-        instructions.push(Instruction::ReadInput {
-            layer_idx: 0,
-            layer_tensor_idx: 0,
-            dst: "input".to_string(),
-        });
-
-        instructions.push(Instruction::Conv2D {
-            src: "input".to_string(),
-            weights: "weights".to_string(),
-            bias: if self.bias {
-                Some("bias".to_string())
-            } else {
-                None
-            },
-            dst: "output".to_string(),
-            stride: (self.stride_h, self.stride_w),
-            padding: (self.padding_h, self.padding_w),
-        });
+        // Get input mappings using the trait method
+        let input_mappings = self.map_input_tensors(input_shapes.len());
 
         Ok(LayerExecution {
             tensors,
-            instructions,
-            outputs: vec!["output".to_string()],
+            instructions: vec![instruction],
+            outputs: vec![2],
+            input_mappings,
         })
     }
 }

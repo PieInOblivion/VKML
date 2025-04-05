@@ -1,7 +1,6 @@
 use crate::{
-    compute::compute_manager::ComputeManager,
-    tensor::tensor_data::TensorData,
-    tensor_graph::tensor_graph::{OperationId, TensorId},
+    compute::compute_manager::ComputeManager, tensor::tensor_data::TensorData,
+    tensor_graph::tensor_graph::TensorId,
 };
 use std::collections::HashSet;
 
@@ -17,13 +16,13 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
 
     produced_tensors.extend(cm.tensor_graph.input_tensors.iter().cloned());
 
-    // Add parameter tensors (tensors with no dependencies that aren't inputs)
-    for (tensor_id, _) in &cm.tensor_graph.tensors {
-        if !cm.tensor_graph.input_tensors.contains(tensor_id)
-            && (!cm.tensor_graph.tensor_dependencies.contains_key(tensor_id)
-                || cm.tensor_graph.tensor_dependencies[tensor_id].is_empty())
-        {
-            produced_tensors.insert(tensor_id.clone());
+    // Add parameter tensors (tensors with no producers)
+    for tensor_id in 0..cm.tensor_graph.tensors.len() {
+        if !cm.tensor_graph.input_tensors.contains(&tensor_id) {
+            let producers = cm.tensor_graph.get_tensor_producers(tensor_id);
+            if producers.is_empty() {
+                produced_tensors.insert(tensor_id);
+            }
         }
     }
 
@@ -32,119 +31,91 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         println!("{:-<100}", "");
 
         for op_id in operations {
-            let layer_id = op_id.0;
-            let instruction_idx = op_id.1;
+            let layer_id_opt = cm.tensor_graph.operations[*op_id]
+                .get_input_tensor_ids()
+                .first()
+                .and_then(|tensor_id| cm.tensor_graph.tensor_to_layer[*tensor_id]);
 
-            let layer_name = cm
-                .model
-                .layers
-                .get(&layer_id)
+            let layer_name = layer_id_opt
+                .and_then(|layer_id| cm.model.layers.get(&layer_id))
                 .map(|layer| layer.layer.name())
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            let instruction = cm
-                .tensor_graph
-                .operations
-                .get(op_id)
-                .map(|i| format!("{:?}", i))
-                .unwrap_or_else(|| "Unknown".to_string());
+            let instruction = format!("{:?}", cm.tensor_graph.operations[*op_id]);
 
             println!(
-                "  Operation {:?} (Layer {} - {})",
-                op_id, layer_id, layer_name
+                "  Operation {} (Layer {:?} - {})",
+                op_id,
+                layer_id_opt.unwrap(),
+                layer_name
             );
             println!("  Instruction: {}", instruction);
 
-            if let Some(inputs) = cm.tensor_graph.operation_inputs.get(op_id) {
-                println!("  Inputs:");
-                for input in inputs {
-                    let tensor = cm.tensor_graph.tensors.get(input);
-                    let shape = tensor
-                        .map(|t| format!("{:?}", t.desc.to_dims()))
-                        .unwrap_or_else(|| "Unknown".to_string());
+            let inputs = cm.tensor_graph.get_operation_inputs(*op_id);
+            println!("  Inputs:");
+            for input in inputs {
+                let tensor = &cm.tensor_graph.tensors[input];
+                let shape = format!("{:?}", tensor.desc.to_dims());
 
-                    let status = if produced_tensors.contains(input) {
-                        "✓ AVAILABLE"
+                let location = match &tensor.data {
+                    TensorData::CPU(_) => "CPU".to_string(),
+                    TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
+                    TensorData::Unallocated => "Unallocated".to_string(),
+                };
+
+                let producers: String = cm
+                    .tensor_graph
+                    .get_tensor_producers(input)
+                    .iter()
+                    .map(|&op| format!("{}", op))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                println!(
+                    "    Tensor {} - Shape: {} - Location: {} - Producers: {}",
+                    input,
+                    shape,
+                    location,
+                    if producers.is_empty() {
+                        "None".to_string()
                     } else {
-                        "✗ NOT AVAILABLE"
-                    };
-
-                    let location = tensor
-                        .map(|t| match &t.data {
-                            TensorData::CPU(_) => "CPU".to_string(),
-                            TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
-                            TensorData::Unallocated => "Unallocated".to_string(),
-                        })
-                        .unwrap_or("Unknown".to_string());
-
-                    // Determine tensor role structurally
-                    let role = if cm.tensor_graph.input_tensors.contains(input) {
-                        "INPUT"
-                    } else if cm
-                        .tensor_graph
-                        .tensor_dependencies
-                        .get(input)
-                        .map_or(true, |deps| deps.is_empty())
-                    {
-                        "PARAMETER"
-                    } else {
-                        "INTERMEDIATE"
-                    };
-
-                    let producers = cm
-                        .tensor_graph
-                        .tensor_dependencies
-                        .get(input)
-                        .map(|deps| {
-                            deps.iter()
-                                .map(|op| format!("{:?}", op))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_else(|| "None".to_string());
-
-                    // Display tensor name in quotes to indicate it's arbitrary
-                    println!(
-                        "    TensorId({}, \"{}\") - [{}] - Shape: {} - {} - Location: {} - Producers: {}",
-                        input.0, input.1, role, shape, status, location, producers
-                    );
-                }
+                        producers
+                    }
+                );
             }
 
-            if let Some(outputs) = cm.tensor_graph.operation_outputs.get(op_id) {
-                println!("  Outputs:");
-                for output in outputs {
-                    let tensor = cm.tensor_graph.tensors.get(output);
-                    let shape = tensor
-                        .map(|t| format!("{:?}", t.desc.to_dims()))
-                        .unwrap_or_else(|| "Unknown".to_string());
+            let outputs = cm.tensor_graph.get_operation_outputs(*op_id);
+            println!("  Outputs:");
+            for output in outputs {
+                let tensor = &cm.tensor_graph.tensors[output];
+                let shape = format!("{:?}", tensor.desc.to_dims());
 
-                    let location = tensor
-                        .map(|t| match &t.data {
-                            TensorData::CPU(_) => "CPU".to_string(),
-                            TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
-                            TensorData::Unallocated => "Unallocated".to_string(),
-                        })
-                        .unwrap_or("Unknown".to_string());
+                let location = match &tensor.data {
+                    TensorData::CPU(_) => "CPU".to_string(),
+                    TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
+                    TensorData::Unallocated => "Unallocated".to_string(),
+                };
 
-                    // Determine tensor role structurally
-                    let role = if cm.tensor_graph.output_tensors.contains(output) {
-                        "OUTPUT"
+                let consumers: Vec<String> = cm
+                    .tensor_graph
+                    .get_tensor_consumers(output)
+                    .iter()
+                    .map(|&op| format!("{}", op))
+                    .collect();
+
+                println!(
+                    "    Tensor {} - Shape: {} - Location: {} - Consumers: {}",
+                    output,
+                    shape,
+                    location,
+                    if consumers.is_empty() {
+                        "None".to_string()
                     } else {
-                        "INTERMEDIATE"
-                    };
+                        consumers.join(", ")
+                    }
+                );
 
-                    let consumers =
-                        find_tensor_consumers(output, &cm.tensor_graph.operation_inputs);
-
-                    // Display tensor name in quotes to indicate it's arbitrary
-                    println!(
-                        "    TensorId({}, \"{}\") - [{}] - Shape: {} - Location: {} - Consumers: {}",
-                        output.0, output.1, role, shape, location, consumers
-                    );
-
-                    produced_tensors.insert(output.clone());
-                }
+                produced_tensors.insert(output);
             }
 
             println!();
@@ -218,35 +189,16 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             }
 
             println!("  Tensors:");
-            let layer_tensors: Vec<_> = cm
-                .tensor_graph
-                .tensors
-                .iter()
-                .filter(|(id, _)| id.0 == *layer_id)
+            let layer_tensors: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+                .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(*layer_id)))
                 .collect();
 
-            for (tensor_id, tensor) in layer_tensors {
-                // Determine tensor role structurally
-                let role = if cm.tensor_graph.input_tensors.contains(tensor_id) {
-                    "INPUT"
-                } else if cm.tensor_graph.output_tensors.contains(tensor_id) {
-                    "OUTPUT"
-                } else if cm
-                    .tensor_graph
-                    .tensor_dependencies
-                    .get(tensor_id)
-                    .map_or(true, |deps| deps.is_empty())
-                {
-                    "PARAMETER"
-                } else {
-                    "INTERMEDIATE"
-                };
+            for tensor_id in layer_tensors {
+                let tensor = &cm.tensor_graph.tensors[tensor_id];
 
-                // Display tensor name in quotes to indicate it's arbitrary
                 println!(
-                    "    \"{}\": [{}] - Shape {:?}, Size: {}",
-                    tensor_id.1,
-                    role,
+                    "    Tensor {}: Shape {:?}, Size: {}",
+                    tensor_id,
                     tensor.desc.to_dims(),
                     cm.format_memory_mb(tensor.desc.size_in_bytes() as u64)
                 );
@@ -268,27 +220,4 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         "\nMemory Requirements: {}",
         cm.format_memory_mb(total_memory)
     );
-
-    let mut total_params = 0;
-    for layer_id in &layer_ids {
-        total_params += cm.calculate_layer_parameters(*layer_id);
-    }
-    println!("Total Parameters: {}", total_params);
-}
-
-fn find_tensor_consumers(
-    tensor_id: &TensorId,
-    operation_inputs: &std::collections::HashMap<OperationId, HashSet<TensorId>>,
-) -> String {
-    let consumers = operation_inputs
-        .iter()
-        .filter(|(_, inputs)| inputs.contains(tensor_id))
-        .map(|(op_id, _)| format!("{:?}", op_id))
-        .collect::<Vec<_>>();
-
-    if consumers.is_empty() {
-        "None".to_string()
-    } else {
-        consumers.join(", ")
-    }
 }

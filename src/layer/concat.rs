@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::{
-    dataloader::error::VKMLEngineError, model::instruction::Instruction,
+    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -70,7 +68,7 @@ impl Layer for ConcatLayer {
 
     fn output_shapes(
         &self,
-        batch_size: usize,
+        _batch_size: usize,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
         if input_shapes.len() < 2 {
@@ -142,43 +140,35 @@ impl Layer for ConcatLayer {
             )));
         }
 
-        let mut tensors = HashMap::new();
-        let mut instructions = Vec::new();
+        let mut tensors = Vec::new();
+        let mut input_tensor_indices = Vec::new();
 
-        // Create a tensor entry for each input with its correct shape
-        for (i, shape) in input_shapes.iter().enumerate() {
-            let tensor_name = format!("input{}", i);
-            tensors.insert(tensor_name.clone(), (*shape).clone());
-
-            // Create ReadInput instruction for this input
-            instructions.push(Instruction::ReadInput {
-                layer_idx: i,
-                layer_tensor_idx: 0,
-                dst: tensor_name,
-            });
+        // Add input tensors
+        for shape in input_shapes {
+            let idx = tensors.len();
+            tensors.push((*shape).clone());
+            input_tensor_indices.push(idx);
         }
 
         // Calculate output shape
         let output_shapes = self.output_shapes(batch_size, input_shapes)?;
         let output_shape = output_shapes[0].clone();
 
-        tensors.insert("output".to_string(), output_shape);
+        // Add output tensor
+        let output_idx = tensors.len();
+        tensors.push(output_shape);
 
-        // Create concat instruction with all inputs
-        let input_names = (0..input_shapes.len())
-            .map(|i| format!("input{}", i))
-            .collect::<Vec<_>>();
+        // Create Concat instruction
+        let instruction = Instructions::concat(input_tensor_indices, output_idx, self.dim);
 
-        instructions.push(Instruction::Concat {
-            sources: input_names,
-            dst: "output".to_string(),
-            dim: self.dim,
-        });
+        // Get input mappings using the trait method
+        let input_mappings = self.map_input_tensors(input_shapes.len());
 
         Ok(LayerExecution {
             tensors,
-            instructions,
-            outputs: vec!["output".to_string()],
+            instructions: vec![instruction],
+            outputs: vec![output_idx],
+            input_mappings,
         })
     }
 }

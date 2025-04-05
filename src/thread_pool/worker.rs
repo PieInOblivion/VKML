@@ -1,16 +1,14 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use crate::dataloader::data_batch::DataBatch;
-use crate::gpu::gpu_memory::GPUMemory;
-use crate::model::instruction::Instruction;
+use crate::instruction::instruction::Instruction;
 use crate::model::weight_init::WeightInit;
-use crate::tensor::tensor_data::TensorData;
 use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
-use crate::tensor_graph::tensor_graph::{OperationId, TensorId};
+use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use ash::vk;
 use image::ColorType;
 use rand::distr::Uniform;
@@ -52,10 +50,15 @@ pub enum WorkType {
         fan_in: usize,
         fan_out: usize,
     },
-    TensorOperations {
+    GpuBatchOperations {
         operations: Vec<OperationId>,
-        instructions: Vec<Instruction>,
+        instruction_indices: Vec<usize>,
         shared_gpu: Arc<SharedGPU>,
+        shared_tensor_graph: Arc<SharedTensorGraph>,
+    },
+    SingleCpuOperation {
+        operation_id: OperationId,
+        instruction_idx: usize,
         shared_tensor_graph: Arc<SharedTensorGraph>,
     },
 }
@@ -241,14 +244,27 @@ impl Worker {
             } => Self::generate_weight_init_chunk(
                 init_type, start_idx, end_idx, data_ptr, fan_in, fan_out,
             ),
-            WorkType::TensorOperations {
+            WorkType::GpuBatchOperations {
                 operations,
-                instructions,
+                instruction_indices,
                 shared_gpu,
                 shared_tensor_graph,
-            } => {
-                Self::execute_batch_work(operations, instructions, shared_gpu, shared_tensor_graph)
-            }
+            } => Self::execute_gpu_batch_work(
+                operations,
+                instruction_indices,
+                shared_gpu,
+                shared_tensor_graph,
+            ),
+
+            WorkType::SingleCpuOperation {
+                operation_id,
+                instruction_idx,
+                shared_tensor_graph,
+            } => Self::execute_single_cpu_operation(
+                operation_id,
+                instruction_idx,
+                shared_tensor_graph,
+            ),
         };
 
         work_item.future.complete(result);
@@ -378,366 +394,112 @@ impl Worker {
         WorkResult::WeightInitChunk
     }
 
-    pub fn execute_batch_work(
+    pub fn execute_gpu_batch_work(
         operations: Vec<OperationId>,
-        instructions: Vec<Instruction>,
+        instruction_indices: Vec<usize>,
         shared_gpu: Arc<SharedGPU>,
         shared_tensor_graph: Arc<SharedTensorGraph>,
     ) -> WorkResult {
-        // Safely dereference the raw pointers
-        let tensor_graph = unsafe { &*shared_tensor_graph.tensor_graph };
-        let gpu = shared_gpu.gpu.map(|gpu_ptr| unsafe { &*gpu_ptr });
+        // Skip if no GPU or no operations
+        let Some(gpu) = shared_gpu.gpu.map(|gpu_ptr| unsafe { &*gpu_ptr }) else {
+            println!("No GPU given to gpu function");
+            return WorkResult::TensorOperations;
+        };
 
-        // Early return if no operations
         if operations.is_empty() {
             return WorkResult::TensorOperations;
         }
 
-        // Check if we have a GPU to work with
-        if let Some(gpu) = gpu {
-            // GPU implementation
+        unsafe {
+            // Allocate command buffers for all operations
+            let alloc_info = vk::CommandBufferAllocateInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                p_next: std::ptr::null(),
+                command_pool: gpu.command_pool,
+                level: vk::CommandBufferLevel::PRIMARY,
+                command_buffer_count: operations.len() as u32,
+                _marker: std::marker::PhantomData,
+            };
 
-            unsafe {
-                // Allocate command buffers for all operations
-                let alloc_info = vk::CommandBufferAllocateInfo {
-                    s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                    p_next: std::ptr::null(),
-                    command_pool: gpu.command_pool,
-                    level: vk::CommandBufferLevel::PRIMARY,
-                    command_buffer_count: operations.len() as u32,
-                    _marker: std::marker::PhantomData,
-                };
-
-                let command_buffers = match gpu.device.allocate_command_buffers(&alloc_info) {
-                    Ok(buffers) => buffers,
-                    Err(e) => {
-                        eprintln!("Failed to allocate command buffers: {}", e);
-                        return WorkResult::TensorOperations;
-                    }
-                };
-
-                // Verify that we received the exact number of command buffers we requested
-                if command_buffers.len() != operations.len() {
-                    eprintln!(
-                        "Mismatch between allocated command buffers ({}) and operations ({})",
-                        command_buffers.len(),
-                        operations.len()
-                    );
-                    // Free the command buffers we did get
-                    gpu.device
-                        .free_command_buffers(gpu.command_pool, &command_buffers);
+            let command_buffers = match gpu.device.allocate_command_buffers(&alloc_info) {
+                Ok(buffers) => buffers,
+                Err(e) => {
+                    eprintln!("Failed to allocate command buffers: {}", e);
                     return WorkResult::TensorOperations;
                 }
-
-                // Record commands for each operation
-                let mut valid_buffers = Vec::new();
-
-                for i in 0..operations.len() {
-                    let op_id = &operations[i];
-                    let cmd_buffer = command_buffers[i];
-                    let instruction = &instructions[i];
-                    let layer_id = op_id.0;
-
-                    // Record commands based on instruction type
-                    let result = match instruction {
-                        Instruction::Add { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_add_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::Sub { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_sub_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::Mul { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_mul_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::Div { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_div_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::Max { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_max_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::Min { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_mem = tensor_graph.get_gpu_memory_or_panic(&src1_id);
-                            let src2_mem = tensor_graph.get_gpu_memory_or_panic(&src2_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_min_command_buffer(cmd_buffer, src1_mem, src2_mem, dst_mem)
-                        }
-
-                        Instruction::ReLU { src, dst } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_relu_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::LeakyReLU { src, dst, alpha } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_leaky_relu_command_buffer(
-                                cmd_buffer, src_mem, dst_mem, *alpha,
-                            )
-                        }
-
-                        Instruction::Sigmoid { src, dst } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_sigmoid_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::Softmax { src, dst, dim } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            // Get tensor shape for softmax
-                            let tensor = tensor_graph.get_tensor_by_id_or_error(&src_id).unwrap();
-
-                            gpu.create_softmax_command_buffer(
-                                cmd_buffer,
-                                src_mem,
-                                dst_mem,
-                                *dim,
-                                &tensor.desc.to_dims(),
-                            )
-                        }
-
-                        Instruction::Tanh { src, dst } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_tanh_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::GELU { src, dst } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_gelu_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::SiLU { src, dst } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_silu_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::Conv2D {
-                            src,
-                            weights,
-                            bias,
-                            dst,
-                            stride: (stride_h, stride_w),
-                            padding: (padding_h, padding_w),
-                        } => {
-                            let src_id = TensorId(layer_id, src.clone());
-                            let weights_id = TensorId(layer_id, weights.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let weights_mem = tensor_graph.get_gpu_memory_or_panic(&weights_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            // Get tensor descriptors
-                            let src_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&src_id).unwrap();
-
-                            let weights_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&weights_id).unwrap();
-
-                            let dst_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&dst_id).unwrap();
-
-                            // Get optional bias memory
-                            let bias_mem = bias.as_ref().and_then(|bias_name| {
-                                let bias_id = TensorId(layer_id, bias_name.clone());
-                                Some(tensor_graph.get_gpu_memory_or_panic(&bias_id))
-                            });
-
-                            // Call the improved Conv2D implementation
-                            gpu.create_conv2d_command_buffer(
-                                cmd_buffer,
-                                src_mem,
-                                weights_mem,
-                                bias_mem,
-                                dst_mem,
-                                src_tensor,
-                                weights_tensor,
-                                dst_tensor,
-                                *stride_h,
-                                *stride_w,
-                                *padding_h,
-                                *padding_w,
-                            )
-                        }
-
-                        Instruction::ReadInput { .. } => {
-                            // ReadInput is just a logical reference - no actual computation needed
-                            // The tensor connections are already established in the tensor graph
-                            // This is essentially a no-op at execution time
-                            continue;
-                        }
-
-                        Instruction::Copy { src, dst } => {
-                            // Both tensors are in the same layer
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src_mem = tensor_graph.get_gpu_memory_or_panic(&src_id);
-                            let dst_mem = tensor_graph.get_gpu_memory_or_panic(&dst_id);
-
-                            gpu.create_copy_command_buffer(cmd_buffer, src_mem, dst_mem)
-                        }
-
-                        Instruction::TransferToDevice { src, dst, .. } => {
-                            // Form the source and destination tensor IDs
-                            let src_id = TensorId(layer_id, src.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            // Get the tensors from the tensor graph
-                            let src_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&src_id).unwrap();
-                            let dst_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&dst_id).unwrap();
-
-                            // Get the data from the source tensor
-                            let data = src_tensor.data.get_data().unwrap();
-
-                            // Update the destination tensor with the data
-                            dst_tensor.data.update_data(data).unwrap();
-
-                            // No need to create a command buffer for CPU transfer
-                            // We just skip the command buffer entirely and return success
-                            Ok(())
-                        }
-
-                        Instruction::MatMul { src1, src2, dst } => {
-                            let src1_id = TensorId(layer_id, src1.clone());
-                            let src2_id = TensorId(layer_id, src2.clone());
-                            let dst_id = TensorId(layer_id, dst.clone());
-
-                            let src1_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&src1_id).unwrap();
-                            let src2_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&src2_id).unwrap();
-                            let dst_tensor =
-                                tensor_graph.get_tensor_by_id_or_error(&dst_id).unwrap();
-
-                            // Use the unified matmul implementation which will internally choose
-                            // between specialised and generic implementations
-                            gpu.create_matmul_command_buffer(
-                                cmd_buffer,
-                                src1_tensor,
-                                src2_tensor,
-                                dst_tensor,
-                            )
-                        }
-
-                        // Other operations not implemented yet
-                        _ => {
-                            panic!(
-                                "Instruction type {:?} not implemented for GPU execution",
-                                instruction
-                            );
-                        }
-                    };
-
-                    // If command buffer was successfully recorded, add it to valid buffers
-                    match result {
-                        Ok(_) => {
-                            valid_buffers.push(cmd_buffer);
-                        }
-                        Err(e) => eprintln!(
-                            "Failed to record command buffer for operation {:?}: {}",
-                            op_id, e
-                        ),
-                    }
-                }
-
-                // Submit all valid command buffers as a batch across all compute queues
-                if !valid_buffers.is_empty() {
-                    if let Err(e) = gpu.submit_command_buffers_and_wait(&valid_buffers) {
-                        eprintln!("Failed to submit batch operations: {}", e);
-                    }
-                }
-
+            };
+
+            // Verify that we received the correct number of command buffers
+            if command_buffers.len() != operations.len() {
+                eprintln!(
+                    "Mismatch between allocated command buffers ({}) and operations ({})",
+                    command_buffers.len(),
+                    operations.len()
+                );
                 gpu.device
                     .free_command_buffers(gpu.command_pool, &command_buffers);
+                return WorkResult::TensorOperations;
             }
-        } else {
-            // CPU implementation (placeholder)
-            eprintln!("CPU batch execution not implemented yet");
+
+            // Record commands for each operation
+            let mut valid_buffers = Vec::new();
+            let tensor_graph = &*shared_tensor_graph.tensor_graph;
+
+            for i in 0..operations.len() {
+                let instruction = tensor_graph.get_instruction_or_panic(instruction_indices[i]);
+
+                // Use the instruction's command buffer creation method
+                match instruction.create_command_buffer(gpu, command_buffers[i], tensor_graph) {
+                    Ok(_) => {
+                        valid_buffers.push(command_buffers[i]);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to record command buffer for operation {:?}: {}",
+                            &operations[i], e
+                        );
+                    }
+                }
+            }
+
+            // Submit all valid command buffers
+            if !valid_buffers.is_empty() {
+                if let Err(e) = gpu.submit_command_buffers_and_wait(&valid_buffers) {
+                    eprintln!("Failed to submit batch operations: {}", e);
+                }
+            }
+
+            gpu.device
+                .free_command_buffers(gpu.command_pool, &command_buffers);
+        }
+
+        WorkResult::TensorOperations
+    }
+
+    // Specialized CPU single operation function
+    pub fn execute_single_cpu_operation(
+        operation_id: OperationId,
+        instruction_idx: usize,
+        shared_tensor_graph: Arc<SharedTensorGraph>,
+    ) -> WorkResult {
+        unsafe {
+            // Get the tensor graph pointer
+            let tensor_graph_ptr = shared_tensor_graph.tensor_graph as *mut TensorGraph;
+
+            // Check if the instruction exists
+            if instruction_idx >= (*tensor_graph_ptr).operations.len() {
+                eprintln!("Invalid instruction index: {}", instruction_idx);
+                return WorkResult::TensorOperations;
+            }
+
+            // Get a pointer to the specific instruction
+            let instruction_ptr =
+                &(*tensor_graph_ptr).operations[instruction_idx] as *const Box<dyn Instruction>;
+
+            // Execute with separate pointers
+            if let Err(e) = (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr) {
+                eprintln!("CPU execution failed for operation {}: {}", operation_id, e);
+            }
         }
 
         WorkResult::TensorOperations
