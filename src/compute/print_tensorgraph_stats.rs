@@ -31,13 +31,13 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         println!("{:-<100}", "");
 
         for op_id in operations {
-            let layer_id_opt = cm.tensor_graph.operations[*op_id]
-                .get_input_tensor_ids()
-                .first()
-                .and_then(|tensor_id| cm.tensor_graph.tensor_to_layer[*tensor_id]);
+            let layer_id = cm.tensor_graph.operation_to_layer[*op_id];
 
-            let layer_name = layer_id_opt
-                .and_then(|layer_id| cm.model.layers.get(&layer_id))
+            // Fetch layer name using the correct layer_id
+            let layer_name = cm
+                .model
+                .layers
+                .get(&layer_id)
                 .map(|layer| layer.layer.name())
                 .unwrap_or_else(|| "Unknown".to_string());
 
@@ -45,9 +45,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
 
             println!(
                 "  Operation {} (Layer {:?} - {})",
-                op_id,
-                layer_id_opt.unwrap(),
-                layer_name
+                op_id, layer_id, layer_name
             );
             println!("  Instruction: {}", instruction);
 

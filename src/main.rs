@@ -274,10 +274,14 @@ fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std:
     let batch_size = 64;
     let mut model = GraphModel::new(batch_size);
 
-    // Define layer sizes to consume around 10GB total
-    // For weights: in_features * out_features * 4 bytes per f32
-    // Each linear layer of 16K x 16K = 1GB for weights
-    let feature_size = 16 * 1024; // 16K features
+    // Intel iGPU fails on layer of 8001*8001
+    // 8000*8000*4(bytes for f32) = 256,000,000, or 256MB.
+    // Maybe a heap allotment limit?
+    // Vulkan physical device limit says it can be:
+    // max_storage_buffer_range: 4294967295,
+    // max_memory_allocation_count: 4294967295,
+    // Physical memory limits properties say 32767 x 32767 f32...
+    let feature_size = 8000;
 
     println!("\nBuilding model with layers that consume ~10GB memory...");
 
@@ -287,7 +291,7 @@ fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std:
 
     // Add linear layers to consume memory
     let mut prev_layer_id = input_id;
-    for i in 0..1 {
+    for i in 0..20 {
         // Add 7 large layers (plus input = 10 total)
         let next_id = model.add_layer_with(
             model.next_available_id(),

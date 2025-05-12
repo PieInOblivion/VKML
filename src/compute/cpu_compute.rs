@@ -6,7 +6,7 @@ use super::memory_tracker::MemoryTracker;
 
 pub struct CPUCompute {
     pub memory_tracking: MemoryTracker,
-    thread_pool: Arc<ThreadPool>
+    thread_pool: Arc<ThreadPool>,
 }
 
 // TODO: Implement CPU layer computations, forward, backward etc.
@@ -22,12 +22,14 @@ impl CPUCompute {
             // If cannot get available system memory, assume there is none
             // Crate returns in kilobytes. We need bytes
             // TODO: Print warning to user if sys_info returns 0 or error
-            sys_info::mem_info().map(|info| info.avail * 1024).unwrap_or(0)
+            sys_info::mem_info()
+                .map(|info| info.avail * 1024)
+                .unwrap_or(0)
         });
 
         Self {
             memory_tracking: MemoryTracker::new(memory_limit),
-            thread_pool: thread_pool.clone()
+            thread_pool: thread_pool.clone(),
         }
     }
 }

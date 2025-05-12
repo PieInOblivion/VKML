@@ -12,14 +12,16 @@ use crate::thread_pool::worker::{WorkResult, WorkType};
 
 use super::config::DataLoaderConfig;
 use super::data_batch::DataBatch;
-use super::dataloader::{SourceFormat, DataLoader, DatasetSplit};
+use super::dataloader::{DataLoader, DatasetSplit, SourceFormat};
 use super::error::VKMLEngineError;
 
 impl From<ColorType> for SourceFormat {
     fn from(color_type: ColorType) -> Self {
         match color_type {
             ColorType::L8 | ColorType::La8 | ColorType::Rgb8 | ColorType::Rgba8 => SourceFormat::U8,
-            ColorType::L16 | ColorType::La16 | ColorType::Rgb16 | ColorType::Rgba16 => SourceFormat::U16,
+            ColorType::L16 | ColorType::La16 | ColorType::Rgb16 | ColorType::Rgba16 => {
+                SourceFormat::U16
+            }
             ColorType::Rgb32F | ColorType::Rgba32F => SourceFormat::F32,
             _ => panic!("Unsupported color type"),
         }
@@ -44,7 +46,11 @@ pub struct DirectoryImageLoader {
 }
 
 impl DirectoryImageLoader {
-    pub fn new(dir: &str, config: Option<DataLoaderConfig>, thread_pool: Arc<ThreadPool>) -> Result<Self, VKMLEngineError> {
+    pub fn new(
+        dir: &str,
+        config: Option<DataLoaderConfig>,
+        thread_pool: Arc<ThreadPool>,
+    ) -> Result<Self, VKMLEngineError> {
         let path = Path::new(dir);
         if !path.exists() {
             return Err(VKMLEngineError::DirectoryNotFound(dir.to_string()));
@@ -69,7 +75,7 @@ impl DirectoryImageLoader {
             image_color_type: ColorType::Rgb32F,
             image_source_format: SourceFormat::F32,
             config: config.unwrap_or_default(),
-            thread_pool
+            thread_pool,
         };
 
         loader.load_dataset()?;
@@ -108,7 +114,9 @@ impl DirectoryImageLoader {
             if self.config.shuffle_seed.is_none() {
                 self.config.shuffle_seed = Some(rand::rng().random());
             }
-            Some(Arc::new(Mutex::new(StdRng::seed_from_u64(self.config.shuffle_seed.unwrap()))))
+            Some(Arc::new(Mutex::new(StdRng::seed_from_u64(
+                self.config.shuffle_seed.unwrap(),
+            ))))
         } else {
             None
         };
@@ -129,7 +137,9 @@ impl DirectoryImageLoader {
         self.image_color_type = img.color();
         self.image_source_format = SourceFormat::from(img.color());
 
-        self.image_bytes_per_image = self.image_width as usize * self.image_height as usize * self.image_bytes_per_pixel as usize;
+        self.image_bytes_per_image = self.image_width as usize
+            * self.image_height as usize
+            * self.image_bytes_per_pixel as usize;
         self.image_total_bytes_per_batch = self.image_bytes_per_image * self.config.batch_size;
         Ok(())
     }
@@ -153,7 +163,11 @@ impl DirectoryImageLoader {
 impl DataLoader for DirectoryImageLoader {
     type BatchDataReference = Vec<PathBuf>;
 
-    fn get_batch_reference(&self, split: DatasetSplit, batch_number: usize) -> Option<Self::BatchDataReference> {
+    fn get_batch_reference(
+        &self,
+        split: DatasetSplit,
+        batch_number: usize,
+    ) -> Option<Self::BatchDataReference> {
         let (train_size, test_size, _) = self.get_split_sizes();
         let (start_index, end_index) = match split {
             DatasetSplit::Train => (0, train_size),
@@ -179,7 +193,8 @@ impl DataLoader for DirectoryImageLoader {
         }
 
         let indices = &self.dataset_indices[start_index + batch_start..start_index + batch_end];
-        let paths = indices.iter()
+        let paths = indices
+            .iter()
             .map(|&idx| self.dir.join(&*self.dataset[idx]))
             .collect();
 
@@ -187,7 +202,10 @@ impl DataLoader for DirectoryImageLoader {
     }
 
     fn shuffle_whole_dataset(&mut self) -> Result<(), VKMLEngineError> {
-        let mut rng = self.config.rng.as_ref()
+        let mut rng = self
+            .config
+            .rng
+            .as_ref()
             .ok_or(VKMLEngineError::RngNotSet)?
             .lock()
             .map_err(|_| VKMLEngineError::RngLockError)?;
@@ -198,7 +216,10 @@ impl DataLoader for DirectoryImageLoader {
     fn shuffle_individual_datasets(&mut self) -> Result<(), VKMLEngineError> {
         let (train_size, test_size, _) = self.get_split_sizes();
 
-        let mut rng = self.config.rng.as_ref()
+        let mut rng = self
+            .config
+            .rng
+            .as_ref()
             .ok_or(VKMLEngineError::RngNotSet)?
             .lock()
             .map_err(|_| VKMLEngineError::RngLockError)?;
@@ -218,16 +239,19 @@ impl DataLoader for DirectoryImageLoader {
             image_bytes_per_image: self.image_bytes_per_image,
             image_color_type: self.image_color_type,
             batch_size,
-            thread_pool: self.get_thread_pool()
+            thread_pool: self.get_thread_pool(),
         }
     }
 
     fn process_work_result(&self, result: WorkResult, expected_batch: usize) -> DataBatch {
         match result {
-            WorkResult::LoadImageBatch { batch, batch_number } => {
+            WorkResult::LoadImageBatch {
+                batch,
+                batch_number,
+            } => {
                 debug_assert_eq!(batch_number, expected_batch);
                 batch
-            },
+            }
             _ => panic!("Unexpected work result type"),
         }
     }

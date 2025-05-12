@@ -95,6 +95,12 @@ impl ComputeManager {
         Ok(gpus)
     }
 
+    // This is essentially a graph partitioning problem.
+    // This current approach is a greedy approach that may not fit best for most models,
+    // but it is quick to compute, and good enough in most cases.
+    // An example of where it doesn't work is for example feeding the algorithm two isolated graphs,
+    // while allocating them fully on seperate GPUs would be best, this will allocate half each
+    // on each gpu.
     // Requirements for this function as currently designed.
     // There's mostly two stages of optimisation for the flattened tensor graph
     // The execution plan which plans parrallel compute
@@ -343,11 +349,15 @@ impl ComputeManager {
         // 2. Insert transfer operations into the instruction list
         let mut op_id_shift = 0;
         for (insert_before_op, transfer_instr) in transfer_operations {
-            // Adjust for previous insertions
             let adjusted_pos = insert_before_op + op_id_shift;
+            // Preserve layer mapping for the new transfer op by copying the layer of the original op
+            let layer_id = self.tensor_graph.operation_to_layer[insert_before_op];
             self.tensor_graph
                 .operations
                 .insert(adjusted_pos, transfer_instr);
+            self.tensor_graph
+                .operation_to_layer
+                .insert(adjusted_pos, layer_id);
             op_id_shift += 1;
         }
 
@@ -386,7 +396,6 @@ impl ComputeManager {
         Ok(())
     }
 
-    // Helper method to determine weight initialization for a tensor
     fn get_weight_init_for_tensor(&self, tensor_id: usize) -> WeightInit {
         if let Some(layer_id) = self.tensor_graph.tensor_to_layer[tensor_id] {
             if let Some(layer) = self.model.layers.get(&layer_id) {
@@ -513,7 +522,6 @@ impl ComputeManager {
     }
 
     pub fn execute(&self) -> Result<(), VKMLEngineError> {
-        // Get the execution plan from tensor graph
         let execution_plan = self.tensor_graph.create_execution_plan();
         let device_grouped_plan = self.group_operations_by_device(&execution_plan)?;
 
@@ -532,7 +540,6 @@ impl ComputeManager {
                     continue;
                 }
 
-                // Determine device for this group
                 let device = self.determine_operation_device(&per_device_ops[0])?;
 
                 match device {
@@ -547,7 +554,6 @@ impl ComputeManager {
                         let instruction_indices: Vec<usize> =
                             per_device_ops.iter().map(|op_id| *op_id).collect();
 
-                        // Submit GPU batch to thread pool
                         futures.push(self.thread_pool.submit_work(WorkType::GpuBatchOperations {
                             operations: per_device_ops,
                             instruction_indices,
@@ -556,7 +562,6 @@ impl ComputeManager {
                         }));
                     }
                     DeviceLocation::CPU => {
-                        // Submit individual CPU operations to thread pool
                         for &op_id in &per_device_ops {
                             futures.push(self.thread_pool.submit_work(
                                 WorkType::SingleCpuOperation {
@@ -570,7 +575,6 @@ impl ComputeManager {
                 }
             }
 
-            // Wait for all operations to complete
             for future in futures {
                 future.wait();
             }
@@ -585,7 +589,6 @@ impl ComputeManager {
     ) -> Result<Vec<Vec<Vec<OperationId>>>, VKMLEngineError> {
         let mut device_grouped_plan = Vec::with_capacity(execution_plan.len());
 
-        // Process each stage of the execution plan
         for stage in execution_plan {
             let mut device_batches: HashMap<DeviceLocation, Vec<OperationId>> = HashMap::new();
 
@@ -595,7 +598,6 @@ impl ComputeManager {
                 device_batches.entry(device).or_default().push(*op_id);
             }
 
-            // Convert HashMap to Vec<Vec<OperationId>>
             let device_stage: Vec<Vec<OperationId>> = device_batches.into_values().collect();
             device_grouped_plan.push(device_stage);
         }
@@ -607,7 +609,6 @@ impl ComputeManager {
         &self,
         op_id: &OperationId,
     ) -> Result<DeviceLocation, VKMLEngineError> {
-        // Get input tensor IDs for this operation
         let input_tensor_ids = self.tensor_graph.get_operation_inputs(*op_id);
 
         // Check input tensors to determine device
@@ -630,7 +631,6 @@ impl ComputeManager {
             }
         }
 
-        // If we can't determine from tensor data, return error
         Err(VKMLEngineError::VulkanLoadError(format!(
             "Operation {:?} has no tensors allocated to a device",
             op_id
@@ -638,7 +638,7 @@ impl ComputeManager {
     }
 
     pub fn format_memory_mb(&self, bytes: u64) -> String {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+        format!("{:.2} MiB", bytes as f64 / (1024.0 * 1024.0))
     }
 
     pub fn get_memory_usage_summary(&self) -> Vec<(String, String, String)> {
@@ -679,7 +679,7 @@ impl Drop for ComputeManager {
         // Used to transmute a reference to tensorgraph and gpu for worker threads
         // so manual drop was required because of 'static lifetime.
         // This will remain despite the change for now just incase.
-        // Will remove in future when code changes are less breaking.
+        // Will remove in future when code changes are less breaking and possibly safer.
         {
             self.tensor_graph.tensors = Vec::new();
         }

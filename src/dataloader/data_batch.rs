@@ -31,8 +31,7 @@ impl DataBatch {
             }
             SourceFormat::F32 => {
                 for (i, chunk) in self.data.chunks_exact(4).enumerate() {
-                    result[i] =
-                        f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    result[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 }
             }
             _ => panic!("Unsupported colour type in to_f32 ImageBatch"),

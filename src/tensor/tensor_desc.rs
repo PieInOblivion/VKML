@@ -31,12 +31,12 @@ impl TensorDesc {
     // Reshape to new dimensions (preserving total elements)
     pub fn reshape(&mut self, new_dims: Vec<usize>) -> Result<(), String> {
         if new_dims.is_empty() {
-            format!("New shape must have at least one dimension");
+            return Err(format!("New shape must have at least one dimension"));
         }
 
         let new_elements: usize = new_dims.iter().product();
         if new_elements != self.num_elements() {
-            format!("New shape must have the same number of elements");
+            return Err(format!("New shape must have the same number of elements"));
         }
 
         self.dims = new_dims;

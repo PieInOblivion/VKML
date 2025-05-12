@@ -29,7 +29,7 @@ impl DataLoaderConfig {
 }
 
 impl Default for DataLoaderConfig {
-    fn default() -> Self {        
+    fn default() -> Self {
         Self {
             prefetch_count: 4,
             batch_size: 32,

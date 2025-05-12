@@ -216,6 +216,9 @@ impl GPU {
                 memory_properties.memory_heaps[device_local_heap_index as usize].size
             };
 
+            // TODO: Attempt to figure out why intel iGPU layer shape limit is 8000*8000
+            // Set limit as property of the gpu
+
             Ok(Self {
                 entry,
                 instance,
@@ -227,7 +230,7 @@ impl GPU {
                 descriptor_pool,
                 descriptor_set_layout,
                 compute_pipelines,
-                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64),
+                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, Kept for for testing at the moment
             })
         }
     }

@@ -4,7 +4,7 @@ use crate::dataloader::error::VKMLEngineError;
 
 pub struct MemoryTracker {
     maximum: u64,
-    current: AtomicU64
+    current: AtomicU64,
 }
 
 // This implementation doesn't require a mutable reference to update
@@ -24,20 +24,21 @@ impl MemoryTracker {
             Some(v) => v,
             None => {
                 self.current.fetch_sub(size, Ordering::SeqCst);
-                return Err(VKMLEngineError::OutOfMemory(
-                    format!("Memory allocation would overflow: current {} + size {}", prev, size)
-                ));
+                return Err(VKMLEngineError::OutOfMemory(format!(
+                    "Memory allocation would overflow: current {} + size {}",
+                    prev, size
+                )));
             }
         };
 
         if new > self.maximum {
             self.current.fetch_sub(size, Ordering::SeqCst);
-            return Err(VKMLEngineError::OutOfMemory(
-                format!("Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used", 
-                    size, prev, self.maximum)
-            ));
+            return Err(VKMLEngineError::OutOfMemory(format!(
+                "Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used",
+                size, prev, self.maximum
+            )));
         }
-        
+
         Ok(())
     }
 

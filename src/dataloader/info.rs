@@ -20,17 +20,25 @@ pub fn print_dataset_info(dl: &impl DataLoader) {
     println!("Batch size: {}", config.batch_size);
     println!();
     println!("Train split:");
-    println!("  Size: {} ({:.2}%)", train_size, config.train_ratio * 100.0);
+    println!(
+        "  Size: {} ({:.2}%)",
+        train_size,
+        config.train_ratio * 100.0
+    );
     println!("  Batches: {}", train_batches);
     println!("  Last batch size: {}", train_size % config.batch_size);
     println!();
     println!("Test split:");
-    println!("  Size: {} ({:.2}%)", test_size, config.test_ratio * 100.0); 
+    println!("  Size: {} ({:.2}%)", test_size, config.test_ratio * 100.0);
     println!("  Batches: {}", test_batches);
     println!("  Last batch size: {}", test_size % config.batch_size);
     println!();
     println!("Validation split:");
-    println!("  Size: {} ({:.2}%)", val_size, (1.0 - config.train_ratio - config.test_ratio) * 100.0);
+    println!(
+        "  Size: {} ({:.2}%)",
+        val_size,
+        (1.0 - config.train_ratio - config.test_ratio) * 100.0
+    );
     println!("  Batches: {}", val_batches);
     println!("  Last batch size: {}", val_size % config.batch_size);
     println!();

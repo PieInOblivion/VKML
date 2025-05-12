@@ -1,6 +1,15 @@
 use crate::tensor::tensor_desc::TensorDesc;
 
-use super::{activations::{ActivationLayer, ActivationType}, concat::ConcatLayer, conv2d::Conv2DLayer, element_wise::{ElementWiseLayer, ElementWiseOperation}, input_buffer::InputLayer, layer::Layer, linear::LinearLayer, reshape::ReshapeLayer};
+use super::{
+    activations::{ActivationLayer, ActivationType},
+    concat::ConcatLayer,
+    conv2d::Conv2DLayer,
+    element_wise::{ElementWiseLayer, ElementWiseOperation},
+    input_buffer::InputLayer,
+    layer::Layer,
+    linear::LinearLayer,
+    reshape::ReshapeLayer,
+};
 
 pub struct Layers;
 
@@ -8,11 +17,11 @@ impl Layers {
     pub fn input_buffer(out_features: usize) -> Box<dyn Layer> {
         Box::new(InputLayer::new(out_features))
     }
-    
+
     pub fn input_buffer_with(out_features: usize, track_gradients: bool) -> Box<dyn Layer> {
         Box::new(InputLayer::new_with(out_features, track_gradients))
     }
-    
+
     pub fn linear(in_features: usize, out_features: usize) -> Box<dyn Layer> {
         Box::new(LinearLayer::new(in_features, out_features))
     }
@@ -20,7 +29,7 @@ impl Layers {
     pub fn linear_with(in_features: usize, out_features: usize, bias: bool) -> Box<dyn Layer> {
         Box::new(LinearLayer::new_with(in_features, out_features, bias))
     }
-    
+
     pub fn conv2d(in_channels: usize, out_channels: usize) -> Box<dyn Layer> {
         Box::new(Conv2DLayer::new(in_channels, out_channels))
     }
@@ -34,7 +43,7 @@ impl Layers {
         stride_w: usize,
         padding_h: usize,
         padding_w: usize,
-        bias: bool
+        bias: bool,
     ) -> Box<dyn Layer> {
         Box::new(Conv2DLayer::new_with(
             in_features,
@@ -52,7 +61,7 @@ impl Layers {
     pub fn reshape(target_shape: TensorDesc) -> Box<dyn Layer> {
         Box::new(ReshapeLayer::new(target_shape))
     }
-    
+
     pub fn flatten() -> Box<dyn Layer> {
         Box::new(ReshapeLayer::flatten())
     }
@@ -84,11 +93,11 @@ impl Layers {
     pub fn min() -> Box<dyn Layer> {
         Box::new(ElementWiseLayer::new(ElementWiseOperation::Minimum))
     }
-    
+
     pub fn relu() -> Box<dyn Layer> {
         Box::new(ActivationLayer::new(ActivationType::ReLU))
     }
-    
+
     pub fn leakyrelu(alpha: f32) -> Box<dyn Layer> {
         Box::new(ActivationLayer::new(ActivationType::LeakyReLU(alpha)))
     }
