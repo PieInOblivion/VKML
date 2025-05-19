@@ -1,0 +1,252 @@
+use crate::{
+    dataloader::error::VKMLEngineError,
+    gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
+    tensor::tensor_desc::TensorDesc,
+    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+};
+use ash::vk;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
+use super::instruction::Instruction;
+
+#[derive(Clone)]
+pub struct AddInplaceInstruction {
+    pub dst: TensorId,
+    pub src1: TensorId,
+}
+
+impl Debug for AddInplaceInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "AddInplace(dst={}, src1={})", self.dst, self.src1)
+    }
+}
+
+impl Instruction for AddInplaceInstruction {
+    fn get_input_tensor_ids(&self) -> Vec<TensorId> {
+        vec![self.dst, self.src1]
+    }
+
+    fn get_output_tensor_ids(&self) -> Vec<TensorId> {
+        vec![self.dst]
+    }
+
+    fn remap_tensor_ids(&mut self, new_inputs: &[TensorId], new_outputs: &[TensorId]) {
+        if new_inputs.len() >= 2 {
+            self.dst = new_inputs[0];
+            self.src1 = new_inputs[1];
+        }
+        if !new_outputs.is_empty() {
+            self.dst = new_outputs[0];
+        }
+    }
+
+    fn create_command_buffer(
+        &self,
+        gpu: &GPU,
+        command_buffer: vk::CommandBuffer,
+        tensor_graph: &TensorGraph,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // must be truly in-place
+        if self.dst != self.dst {
+            panic!("AddInplace: dst must equal dst");
+        }
+
+        let mem_a = tensor_graph.get_gpu_memory_or_panic(&self.dst);
+        let mem_b = tensor_graph.get_gpu_memory_or_panic(&self.src1);
+
+        let desc_a = &tensor_graph.tensors[self.dst].desc;
+        let desc_b = &tensor_graph.tensors[self.src1].desc;
+
+        let dims_a = desc_a.to_dims();
+        let dims_b = desc_b.to_dims();
+        let dims_out = dims_a.clone(); // dst == dst
+
+        // push‐constant layout
+        #[repr(C)]
+        struct PC {
+            rank: u32,
+            pad: u32,
+            dims: [u32; 8],
+            strides_a: [u32; 8],
+            strides_b: [u32; 8],
+        }
+
+        // broadcast checks
+        let bc = TensorDesc::broadcast_shape(&dims_a, &dims_b).ok_or_else(|| {
+            Box::new(VKMLEngineError::ShapeMismatch(format!(
+                "InplaceAdd: can't broadcast {:?} vs {:?}",
+                dims_a, dims_b
+            )))
+        })?;
+        if bc != dims_out {
+            return Err(Box::new(VKMLEngineError::ShapeMismatch(format!(
+                "InplaceAdd: broadcast {:?} != out {:?}",
+                bc, dims_out
+            ))));
+        }
+
+        let rank = dims_out.len() as u32;
+        if rank > 8 {
+            return Err(Box::new(VKMLEngineError::VulkanLoadError(format!(
+                "Tensor rank {} > 8 not supported",
+                rank
+            ))));
+        }
+
+        let mut dims_arr = [0u32; 8];
+        for i in 0..dims_out.len() {
+            dims_arr[i] = dims_out[i] as u32;
+        }
+        let sa = TensorDesc::broadcast_strides(&dims_a, &dims_out);
+        let sb = TensorDesc::broadcast_strides(&dims_b, &dims_out);
+        let mut strides_a = [0u32; 8];
+        let mut strides_b = [0u32; 8];
+        for i in 0..sa.len() {
+            strides_a[i] = sa[i] as u32;
+            strides_b[i] = sb[i] as u32;
+        }
+
+        let pc_data = PC {
+            rank,
+            pad: 0,
+            dims: dims_arr,
+            strides_a,
+            strides_b,
+        };
+        let pc_bytes = unsafe {
+            std::slice::from_raw_parts(&pc_data as *const _ as *const u8, std::mem::size_of::<PC>())
+        };
+
+        unsafe {
+            // begin, alloc descriptor set, etc (same as AddInstruction)...
+            let begin_info = vk::CommandBufferBeginInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                p_next: std::ptr::null(),
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: std::ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+
+            let set_layouts = [*gpu.get_descriptor_set_layout()];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                p_next: std::ptr::null(),
+                descriptor_pool: *gpu.get_descriptor_pool(),
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                _marker: std::marker::PhantomData,
+            };
+            let ds = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
+
+            let infos = [
+                vk::DescriptorBufferInfo {
+                    buffer: mem_a.buffer,
+                    offset: 0,
+                    range: mem_a.size,
+                },
+                vk::DescriptorBufferInfo {
+                    buffer: mem_b.buffer,
+                    offset: 0,
+                    range: mem_b.size,
+                },
+            ];
+            let writes = [
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: std::ptr::null(),
+                    dst_set: ds,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &infos[0],
+                    p_image_info: std::ptr::null(),
+                    p_texel_buffer_view: std::ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: std::ptr::null(),
+                    dst_set: ds,
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &infos[1],
+                    p_image_info: std::ptr::null(),
+                    p_texel_buffer_view: std::ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+            ];
+            gpu.get_device().update_descriptor_sets(&writes, &[]);
+
+            let pipeline = gpu
+                .get_compute_pipelines()
+                .get_pipeline(GPUMemoryOperation::AdditionInplace)
+                .ok_or(format!("AdditionInplace pipeline not found"))?;
+
+            gpu.get_device().cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+            gpu.get_device().cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                gpu.get_compute_pipelines().get_layout(),
+                0,
+                &[ds],
+                &[],
+            );
+            gpu.get_device().cmd_push_constants(
+                command_buffer,
+                gpu.get_compute_pipelines().get_layout(),
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                pc_bytes,
+            );
+
+            let wg = 256;
+            let n = mem_a.size / std::mem::size_of::<f32>() as u64;
+            let groups = ((n + wg as u64 - 1) / wg as u64) as u32;
+            gpu.get_device().cmd_dispatch(command_buffer, groups, 1, 1);
+            gpu.get_device().end_command_buffer(command_buffer)?;
+        }
+        Ok(())
+    }
+
+    fn clone_box(&self) -> Box<dyn Instruction> {
+        Box::new(self.clone())
+    }
+
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+        if self.dst != self.dst {
+            return Err(VKMLEngineError::VulkanLoadError(
+                "InplaceAdd: dst must equal dst".to_string(),
+            ));
+        }
+        let a = &tensor_graph.tensors[self.dst];
+        let b = &tensor_graph.tensors[self.src1];
+        let da = a.desc.to_dims();
+        let db = b.desc.to_dims();
+
+        let out = TensorDesc::broadcast_shape(&da, &db).ok_or_else(|| {
+            VKMLEngineError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", da, db))
+        })?;
+        let mut data_a = a.data.borrow_mut_cpu_data()?;
+        let data_b = b.data.borrow_cpu_data()?;
+
+        let sa = TensorDesc::broadcast_strides(&da, &out);
+        let sb = TensorDesc::broadcast_strides(&db, &out);
+
+        for i in 0..data_a.len() {
+            let idxs = TensorDesc::unravel(i, &out);
+            let offa = TensorDesc::offset(&idxs, &sa);
+            let offb = TensorDesc::offset(&idxs, &sb);
+            data_a[offa] += data_b[offb];
+        }
+        Ok(())
+    }
+}

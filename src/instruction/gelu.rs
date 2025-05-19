@@ -1,10 +1,13 @@
 use crate::{
     dataloader::error::VKMLEngineError,
-    gpu::vk_gpu::GPU,
+    gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use ash::vk;
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{
+    fmt::{Debug, Formatter, Result as FmtResult},
+    ptr,
+};
 
 use super::instruction::Instruction;
 
@@ -48,7 +51,110 @@ impl Instruction for GELUInstruction {
         let src_mem = tensor_graph.get_gpu_memory_or_panic(&self.src);
         let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
 
-        gpu.create_gelu_command_buffer(command_buffer, src_mem, dst_mem)
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                p_next: ptr::null(),
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+
+            let set_layouts = [*gpu.get_descriptor_set_layout()];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                p_next: ptr::null(),
+                descriptor_pool: *gpu.get_descriptor_pool(),
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                _marker: std::marker::PhantomData,
+            };
+
+            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
+
+            let buffer_infos = [
+                // src buffer (binding 0)
+                vk::DescriptorBufferInfo {
+                    buffer: src_mem.buffer,
+                    offset: 0,
+                    range: src_mem.size,
+                },
+                // dst buffer (binding 2)
+                vk::DescriptorBufferInfo {
+                    buffer: dst_mem.buffer,
+                    offset: 0,
+                    range: dst_mem.size,
+                },
+            ];
+
+            let write_descriptor_sets = [
+                // src buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[0],
+                    p_image_info: ptr::null(),
+                    p_texel_buffer_view: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // dst buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[1],
+                    p_image_info: ptr::null(),
+                    p_texel_buffer_view: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+            ];
+
+            gpu.get_device()
+                .update_descriptor_sets(&write_descriptor_sets, &[]);
+
+            let pipeline = gpu
+                .get_compute_pipelines()
+                .get_pipeline(GPUMemoryOperation::GELU)
+                .ok_or(format!("{:?} pipeline not found", GPUMemoryOperation::GELU))?;
+
+            gpu.get_device().cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+
+            gpu.get_device().cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                gpu.get_compute_pipelines().get_layout(),
+                0,
+                &[descriptor_set],
+                &[],
+            );
+
+            let workgroup_size = 256;
+            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+            let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
+
+            gpu.get_device()
+                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
+
+            gpu.get_device().end_command_buffer(command_buffer)?;
+        }
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {

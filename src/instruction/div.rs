@@ -1,6 +1,7 @@
 use crate::{
     dataloader::error::VKMLEngineError,
-    gpu::vk_gpu::GPU,
+    gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
+    tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use ash::vk;
@@ -55,7 +56,133 @@ impl Instruction for DivInstruction {
         let src2_mem = tensor_graph.get_gpu_memory_or_panic(&self.src2);
         let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
 
-        gpu.create_div_command_buffer(command_buffer, src1_mem, src2_mem, dst_mem)
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                p_next: std::ptr::null(),
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: std::ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+
+            let set_layouts = [*gpu.get_descriptor_set_layout()];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                p_next: std::ptr::null(),
+                descriptor_pool: *gpu.get_descriptor_pool(),
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                _marker: std::marker::PhantomData,
+            };
+
+            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
+
+            let buffer_infos = [
+                // src1 buffer (binding 0)
+                vk::DescriptorBufferInfo {
+                    buffer: src1_mem.buffer,
+                    offset: 0,
+                    range: src1_mem.size,
+                },
+                // src2 buffer (binding 1)
+                vk::DescriptorBufferInfo {
+                    buffer: src2_mem.buffer,
+                    offset: 0,
+                    range: src2_mem.size,
+                },
+                // dst buffer (binding 2)
+                vk::DescriptorBufferInfo {
+                    buffer: dst_mem.buffer,
+                    offset: 0,
+                    range: dst_mem.size,
+                },
+            ];
+
+            let write_descriptor_sets = [
+                // src1 buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: std::ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[0],
+                    p_image_info: std::ptr::null(),
+                    p_texel_buffer_view: std::ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // src2 buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: std::ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[1],
+                    p_image_info: std::ptr::null(),
+                    p_texel_buffer_view: std::ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // dst buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: std::ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[2],
+                    p_image_info: std::ptr::null(),
+                    p_texel_buffer_view: std::ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+            ];
+
+            gpu.get_device()
+                .update_descriptor_sets(&write_descriptor_sets, &[]);
+
+            let pipeline = gpu
+                .get_compute_pipelines()
+                .get_pipeline(GPUMemoryOperation::Divide)
+                .ok_or(format!(
+                    "{:?} pipeline not found",
+                    GPUMemoryOperation::Divide
+                ))?;
+
+            gpu.get_device().cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+
+            gpu.get_device().cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                gpu.get_compute_pipelines().get_layout(),
+                0,
+                &[descriptor_set],
+                &[],
+            );
+
+            let workgroup_size = 256;
+            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+            let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
+
+            gpu.get_device()
+                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
+
+            gpu.get_device().end_command_buffer(command_buffer)?;
+        }
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
@@ -63,31 +190,45 @@ impl Instruction for DivInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
-        let src1_data = tensor_graph.tensors[self.src1].data.borrow_cpu_data()?;
-        let src2_data = tensor_graph.tensors[self.src2].data.borrow_cpu_data()?;
+        // First check that this isn't being used as an in-place operation
+        if self.src1 == self.dst || self.src2 == self.dst {
+            return Err(VKMLEngineError::VulkanLoadError(
+                "Cannot use Div for in-place operation. Use DivInplace instead.".to_string(),
+            ));
+        }
 
-        // Verify tensor sizes
-        if src1_data.len() != src2_data.len() {
+        let src1 = &tensor_graph.tensors[self.src1];
+        let src2 = &tensor_graph.tensors[self.src2];
+        let dst = &tensor_graph.tensors[self.dst];
+
+        let a = src1.desc.to_dims();
+        let b = src2.desc.to_dims();
+        let c = dst.desc.to_dims();
+
+        // 1) compute broadcast shape
+        let bc = TensorDesc::broadcast_shape(&a, &b).ok_or_else(|| {
+            VKMLEngineError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
+        })?;
+        // 2) must match dst
+        if bc != c {
             return Err(VKMLEngineError::ShapeMismatch(format!(
-                "Source tensors must have the same size: {} vs {}",
-                src1_data.len(),
-                src2_data.len()
+                "Broadcast {:?} != dst {:?}",
+                bc, c
             )));
         }
 
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+        let sa = TensorDesc::broadcast_strides(&a, &c);
+        let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        if dst_data.len() != src1_data.len() {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
-                "Destination tensor size {} doesn't match source tensor size {}",
-                dst_data.len(),
-                src1_data.len()
-            )));
-        }
+        let mut dd = dst.data.borrow_mut_cpu_data()?;
+        let d1 = src1.data.borrow_cpu_data()?;
+        let d2 = src2.data.borrow_cpu_data()?;
 
-        // Update in-place
-        for i in 0..src1_data.len() {
-            dst_data[i] = src1_data[i] / src2_data[i];
+        for i in 0..dd.len() {
+            let idxs = TensorDesc::unravel(i, &c);
+            let off1 = TensorDesc::offset(&idxs, &sa);
+            let off2 = TensorDesc::offset(&idxs, &sb);
+            dd[i] = d1[off1] / d2[off2];
         }
 
         Ok(())

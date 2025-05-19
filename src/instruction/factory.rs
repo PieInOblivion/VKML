@@ -4,12 +4,13 @@ use crate::{
 };
 
 use super::{
-    add::AddInstruction, concat::ConcatInstruction, conv2d::Conv2DInstruction,
-    copy::CopyInstruction, div::DivInstruction, gelu::GELUInstruction, instruction::Instruction,
-    leaky_relu::LeakyReLUInstruction, matmul::MatMulInstruction, max::MaxInstruction,
-    min::MinInstruction, mul::MulInstruction, relu::ReLUInstruction, reshape::ReshapeInstruction,
-    sigmoid::SigmoidInstruction, silu::SiLUInstruction, softmax::SoftmaxInstruction,
-    sub::SubInstruction, tanh::TanhInstruction, transfer::TransferToDeviceInstruction,
+    add::AddInstruction, add_inplace::AddInplaceInstruction, concat::ConcatInstruction,
+    conv2d::Conv2DInstruction, copy::CopyInstruction, div::DivInstruction, gelu::GELUInstruction,
+    instruction::Instruction, leaky_relu::LeakyReLUInstruction, matmul::MatMulInstruction,
+    max::MaxInstruction, min::MinInstruction, mul::MulInstruction, relu::ReLUInstruction,
+    reshape::ReshapeInstruction, sigmoid::SigmoidInstruction, silu::SiLUInstruction,
+    softmax::SoftmaxInstruction, sub::SubInstruction, tanh::TanhInstruction,
+    transfer::TransferToDeviceInstruction,
 };
 
 /// Factory for creating instruction objects
@@ -39,6 +40,11 @@ impl Instructions {
 
     pub fn min(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
         Box::new(MinInstruction { src1, src2, dst })
+    }
+
+    // Element-wise in place operations
+    pub fn add_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(AddInplaceInstruction { dst, src1 })
     }
 
     // Activation functions

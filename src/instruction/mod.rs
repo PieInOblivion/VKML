@@ -1,4 +1,5 @@
 pub mod add;
+pub mod add_inplace;
 pub mod concat;
 pub mod conv2d;
 pub mod copy;

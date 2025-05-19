@@ -252,7 +252,7 @@ fn main() {
         small_cm.print_layer_values(3).unwrap();
     }*/
 
-    test_device_transfer(thread_pool);
+    test_device_transfer(thread_pool).unwrap();
 }
 
 fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std::error::Error>> {
@@ -291,7 +291,7 @@ fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std:
 
     // Add linear layers to consume memory
     let mut prev_layer_id = input_id;
-    for i in 0..20 {
+    for i in 0..3 {
         // Add 7 large layers (plus input = 10 total)
         let next_id = model.add_layer_with(
             model.next_available_id(),
@@ -311,7 +311,7 @@ fn test_device_transfer(thread_pool: Arc<ThreadPool>) -> Result<(), Box<dyn std:
     }
 
     // Add one final smaller layer to produce output
-    let output_id = model.add_layer_with(
+    model.add_layer_with(
         model.next_available_id(),
         Layers::linear(feature_size, 10),
         vec![LayerConnection::DefaultOutput(prev_layer_id)],

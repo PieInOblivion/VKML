@@ -171,7 +171,7 @@ impl Layer for LinearLayer {
             // bias = 3
             tensors.push(TensorDesc::new(vec![self.out_features]));
 
-            instructions.push(Instructions::add(2, 3, 2));
+            instructions.push(Instructions::add_inplace(2, 3));
         }
 
         // Get input mappings using the trait method

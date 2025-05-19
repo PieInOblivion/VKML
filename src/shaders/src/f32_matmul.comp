@@ -1,157 +1,128 @@
 #version 450
 
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 4) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(std430, binding = 0) buffer InBufferA { float a[]; };
 layout(std430, binding = 1) buffer InBufferB { float b[]; };
 layout(std430, binding = 2) buffer OutBuffer { float c[]; };
 
-// Constants
-const uint MAX_DIMS = 8;  // Maximum number of dimensions we support
-
-// Push constants for describing arbitrary tensor dimensions and strides
-layout(push_constant) uniform PushConstants {
-    // Dimension counts
-    uint dim_count_a;    // Number of dimensions in tensor A
-    uint dim_count_b;    // Number of dimensions in tensor B
-    uint dim_count_c;    // Number of dimensions in output tensor C
+// Move shapes and strides into a uniform buffer (UBO instead of push-constants)
+layout(std140, binding = 3) uniform TensorMetadata {
+    uint dim_count_a;
+    uint dim_count_b;
+    uint dim_count_c;
 
     // Key dimensions for matrix multiplication
     uint m;              // Output rows (from A)
     uint k;              // Contraction dimension
     uint n;              // Output columns (from B)
-
-    // Tensor shapes and strides
-    uint shape_a[MAX_DIMS];      // Shape of tensor A
-    uint shape_b[MAX_DIMS];      // Shape of tensor B
-    uint shape_c[MAX_DIMS];      // Shape of tensor C
-    uint strides_a[MAX_DIMS];    // Strides of tensor A
-    uint strides_b[MAX_DIMS];    // Strides of tensor B
-    uint strides_c[MAX_DIMS];    // Strides of tensor C
+    
+    uint batch_dims;
 
     // Contraction axis information
     uint a_k_axis;       // Which axis in A is the k dimension
     uint b_k_axis;       // Which axis in B is the k dimension
     uint a_m_axis;       // Which axis in A is the m dimension
     uint b_n_axis;       // Which axis in B is the n dimension
-} dims;
 
-// Helper function to convert linear index to multi-dimensional indices
-uint get_index(uint linear_idx, uint dim_count, uint shape[MAX_DIMS], uint strides[MAX_DIMS]) {
-    uint index = 0;
-    uint remaining = linear_idx;
+    // Tensor shapes and strides
+    uint shape_a[8];
+    uint shape_b[8];
+    uint shape_c[8];
+    uint strides_a[8];
+    uint strides_b[8];
+    uint strides_c[8];
+} meta;
 
-    for (uint d = 0; d < dim_count; d++) {
-        uint dim_idx = remaining % shape[d];
-        remaining /= shape[d];
-        index += dim_idx * strides[d];
+// Shared-memory tiles
+shared float tileA[16][16];
+shared float tileB[16][16];
+
+// Broadcast-safe indexing: only treat size==1 as broadcast
+uint idx_broadcast(const uint idxs[8], uint dim_count,
+                   const uint shape[8], const uint strides[8]) {
+    uint off = 0;
+    for (uint d = 0; d < dim_count; ++d) {
+        uint dimIdx = (shape[d] == 1u) ? 0u : idxs[d];
+        off += dimIdx * strides[d];
     }
-
-    return index;
-}
-
-// Calculate index with broadcasting
-uint get_broadcast_index(uint indices[MAX_DIMS], uint dim_count, uint shape[MAX_DIMS], uint strides[MAX_DIMS]) {
-    uint index = 0;
-
-    for (uint d = 0; d < dim_count; d++) {
-        // Apply broadcasting rules - if shape is 1, use index 0
-        uint dim_idx = (d < dim_count && shape[d] > 1) ? indices[d] : 0;
-        index += dim_idx * strides[d];
-    }
-
-    return index;
+    return off;
 }
 
 void main() {
-    uint col = gl_GlobalInvocationID.x;
     uint row = gl_GlobalInvocationID.y;
-    uint batch_idx = gl_GlobalInvocationID.z;
+    uint col = gl_GlobalInvocationID.x;
+    uint batchID = gl_GlobalInvocationID.z;
 
-    // Check bounds for core matrix dimensions
-    if (row >= dims.m || col >= dims.n) {
-        return;
-    }
+    if (row >= meta.m || col >= meta.n) return;
 
-    // Calculate batch indices
-    // For simplicity, we'll handle up to 5 batch dimensions (can be extended)
-    uint batch_dim_count = dims.dim_count_c - 2; // Remove matrix dimensions
+    // Compute total batch size
     uint batch_size = 1;
-    for (uint d = 0; d < batch_dim_count; d++) {
-        batch_size *= dims.shape_c[d];
+    for (uint d = 0; d < meta.batch_dims; ++d)
+        batch_size *= meta.shape_c[d];
+    if (batchID >= batch_size) return;
+
+    // Decode batch indices
+    uint rem = batchID;
+    uint batch_idxs[8];
+    for (uint d = 0; d < meta.batch_dims; ++d) {
+        batch_idxs[d] = rem % meta.shape_c[d];
+        rem /= meta.shape_c[d];
     }
 
-    if (batch_idx >= batch_size) {
-        return;
-    }
+    // Build base c_indices
+    uint c_idxs[8];
+    for (uint d = 0; d < meta.batch_dims; ++d)
+        c_idxs[d] = batch_idxs[d];
+    c_idxs[meta.dim_count_c-2] = row;
+    c_idxs[meta.dim_count_c-1] = col;
+    uint c_index = idx_broadcast(c_idxs, meta.dim_count_c, meta.shape_c, meta.strides_c);
 
-    // Calculate batch indices for each dimension
-    uint batch_indices[MAX_DIMS];
-    uint remaining = batch_idx;
-    for (uint d = 0; d < batch_dim_count; d++) {
-        batch_indices[d] = remaining % dims.shape_c[d];
-        remaining /= dims.shape_c[d];
-    }
-
-    // Initialize output position indices
-    uint c_indices[MAX_DIMS];
-    for (uint d = 0; d < batch_dim_count; d++) {
-        c_indices[d] = batch_indices[d];
-    }
-    // Set matrix dimensions
-    c_indices[dims.dim_count_c - 2] = row;  // m dimension
-    c_indices[dims.dim_count_c - 1] = col;  // n dimension
-
-    // Calculate output index
-    uint c_idx = 0;
-    for (uint d = 0; d < dims.dim_count_c; d++) {
-        c_idx += c_indices[d] * dims.strides_c[d];
-    }
-
-    // Perform matrix multiplication with broadcasting
     float sum = 0.0;
+    uint numTiles = (meta.k + 16 - 1) / 16;
 
-    for (uint i = 0; i < dims.k; i++) {
-        // Set up A indices
-        uint a_indices[MAX_DIMS];
-        for (uint d = 0; d < batch_dim_count; d++) {
-            a_indices[d] = batch_indices[d];
-        }
-        // Important: Map the matrix dimensions correctly according to tensor layout
-        for (uint d = batch_dim_count; d < dims.dim_count_a; d++) {
-            if (d == dims.a_m_axis) {
-                a_indices[d] = row;
-            } else if (d == dims.a_k_axis) {
-                a_indices[d] = i;
-            } else {
-                a_indices[d] = 0; // For dimensions to be broadcast
-            }
-        }
+    // Temporary index arrays
+    uint a_idxs[8];
+    uint b_idxs[8];
 
-        // Set up B indices
-        uint b_indices[MAX_DIMS];
-        for (uint d = 0; d < batch_dim_count; d++) {
-            b_indices[d] = batch_indices[d];
+    // Loop over tiles in k dimension
+    for (uint t = 0; t < numTiles; ++t) {
+        // Each thread loads one element of A and B into shared memory
+        uint kGlobal = t * 16 + gl_LocalInvocationID.x;
+        // Prepare A indices for broadcast
+        for (uint d = 0; d < meta.batch_dims; ++d) a_idxs[d] = batch_idxs[d];
+        // Set matrix dims in A
+        for (uint d = meta.batch_dims; d < meta.dim_count_a; ++d) {
+            if (d == meta.a_m_axis) a_idxs[d] = row;
+            else if (d == meta.a_k_axis) a_idxs[d] = (kGlobal < meta.k ? kGlobal : 0u);
+            else a_idxs[d] = 0u;
         }
-        // Important: Map the matrix dimensions correctly according to tensor layout
-        for (uint d = batch_dim_count; d < dims.dim_count_b; d++) {
-            if (d == dims.b_k_axis) {
-                b_indices[d] = i;
-            } else if (d == dims.b_n_axis) {
-                b_indices[d] = col;
-            } else {
-                b_indices[d] = 0; // For dimensions to be broadcast
-            }
+        uint aIndex = idx_broadcast(a_idxs, meta.dim_count_a, meta.shape_a, meta.strides_a);
+        tileA[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+            (kGlobal < meta.k ? a[aIndex] : 0.0);
+
+        // Prepare B indices
+        for (uint d = 0; d < meta.batch_dims; ++d) b_idxs[d] = batch_idxs[d];
+        for (uint d = meta.batch_dims; d < meta.dim_count_b; ++d) {
+            if (d == meta.b_k_axis) b_idxs[d] = (kGlobal < meta.k ? kGlobal : 0u);
+            else if (d == meta.b_n_axis) b_idxs[d] = col;
+            else b_idxs[d] = 0u;
         }
+        uint bIndex = idx_broadcast(b_idxs, meta.dim_count_b, meta.shape_b, meta.strides_b);
+        tileB[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
+            (kGlobal < meta.k ? b[bIndex] : 0.0);
 
-        // Calculate indices with broadcasting
-        uint a_idx = get_broadcast_index(a_indices, dims.dim_count_a, dims.shape_a, dims.strides_a);
-        uint b_idx = get_broadcast_index(b_indices, dims.dim_count_b, dims.shape_b, dims.strides_b);
+        // Wait for all loads
+        barrier();
 
-        // Perform the multiplication and accumulation
-        sum += a[a_idx] * b[b_idx];
+        // Compute partial sums
+        for (uint kk = 0; kk < 16; ++kk) {
+            sum += tileA[gl_LocalInvocationID.y][kk] *
+                   tileB[kk][gl_LocalInvocationID.x];
+        }
+        barrier();
     }
 
-    // Store the result
-    c[c_idx] = sum;
+    // Write out
+    c[c_index] = sum;
 }

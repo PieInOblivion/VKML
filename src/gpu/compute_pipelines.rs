@@ -2,13 +2,14 @@ use ash::{Device, vk};
 use std::collections::HashMap;
 
 // Precompiled SPIR-V shader bytes
-const F32_MATMUL_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul.spv");
-const F32_ADD_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_add_array.spv");
-const F32_SUB_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_sub_array.spv");
-const F32_MUL_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_mul_array.spv");
-const F32_DIV_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_div_array.spv");
-const F32_MAX_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_max_array.spv");
-const F32_MIN_ARRAY_SHADER: &[u8] = include_bytes!("../shaders/f32_min_array.spv");
+const F32_ADD_SHADER: &[u8] = include_bytes!("../shaders/f32_add.spv");
+const F32_SUB_SHADER: &[u8] = include_bytes!("../shaders/f32_sub.spv");
+const F32_MUL_SHADER: &[u8] = include_bytes!("../shaders/f32_mul.spv");
+const F32_DIV_SHADER: &[u8] = include_bytes!("../shaders/f32_div.spv");
+const F32_MAX_SHADER: &[u8] = include_bytes!("../shaders/f32_max.spv");
+const F32_MIN_SHADER: &[u8] = include_bytes!("../shaders/f32_min.spv");
+
+const F32_ADD_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_add_inplace.spv");
 
 const F32_RELU_SHADER: &[u8] = include_bytes!("../shaders/f32_relu.spv");
 const F32_LEAKY_RELU_SHADER: &[u8] = include_bytes!("../shaders/f32_leaky_relu.spv");
@@ -20,6 +21,7 @@ const F32_SILU_SHADER: &[u8] = include_bytes!("../shaders/f32_silu.spv");
 
 const F32_CONV2D_SHADER: &[u8] = include_bytes!("../shaders/f32_conv2d.spv");
 
+const F32_MATMUL_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul.spv");
 const F32_MATMUL_1D_2D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_1d_2d.spv");
 const F32_MATMUL_2D_1D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_2d_1d.spv");
 const F32_MATMUL_2D_2D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_2d_2d.spv");
@@ -31,7 +33,8 @@ const F32_MATMUL_1D_3D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_1d_
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUMemoryOperation {
-    Add,
+    Addition,
+    AdditionInplace,
     Subtract,
     Multiply,
     Divide,
@@ -90,30 +93,35 @@ impl ComputePipelines {
         let mut pipelines = HashMap::new();
 
         // Element-wise
-
         pipelines.insert(
-            GPUMemoryOperation::Add,
-            Self::create_pipeline(device, pipeline_layout, F32_ADD_ARRAY_SHADER)?,
+            GPUMemoryOperation::Addition,
+            Self::create_pipeline(device, pipeline_layout, F32_ADD_SHADER)?,
         );
         pipelines.insert(
             GPUMemoryOperation::Subtract,
-            Self::create_pipeline(device, pipeline_layout, F32_SUB_ARRAY_SHADER)?,
+            Self::create_pipeline(device, pipeline_layout, F32_SUB_SHADER)?,
         );
         pipelines.insert(
             GPUMemoryOperation::Multiply,
-            Self::create_pipeline(device, pipeline_layout, F32_MUL_ARRAY_SHADER)?,
+            Self::create_pipeline(device, pipeline_layout, F32_MUL_SHADER)?,
         );
         pipelines.insert(
             GPUMemoryOperation::Divide,
-            Self::create_pipeline(device, pipeline_layout, F32_DIV_ARRAY_SHADER)?,
+            Self::create_pipeline(device, pipeline_layout, F32_DIV_SHADER)?,
         );
         pipelines.insert(
             GPUMemoryOperation::Maximum,
-            Self::create_pipeline(device, pipeline_layout, F32_MAX_ARRAY_SHADER)?,
+            Self::create_pipeline(device, pipeline_layout, F32_MAX_SHADER)?,
         );
         pipelines.insert(
             GPUMemoryOperation::Minimum,
-            Self::create_pipeline(device, pipeline_layout, F32_MIN_ARRAY_SHADER)?,
+            Self::create_pipeline(device, pipeline_layout, F32_MIN_SHADER)?,
+        );
+
+        // Element-wise in place
+        pipelines.insert(
+            GPUMemoryOperation::AdditionInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_ADD_INPLACE_SHADER)?,
         );
 
         // Activations
@@ -125,6 +133,7 @@ impl ComputePipelines {
             GPUMemoryOperation::LeakyReLU,
             Self::create_pipeline(device, pipeline_layout, F32_LEAKY_RELU_SHADER)?,
         );
+        // Added activation pipelines
         pipelines.insert(
             GPUMemoryOperation::Sigmoid,
             Self::create_pipeline(device, pipeline_layout, F32_SIGMOID_SHADER)?,

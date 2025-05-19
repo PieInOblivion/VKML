@@ -53,8 +53,8 @@ impl Instruction for TransferToDeviceInstruction {
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Get the tensors from the tensor graph
-        let src_tensor = tensor_graph.tensors.get(*&self.src).unwrap();
-        let dst_tensor = tensor_graph.tensors.get(*&self.dst).unwrap();
+        let src_tensor = tensor_graph.tensors.get(self.src).unwrap();
+        let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
 
         // Get the data from the source tensor
         let data = src_tensor.data.get_data().unwrap();

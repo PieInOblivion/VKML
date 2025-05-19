@@ -1,10 +1,13 @@
 use crate::{
     dataloader::error::VKMLEngineError,
-    gpu::vk_gpu::GPU,
+    gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use ash::vk;
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{
+    fmt::{Debug, Formatter, Result as FmtResult},
+    ptr,
+};
 
 use super::instruction::Instruction;
 
@@ -52,15 +55,144 @@ impl Instruction for SoftmaxInstruction {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let src_mem = tensor_graph.get_gpu_memory_or_panic(&self.src);
         let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
-        let tensor = tensor_graph.tensors.get(*&self.src).unwrap();
+        let tensor = tensor_graph.tensors.get(self.src).unwrap();
 
-        gpu.create_softmax_command_buffer(
-            command_buffer,
-            src_mem,
-            dst_mem,
-            self.dim,
-            &tensor.desc.to_dims(),
-        )
+        // Currently we only support softmax on the last dimension
+        if self.dim != tensor.desc.to_dims().len() - 1 {
+            return Err(format!("Only softmax on the last dimension is currently implemented, requested dimension: {}", self.dim).into());
+        }
+
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                p_next: ptr::null(),
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+
+            let set_layouts = [*gpu.get_descriptor_set_layout()];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                p_next: ptr::null(),
+                descriptor_pool: *gpu.get_descriptor_pool(),
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                _marker: std::marker::PhantomData,
+            };
+
+            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
+
+            let buffer_infos = [
+                // src buffer (binding 0)
+                vk::DescriptorBufferInfo {
+                    buffer: src_mem.buffer,
+                    offset: 0,
+                    range: src_mem.size,
+                },
+                // dst buffer (binding 2)
+                vk::DescriptorBufferInfo {
+                    buffer: dst_mem.buffer,
+                    offset: 0,
+                    range: dst_mem.size,
+                },
+            ];
+
+            let write_descriptor_sets = [
+                // src buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[0],
+                    p_image_info: ptr::null(),
+                    p_texel_buffer_view: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+                // dst buffer descriptor
+                vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    p_next: ptr::null(),
+                    dst_set: descriptor_set,
+                    dst_binding: 2,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &buffer_infos[1],
+                    p_image_info: ptr::null(),
+                    p_texel_buffer_view: ptr::null(),
+                    _marker: std::marker::PhantomData,
+                },
+            ];
+
+            gpu.get_device()
+                .update_descriptor_sets(&write_descriptor_sets, &[]);
+
+            let pipeline = gpu
+                .get_compute_pipelines()
+                .get_pipeline(GPUMemoryOperation::Softmax)
+                .ok_or("Softmax pipeline not found")?;
+
+            gpu.get_device().cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+
+            gpu.get_device().cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                gpu.get_compute_pipelines().get_layout(),
+                0,
+                &[descriptor_set],
+                &[],
+            );
+
+            let feature_size = tensor.desc.to_dims()[self.dim];
+            let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
+
+            // Create push constants struct
+            #[repr(C)]
+            struct SoftmaxPushConstants {
+                batch_size: u32,
+                feature_size: u32,
+            }
+
+            let push_constants = SoftmaxPushConstants {
+                batch_size: batch_size as u32,
+                feature_size: feature_size as u32,
+            };
+
+            // Push constants to the shader
+            gpu.get_device().cmd_push_constants(
+                command_buffer,
+                gpu.get_compute_pipelines().get_layout(),
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                std::slice::from_raw_parts(
+                    &push_constants as *const SoftmaxPushConstants as *const u8,
+                    std::mem::size_of::<SoftmaxPushConstants>(),
+                ),
+            );
+
+            // Calculate dispatch size based on batch size
+            // One workgroup per batch for now
+            let num_workgroups = (batch_size as u64 + 255) / 256;
+
+            gpu.get_device()
+                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
+
+            gpu.get_device().end_command_buffer(command_buffer)?;
+
+            Ok(())
+        }
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {

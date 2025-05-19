@@ -50,16 +50,7 @@ impl TensorDesc {
 
     // Calculate strides for row-major memory layout
     pub fn strides(&self) -> Vec<usize> {
-        let mut strides = vec![1; self.dims.len()];
-        let mut stride = 1;
-
-        // Calculate strides from right to left (row-major)
-        for i in (0..self.dims.len()).rev() {
-            strides[i] = stride;
-            stride *= self.dims[i];
-        }
-
-        strides
+        Self::compute_strides(&self.dims)
     }
 
     // Flatten to 1D
@@ -92,5 +83,57 @@ impl TensorDesc {
         // fan_in = input_features × kernel_size
         // fan_out = output_features × kernel_size
         (in_features * kernel_size, out_features * kernel_size)
+    }
+
+    pub fn compute_strides(dims: &[usize]) -> Vec<usize> {
+        let mut s = vec![1; dims.len()];
+        for i in (0..dims.len().saturating_sub(1)).rev() {
+            s[i] = s[i + 1] * dims[i + 1];
+        }
+        s
+    }
+
+    pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+        let ndim = a.len().max(b.len());
+        let mut out = vec![1; ndim];
+        for i in 0..ndim {
+            let ai = *a.get(a.len().wrapping_sub(i + 1)).unwrap_or(&1);
+            let bi = *b.get(b.len().wrapping_sub(i + 1)).unwrap_or(&1);
+            if ai == bi || ai == 1 || bi == 1 {
+                out[ndim - 1 - i] = ai.max(bi);
+            } else {
+                return None;
+            }
+        }
+        Some(out)
+    }
+
+    pub fn broadcast_strides(src: &[usize], dst: &[usize]) -> Vec<usize> {
+        let src_strides = Self::compute_strides(src);
+        let mut bs = vec![0; dst.len()];
+        let offset = dst.len().saturating_sub(src.len());
+        for i in 0..dst.len() {
+            let dim = *src.get(i.wrapping_sub(offset)).unwrap_or(&1);
+            let stride = *src_strides.get(i.wrapping_sub(offset)).unwrap_or(&0);
+            bs[i] = if dim == 1 { 0 } else { stride };
+        }
+        bs
+    }
+
+    pub fn unravel(idx: usize, dims: &[usize]) -> Vec<usize> {
+        let mut rem = idx;
+        let strides = Self::compute_strides(dims);
+        dims.iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let c = rem / strides[i];
+                rem %= strides[i];
+                c
+            })
+            .collect()
+    }
+
+    pub fn offset(idxs: &[usize], strides: &[usize]) -> usize {
+        idxs.iter().zip(strides.iter()).map(|(i, s)| i * s).sum()
     }
 }

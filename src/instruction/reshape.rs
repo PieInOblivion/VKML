@@ -58,7 +58,36 @@ impl Instruction for ReshapeInstruction {
         let src_mem = tensor_graph.get_gpu_memory_or_panic(&self.src);
         let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
 
-        gpu.create_copy_command_buffer(command_buffer, src_mem, dst_mem)
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                p_next: std::ptr::null(),
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                p_inheritance_info: std::ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+
+            // Copy regions - entire buffer
+            let copy_region = vk::BufferCopy {
+                src_offset: 0,
+                dst_offset: 0,
+                size: src_mem.size,
+            };
+
+            gpu.get_device().cmd_copy_buffer(
+                command_buffer,
+                src_mem.buffer,
+                dst_mem.buffer,
+                &[copy_region],
+            );
+
+            gpu.get_device().end_command_buffer(command_buffer)?;
+        }
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
