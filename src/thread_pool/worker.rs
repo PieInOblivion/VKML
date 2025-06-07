@@ -415,7 +415,7 @@ impl Worker {
             let alloc_info = vk::CommandBufferAllocateInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
                 p_next: std::ptr::null(),
-                command_pool: gpu.command_pool,
+                command_pool: gpu.get_command_pool(),
                 level: vk::CommandBufferLevel::PRIMARY,
                 command_buffer_count: operations.len() as u32,
                 _marker: std::marker::PhantomData,
@@ -437,7 +437,7 @@ impl Worker {
                     operations.len()
                 );
                 gpu.device
-                    .free_command_buffers(gpu.command_pool, &command_buffers);
+                    .free_command_buffers(gpu.get_command_pool(), &command_buffers);
                 return WorkResult::TensorOperations;
             }
 
@@ -470,7 +470,7 @@ impl Worker {
             }
 
             gpu.device
-                .free_command_buffers(gpu.command_pool, &command_buffers);
+                .free_command_buffers(gpu.get_command_pool(), &command_buffers);
         }
 
         WorkResult::TensorOperations

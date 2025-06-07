@@ -1,0 +1,48 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer OutBuffer { float weights[]; };
+
+layout(push_constant) uniform PC {
+    uint total_elements;
+    uint fan_in;          // unused
+    uint fan_out;         // unused
+    uint seed;
+    float mean;
+    float std_dev;
+} pc;
+
+uint rand_state = 0;
+
+void init_rand(uint seed) {
+    rand_state = seed;
+}
+
+uint rand_uint() {
+    rand_state = rand_state * 1664525u + 1013904223u;
+    return rand_state;
+}
+
+float rand_float() {
+    return float(rand_uint()) / 4294967295.0;
+}
+
+// Box-Muller transform for normal distribution - simplified without static variables
+float rand_normal() {
+    float u = rand_float();
+    float v = rand_float();
+    float mag = sqrt(-2.0 * log(u));
+    return mag * sin(2.0 * 3.14159265359 * v);
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pc.total_elements) return;
+    
+    // random generator with unique seed per thread
+    init_rand(pc.seed + idx);
+    
+    // normal distribution with specified mean and standard deviation
+    weights[idx] = pc.mean + rand_normal() * pc.std_dev;
+}

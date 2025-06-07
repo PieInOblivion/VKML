@@ -106,7 +106,7 @@ impl ComputeManager {
     // The execution plan which plans parrallel compute
     // and this tensor allocation stratagy.
     // They might become more intertwined in the future, but currently
-    // any planned optimisations can be designed seperatly between the two.
+    // any planned optimisations can be designed seperately between the two.
     //
     // 1. Allocate tensors in execution order
     // 2. All tensors required for an instruction are on the same device
@@ -415,24 +415,26 @@ impl ComputeManager {
         weight_init: &WeightInit,
     ) -> Result<TensorData, VKMLEngineError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
-        let parallel_threshold = 10000;
-        let total_elements = desc.num_elements();
-
-        let initial_data = {
-            if total_elements < parallel_threshold {
-                weight_init.init(desc, total_elements)
-            } else {
-                weight_init.par_init(
-                    desc,
-                    total_elements,
-                    parallel_threshold,
-                    self.thread_pool.clone(),
-                )
-            }
-        };
 
         match *target_device {
             DeviceLocation::CPU => {
+                // TODO: some temp value, works well enough for now. is there some easy metric to use to best adjust this at runtime other than some micro benchmark.
+                let parallel_threshold = 10000;
+                let total_elements = desc.num_elements();
+
+                let initial_data = {
+                    if total_elements < parallel_threshold {
+                        weight_init.init(desc, total_elements)
+                    } else {
+                        weight_init.par_init(
+                            desc,
+                            total_elements,
+                            parallel_threshold,
+                            self.thread_pool.clone(),
+                        )
+                    }
+                };
+
                 self.cpu.memory_tracking.allocate(size_in_bytes)?;
                 Ok(TensorData::new_cpu(initial_data))
             }
@@ -440,8 +442,9 @@ impl ComputeManager {
                 let gpu = &self.gpus[idx];
                 gpu.allocate_memory(size_in_bytes)?;
 
-                let gpu_memory = gpu
-                    .move_to_gpu_as_f32(&initial_data)
+                // TODO: weight init probably shouldn't do the gpu memory allocation itself. it's fine enough for now
+                let gpu_memory = weight_init
+                    .init_gpu(desc, gpu)
                     .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
 
                 Ok(TensorData::new_gpu(idx, gpu_memory))

@@ -36,6 +36,13 @@ const F32_MATMUL_3D_3D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_3d_
 const F32_MATMUL_3D_1D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_3d_1d.spv");
 const F32_MATMUL_1D_3D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_1d_3d.spv");
 
+const F32_INIT_XAVIER_SHADER: &[u8] = include_bytes!("../shaders/f32_init_xavier.spv");
+const F32_INIT_HE_SHADER: &[u8] = include_bytes!("../shaders/f32_init_he.spv");
+const F32_INIT_LECUN_SHADER: &[u8] = include_bytes!("../shaders/f32_init_lecun.spv");
+const F32_INIT_UNIFORM_SHADER: &[u8] = include_bytes!("../shaders/f32_init_uniform.spv");
+const F32_INIT_NORMAL_SHADER: &[u8] = include_bytes!("../shaders/f32_init_normal.spv");
+const F32_INIT_CONSTANT_SHADER: &[u8] = include_bytes!("../shaders/f32_init_constant.spv");
+
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUMemoryOperation {
     Addition,
@@ -67,6 +74,12 @@ pub enum GPUMemoryOperation {
     MatMul3D3D,
     MatMul3D1D,
     MatMul1D3D,
+    InitXavier,
+    InitHe,
+    InitLeCun,
+    InitUniform,
+    InitNormal,
+    InitConstant,
 }
 
 pub struct ComputePipelines {
@@ -229,6 +242,32 @@ impl ComputePipelines {
         pipelines.insert(
             GPUMemoryOperation::MatMul1D3D,
             Self::create_pipeline(device, pipeline_layout, F32_MATMUL_1D_3D_SHADER)?,
+        );
+
+        // GPU Weight Initialization Operations
+        pipelines.insert(
+            GPUMemoryOperation::InitXavier,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_XAVIER_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::InitHe,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_HE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::InitLeCun,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_LECUN_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::InitUniform,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_UNIFORM_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::InitNormal,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_NORMAL_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::InitConstant,
+            Self::create_pipeline(device, pipeline_layout, F32_INIT_CONSTANT_SHADER)?,
         );
 
         Ok(Self {

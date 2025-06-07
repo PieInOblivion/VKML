@@ -17,7 +17,7 @@ pub struct GPU {
     pub device: Device,
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
-    pub command_pool: vk::CommandPool,
+    command_pool: vk::CommandPool,
     queue_family_index: u32,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -100,7 +100,7 @@ impl GPU {
                 enabled_layer_count: 0,
                 pp_enabled_layer_names: std::ptr::null(),
                 enabled_extension_count: 0,
-                pp_enabled_extension_names: std::ptr::null(),
+                pp_enabled_extension_names: ptr::null(),
                 p_enabled_features: &device_features,
                 _marker: std::marker::PhantomData,
             };
@@ -403,6 +403,91 @@ impl GPU {
         }
     }
 
+    pub fn allocate_uninitialised_gpu_memory_f32(
+        &self,
+        num_elements: usize,
+    ) -> Result<GPUMemory, Box<dyn std::error::Error>> {
+        let size_in_bytes = (num_elements * std::mem::size_of::<f32>()) as vk::DeviceSize;
+
+        unsafe {
+            let buffer_info = vk::BufferCreateInfo {
+                s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                p_next: ptr::null(),
+                flags: vk::BufferCreateFlags::empty(),
+                size: size_in_bytes,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 0,
+                p_queue_family_indices: ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            let buffer = self.device.create_buffer(&buffer_info, None)?;
+            let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
+
+            let memory_type = self.find_memory_type(
+                mem_requirements.memory_type_bits,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
+
+            let alloc_info = vk::MemoryAllocateInfo {
+                s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+                p_next: ptr::null(),
+                allocation_size: mem_requirements.size,
+                memory_type_index: memory_type,
+                _marker: std::marker::PhantomData,
+            };
+
+            let memory = self.device.allocate_memory(&alloc_info, None)?;
+            self.device.bind_buffer_memory(buffer, memory, 0)?;
+
+            // dont initialise the memory, it will be filled. eg, GPU weight init shaders
+
+            let set_layouts = [self.descriptor_set_layout];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                p_next: ptr::null(),
+                descriptor_pool: self.descriptor_pool,
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                _marker: std::marker::PhantomData,
+            };
+
+            let descriptor_set = self.device.allocate_descriptor_sets(&alloc_info)?[0];
+
+            let buffer_info = vk::DescriptorBufferInfo {
+                buffer,
+                offset: 0,
+                range: size_in_bytes,
+            };
+
+            let write_descriptor_set = vk::WriteDescriptorSet {
+                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                p_next: ptr::null(),
+                dst_set: descriptor_set,
+                dst_binding: 0,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                p_buffer_info: &buffer_info,
+                p_image_info: ptr::null(),
+                p_texel_buffer_view: ptr::null(),
+                _marker: std::marker::PhantomData,
+            };
+
+            self.device
+                .update_descriptor_sets(&[write_descriptor_set], &[]);
+
+            Ok(GPUMemory {
+                buffer,
+                memory,
+                size: size_in_bytes,
+                device: Arc::new(self.device.clone()),
+                descriptor_set,
+            })
+        }
+    }
+
     pub fn find_memory_type(
         &self,
         type_filter: u32,
@@ -522,6 +607,10 @@ impl GPU {
 
     pub fn get_descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {
         &self.descriptor_set_layout
+    }
+
+    pub fn get_command_pool(&self) -> vk::CommandPool {
+        self.command_pool
     }
 }
 
