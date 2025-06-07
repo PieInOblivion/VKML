@@ -10,18 +10,18 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use super::instruction::Instruction;
 
 #[derive(Clone)]
-pub struct AddInplaceInstruction {
+pub struct MinInplaceInstruction {
     pub dst: TensorId,
     pub src1: TensorId,
 }
 
-impl Debug for AddInplaceInstruction {
+impl Debug for MinInplaceInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "AddInplace(dst={}, src1={})", self.dst, self.src1)
+        write!(f, "MinInplace(dst={}, src1={})", self.dst, self.src1)
     }
 }
 
-impl Instruction for AddInplaceInstruction {
+impl Instruction for MinInplaceInstruction {
     fn get_input_tensor_ids(&self) -> Vec<TensorId> {
         vec![self.dst, self.src1]
     }
@@ -68,13 +68,13 @@ impl Instruction for AddInplaceInstruction {
         // broadcast checks
         let bc = TensorDesc::broadcast_shape(&dims_a, &dims_b).ok_or_else(|| {
             Box::new(VKMLEngineError::ShapeMismatch(format!(
-                "InplaceAdd: can't broadcast {:?} vs {:?}",
+                "InplaceMin: can't broadcast {:?} vs {:?}",
                 dims_a, dims_b
             )))
         })?;
         if bc != dims_a {
             return Err(Box::new(VKMLEngineError::ShapeMismatch(format!(
-                "InplaceAdd: broadcast {:?} != out {:?}",
+                "InplaceMin: broadcast {:?} != out {:?}",
                 bc, dims_a
             ))));
         }
@@ -177,8 +177,8 @@ impl Instruction for AddInplaceInstruction {
 
             let pipeline = gpu
                 .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::AdditionInplace)
-                .ok_or(format!("AdditionInplace pipeline not found"))?;
+                .get_pipeline(GPUMemoryOperation::MinimumInplace)
+                .ok_or(format!("MinimumInplace pipeline not found"))?;
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -233,7 +233,7 @@ impl Instruction for AddInplaceInstruction {
             let idxs = TensorDesc::unravel(i, &out);
             let offa = TensorDesc::offset(&idxs, &sa);
             let offb = TensorDesc::offset(&idxs, &sb);
-            data_a[offa] += data_b[offb];
+            data_a[offa] = data_a[offa].min(data_b[offb]);
         }
         Ok(())
     }

@@ -10,6 +10,11 @@ const F32_MAX_SHADER: &[u8] = include_bytes!("../shaders/f32_max.spv");
 const F32_MIN_SHADER: &[u8] = include_bytes!("../shaders/f32_min.spv");
 
 const F32_ADD_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_add_inplace.spv");
+const F32_SUB_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_sub_inplace.spv");
+const F32_MUL_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_mul_inplace.spv");
+const F32_DIV_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_div_inplace.spv");
+const F32_MAX_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_max_inplace.spv");
+const F32_MIN_INPLACE_SHADER: &[u8] = include_bytes!("../shaders/f32_min_inplace.spv");
 
 const F32_RELU_SHADER: &[u8] = include_bytes!("../shaders/f32_relu.spv");
 const F32_LEAKY_RELU_SHADER: &[u8] = include_bytes!("../shaders/f32_leaky_relu.spv");
@@ -34,12 +39,17 @@ const F32_MATMUL_1D_3D_SHADER: &[u8] = include_bytes!("../shaders/f32_matmul_1d_
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUMemoryOperation {
     Addition,
-    AdditionInplace,
     Subtract,
     Multiply,
     Divide,
     Maximum,
     Minimum,
+    AdditionInplace,
+    SubtractInplace,
+    MultiplyInplace,
+    DivideInplace,
+    MaximumInplace,
+    MinimumInplace,
     ReLU,
     LeakyReLU,
     Sigmoid,
@@ -122,6 +132,26 @@ impl ComputePipelines {
         pipelines.insert(
             GPUMemoryOperation::AdditionInplace,
             Self::create_pipeline(device, pipeline_layout, F32_ADD_INPLACE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::SubtractInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_SUB_INPLACE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::MultiplyInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_MUL_INPLACE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::DivideInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_DIV_INPLACE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::MaximumInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_MAX_INPLACE_SHADER)?,
+        );
+        pipelines.insert(
+            GPUMemoryOperation::MinimumInplace,
+            Self::create_pipeline(device, pipeline_layout, F32_MIN_INPLACE_SHADER)?,
         );
 
         // Activations

@@ -1,5 +1,11 @@
 use crate::{
-    compute::compute_manager::DeviceLocation, tensor::tensor_desc::TensorDesc,
+    compute::compute_manager::DeviceLocation,
+    instruction::{
+        div_inplace::DivInplaceInstruction, max_inplace::MaxInplaceInstruction,
+        min_inplace::MinInplaceInstruction, mul_inplace::MulInplaceInstruction,
+        sub_inplace::SubInplaceInstruction,
+    },
+    tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
 
@@ -45,6 +51,26 @@ impl Instructions {
     // Element-wise in place operations
     pub fn add_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
         Box::new(AddInplaceInstruction { dst, src1 })
+    }
+
+    pub fn sub_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(SubInplaceInstruction { dst, src1 })
+    }
+
+    pub fn mul_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(MulInplaceInstruction { dst, src1 })
+    }
+
+    pub fn div_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(DivInplaceInstruction { dst, src1 })
+    }
+
+    pub fn max_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(MaxInplaceInstruction { dst, src1 })
+    }
+
+    pub fn min_inplace(dst: TensorId, src1: TensorId) -> Box<dyn Instruction> {
+        Box::new(MinInplaceInstruction { dst, src1 })
     }
 
     // Activation functions
