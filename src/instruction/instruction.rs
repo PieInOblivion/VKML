@@ -3,8 +3,8 @@ use crate::{
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use ash::vk;
 use std::fmt::Debug;
+use vulkanalia::vk;
 
 pub trait Instruction: Debug {
     // Get all input tensor IDs used by this instruction

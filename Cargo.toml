@@ -7,8 +7,8 @@ edition = "2024"
 lto = true
 
 [dependencies]
+vulkanalia = { version = "0.28", features = ["libloading"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 rand = "0.9"
 thiserror = "2"
-ash = "0.38"
 sys-info = "0.9"

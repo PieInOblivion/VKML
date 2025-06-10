@@ -1,5 +1,8 @@
-use ash::{Device, vk};
 use std::collections::HashMap;
+use vulkanalia::{
+    Device,
+    vk::{self, DeviceV1_0, Handle},
+};
 
 // Precompiled SPIR-V shader bytes
 const F32_ADD_SHADER: &[u8] = include_bytes!("../shaders/f32_add.spv");
@@ -101,13 +104,12 @@ impl ComputePipelines {
         let pipeline_layout = unsafe {
             let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::PipelineLayoutCreateFlags::empty(),
                 set_layout_count: 1,
-                p_set_layouts: &descriptor_set_layout,
+                set_layouts: &descriptor_set_layout,
                 push_constant_range_count: 1,
-                p_push_constant_ranges: &push_constant_range,
-                _marker: std::marker::PhantomData,
+                push_constant_ranges: &push_constant_range,
             };
 
             device.create_pipeline_layout(&pipeline_layout_info, None)?
@@ -303,11 +305,10 @@ impl ComputePipelines {
 
             let shader_info = vk::ShaderModuleCreateInfo {
                 s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::ShaderModuleCreateFlags::empty(),
                 code_size: aligned_code.len() * 4,
-                p_code: aligned_code.as_ptr(),
-                _marker: std::marker::PhantomData,
+                code: aligned_code.as_ptr(),
             };
 
             let shader_module = device.create_shader_module(&shader_info, None)?;
@@ -315,27 +316,26 @@ impl ComputePipelines {
             let entry_point = std::ffi::CString::new("main")?;
             let pipeline_info = vk::ComputePipelineCreateInfo {
                 s_type: vk::StructureType::COMPUTE_PIPELINE_CREATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::PipelineCreateFlags::empty(),
                 stage: vk::PipelineShaderStageCreateInfo {
                     s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    p_next: std::ptr::null(),
+                    next: std::ptr::null(),
                     flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: vk::ShaderStageFlags::COMPUTE,
                     module: shader_module,
-                    p_name: entry_point.as_ptr(),
-                    p_specialization_info: std::ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    name: entry_point.as_ptr(),
+                    specialization_info: std::ptr::null(),
                 },
                 layout: pipeline_layout,
                 base_pipeline_handle: vk::Pipeline::null(),
                 base_pipeline_index: -1,
-                _marker: std::marker::PhantomData,
             };
 
             let pipeline = device
                 .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                .map_err(|e| format!("Failed to create compute pipeline: {:?}", e))?[0];
+                .map_err(|e| format!("Failed to create compute pipeline: {:?}", e))?
+                .0[0];
 
             device.destroy_shader_module(shader_module, None);
 

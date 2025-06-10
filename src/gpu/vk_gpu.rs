@@ -1,5 +1,9 @@
-use ash::{Device, Entry, Instance, vk};
 use std::{ffi::CString, ptr, sync::Arc};
+use vulkanalia::{
+    Device, Entry, Instance,
+    loader::{LIBRARY, LibloadingLoader},
+    vk::{self, DeviceV1_0, InstanceV1_0},
+};
 
 use crate::{compute::memory_tracker::MemoryTracker, dataloader::error::VKMLEngineError};
 
@@ -28,30 +32,32 @@ pub struct GPU {
 impl GPU {
     pub fn new(device_index: usize) -> Result<Self, Box<dyn std::error::Error>> {
         unsafe {
-            let entry = Arc::new(Entry::load()?);
-            let app_name = CString::new("VK GPU")?;
+            let loader = LibloadingLoader::new(LIBRARY)
+                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+            let entry = Arc::new(
+                Entry::new(loader).map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?,
+            );
+            let aname = CString::new("VK GPU")?;
 
             let appinfo = vk::ApplicationInfo {
                 s_type: vk::StructureType::APPLICATION_INFO,
-                p_next: ptr::null(),
-                p_application_name: app_name.as_ptr(),
-                application_version: vk::make_api_version(0, 1, 0, 0),
-                p_engine_name: app_name.as_ptr(),
-                engine_version: vk::make_api_version(0, 1, 0, 0),
-                api_version: vk::make_api_version(0, 1, 0, 0),
-                _marker: std::marker::PhantomData,
+                next: ptr::null(),
+                application_name: aname.as_ptr(),
+                application_version: vk::make_version(1, 0, 0),
+                engine_name: aname.as_ptr(),
+                engine_version: vk::make_version(1, 0, 0),
+                api_version: vk::make_version(1, 0, 0),
             };
 
             let create_info = vk::InstanceCreateInfo {
                 s_type: vk::StructureType::INSTANCE_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::InstanceCreateFlags::empty(),
-                p_application_info: &appinfo,
+                application_info: &appinfo,
                 enabled_layer_count: 0,
-                pp_enabled_layer_names: ptr::null(),
+                enabled_layer_names: ptr::null(),
                 enabled_extension_count: 0,
-                pp_enabled_extension_names: ptr::null(),
-                _marker: std::marker::PhantomData,
+                enabled_extension_names: ptr::null(),
             };
 
             let instance = entry.create_instance(&create_info, None)?;
@@ -80,12 +86,11 @@ impl GPU {
 
             let queue_info = vk::DeviceQueueCreateInfo {
                 s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::DeviceQueueCreateFlags::empty(),
                 queue_family_index,
                 queue_count,
-                p_queue_priorities: queue_priorities.as_ptr(),
-                _marker: std::marker::PhantomData,
+                queue_priorities: queue_priorities.as_ptr(),
             };
 
             let device_features = vk::PhysicalDeviceFeatures::default();
@@ -93,16 +98,15 @@ impl GPU {
             // Create device with requested queue count
             let device_create_info = vk::DeviceCreateInfo {
                 s_type: vk::StructureType::DEVICE_CREATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::DeviceCreateFlags::empty(),
                 queue_create_info_count: 1,
-                p_queue_create_infos: &queue_info,
+                queue_create_infos: &queue_info,
                 enabled_layer_count: 0,
-                pp_enabled_layer_names: std::ptr::null(),
+                enabled_layer_names: std::ptr::null(),
                 enabled_extension_count: 0,
-                pp_enabled_extension_names: ptr::null(),
-                p_enabled_features: &device_features,
-                _marker: std::marker::PhantomData,
+                enabled_extension_names: ptr::null(),
+                enabled_features: &device_features,
             };
 
             let device = instance.create_device(physical_device, &device_create_info, None)?;
@@ -115,10 +119,9 @@ impl GPU {
 
             let command_pool_info = vk::CommandPoolCreateInfo {
                 s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
                 queue_family_index,
-                _marker: std::marker::PhantomData,
             };
 
             let command_pool = device.create_command_pool(&command_pool_info, None)?;
@@ -130,8 +133,7 @@ impl GPU {
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    p_immutable_samplers: ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    immutable_samplers: ptr::null(),
                 },
                 // Input buffer 2 (used by binary operations like Add, Mul, etc.)
                 vk::DescriptorSetLayoutBinding {
@@ -139,8 +141,7 @@ impl GPU {
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    p_immutable_samplers: ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    immutable_samplers: ptr::null(),
                 },
                 // Output buffer (binding used by most operations)
                 vk::DescriptorSetLayoutBinding {
@@ -148,8 +149,7 @@ impl GPU {
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    p_immutable_samplers: ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    immutable_samplers: ptr::null(),
                 },
                 // Additional bindings if needed (bias buffer for Conv2D, etc.)
                 vk::DescriptorSetLayoutBinding {
@@ -157,36 +157,33 @@ impl GPU {
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    p_immutable_samplers: ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    immutable_samplers: ptr::null(),
                 },
             ];
 
             let descriptor_layout_info = vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::DescriptorSetLayoutCreateFlags::empty(),
                 binding_count: bindings.len() as u32,
-                p_bindings: bindings.as_ptr(),
-                _marker: std::marker::PhantomData,
+                bindings: bindings.as_ptr(),
             };
 
             let descriptor_set_layout =
                 device.create_descriptor_set_layout(&descriptor_layout_info, None)?;
 
             let pool_sizes = [vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
+                type_: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1000, // TODO: check how high this actually needs to be
             }];
 
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
                 max_sets: 500, // TODO: check how high this actually needs to be
                 pool_size_count: pool_sizes.len() as u32,
-                p_pool_sizes: pool_sizes.as_ptr(),
-                _marker: std::marker::PhantomData,
+                pool_sizes: pool_sizes.as_ptr(),
             };
 
             let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_info, None)?;
@@ -228,28 +225,26 @@ impl GPU {
     }
 
     unsafe fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn std::error::Error>> {
-        let app_name = CString::new("gpu_mm")?;
+        let aname = CString::new("gpu_mm")?;
         let appinfo = vk::ApplicationInfo {
             s_type: vk::StructureType::APPLICATION_INFO,
-            p_next: ptr::null(),
-            p_application_name: app_name.as_ptr(),
-            application_version: vk::make_api_version(0, 1, 0, 0),
-            p_engine_name: app_name.as_ptr(),
-            engine_version: vk::make_api_version(0, 1, 0, 0),
-            api_version: vk::make_api_version(0, 1, 0, 0),
-            _marker: std::marker::PhantomData,
+            next: ptr::null(),
+            application_name: aname.as_ptr(),
+            application_version: vk::make_version(1, 0, 0),
+            engine_name: aname.as_ptr(),
+            engine_version: vk::make_version(1, 0, 0),
+            api_version: vk::make_version(1, 0, 0),
         };
 
         let create_info = vk::InstanceCreateInfo {
             s_type: vk::StructureType::INSTANCE_CREATE_INFO,
-            p_next: ptr::null(),
+            next: ptr::null(),
             flags: vk::InstanceCreateFlags::empty(),
-            p_application_info: &appinfo,
+            application_info: &appinfo,
             enabled_layer_count: 0,
-            pp_enabled_layer_names: ptr::null(),
+            enabled_layer_names: ptr::null(),
             enabled_extension_count: 0,
-            pp_enabled_extension_names: ptr::null(),
-            _marker: std::marker::PhantomData,
+            enabled_extension_names: ptr::null(),
         };
 
         Ok(unsafe { entry.create_instance(&create_info, None) }?)
@@ -277,8 +272,10 @@ impl GPU {
 
     pub fn available_gpus() -> Result<Vec<GPUInfo>, VKMLEngineError> {
         unsafe {
+            let loader = LibloadingLoader::new(LIBRARY)
+                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
             let entry =
-                Entry::load().map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                Entry::new(loader).map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
 
             let instance = Self::create_instance(&entry)
                 .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
@@ -318,14 +315,13 @@ impl GPU {
             // Create buffer for f32 data
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::BufferCreateFlags::empty(),
                 size: size_in_bytes,
                 usage: vk::BufferUsageFlags::STORAGE_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 0,
-                p_queue_family_indices: ptr::null(),
-                _marker: std::marker::PhantomData,
+                queue_family_indices: ptr::null(),
             };
 
             let buffer = self.device.create_buffer(&buffer_info, None)?;
@@ -338,10 +334,9 @@ impl GPU {
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 allocation_size: mem_requirements.size,
                 memory_type_index: memory_type,
-                _marker: std::marker::PhantomData,
             };
 
             let memory = self.device.allocate_memory(&alloc_info, None)?;
@@ -361,11 +356,10 @@ impl GPU {
             let set_layouts = [self.descriptor_set_layout];
             let alloc_info = vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 descriptor_pool: self.descriptor_pool,
                 descriptor_set_count: 1,
-                p_set_layouts: set_layouts.as_ptr(),
-                _marker: std::marker::PhantomData,
+                set_layouts: set_layouts.as_ptr(),
             };
 
             let descriptor_set = self.device.allocate_descriptor_sets(&alloc_info)?[0];
@@ -378,20 +372,19 @@ impl GPU {
 
             let write_descriptor_set = vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_info,
-                p_image_info: ptr::null(),
-                p_texel_buffer_view: ptr::null(),
-                _marker: std::marker::PhantomData,
+                buffer_info: &buffer_info,
+                image_info: ptr::null(),
+                texel_buffer_view: ptr::null(),
             };
 
             self.device
-                .update_descriptor_sets(&[write_descriptor_set], &[]);
+                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
             Ok(GPUMemory {
                 buffer,
@@ -412,14 +405,13 @@ impl GPU {
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::BufferCreateFlags::empty(),
                 size: size_in_bytes,
                 usage: vk::BufferUsageFlags::STORAGE_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 0,
-                p_queue_family_indices: ptr::null(),
-                _marker: std::marker::PhantomData,
+                queue_family_indices: ptr::null(),
             };
 
             let buffer = self.device.create_buffer(&buffer_info, None)?;
@@ -432,10 +424,9 @@ impl GPU {
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 allocation_size: mem_requirements.size,
                 memory_type_index: memory_type,
-                _marker: std::marker::PhantomData,
             };
 
             let memory = self.device.allocate_memory(&alloc_info, None)?;
@@ -446,11 +437,10 @@ impl GPU {
             let set_layouts = [self.descriptor_set_layout];
             let alloc_info = vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 descriptor_pool: self.descriptor_pool,
                 descriptor_set_count: 1,
-                p_set_layouts: set_layouts.as_ptr(),
-                _marker: std::marker::PhantomData,
+                set_layouts: set_layouts.as_ptr(),
             };
 
             let descriptor_set = self.device.allocate_descriptor_sets(&alloc_info)?[0];
@@ -463,20 +453,19 @@ impl GPU {
 
             let write_descriptor_set = vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_info,
-                p_image_info: ptr::null(),
-                p_texel_buffer_view: ptr::null(),
-                _marker: std::marker::PhantomData,
+                buffer_info: &buffer_info,
+                image_info: ptr::null(),
+                texel_buffer_view: ptr::null(),
             };
 
             self.device
-                .update_descriptor_sets(&[write_descriptor_set], &[]);
+                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
             Ok(GPUMemory {
                 buffer,
@@ -552,9 +541,8 @@ impl GPU {
                 // Create a fence for this submission to track completion
                 let fence_info = vk::FenceCreateInfo {
                     s_type: vk::StructureType::FENCE_CREATE_INFO,
-                    p_next: std::ptr::null(),
+                    next: std::ptr::null(),
                     flags: vk::FenceCreateFlags::empty(),
-                    _marker: std::marker::PhantomData,
                 };
 
                 let fence = self.device.create_fence(&fence_info, None)?;
@@ -562,15 +550,14 @@ impl GPU {
 
                 let submit_info = vk::SubmitInfo {
                     s_type: vk::StructureType::SUBMIT_INFO,
-                    p_next: std::ptr::null(),
+                    next: std::ptr::null(),
                     wait_semaphore_count: 0,
-                    p_wait_semaphores: std::ptr::null(),
-                    p_wait_dst_stage_mask: std::ptr::null(),
+                    wait_semaphores: std::ptr::null(),
+                    wait_dst_stage_mask: std::ptr::null(),
                     command_buffer_count: chunk.len() as u32,
-                    p_command_buffers: chunk.as_ptr(),
+                    command_buffers: chunk.as_ptr(),
                     signal_semaphore_count: 0,
-                    p_signal_semaphores: std::ptr::null(),
-                    _marker: std::marker::PhantomData,
+                    signal_semaphores: std::ptr::null(),
                 };
 
                 // Get queue index, wrap around if needed

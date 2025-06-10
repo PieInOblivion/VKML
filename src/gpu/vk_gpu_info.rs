@@ -1,5 +1,5 @@
-use ash::{Instance, vk};
 use vk::Format;
+use vulkanalia::{Instance, vk, vk::InstanceV1_0};
 
 /// Simplified GPU information structure
 #[derive(Debug)]
@@ -77,7 +77,7 @@ impl GPUInfo {
                 .unwrap_or((false, 0));
 
             let vk_ext_memory_budget = instance
-                .enumerate_device_extension_properties(physical_device)
+                .enumerate_device_extension_properties(physical_device, None)
                 .map(|extensions| {
                     extensions.iter().any(|ext| {
                         let name = std::ffi::CStr::from_ptr(ext.extension_name.as_ptr());

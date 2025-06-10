@@ -4,8 +4,8 @@ use crate::{
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use ash::vk;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk;
 
 use super::instruction::Instruction;
 

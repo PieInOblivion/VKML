@@ -2,8 +2,8 @@ use rand::distr::{Distribution, Uniform};
 use std::f32::consts::PI;
 use std::sync::Arc;
 
-use ash::vk;
 use std::ptr;
+use vulkanalia::{vk, vk::DeviceV1_0};
 
 use crate::dataloader::error::VKMLEngineError;
 use crate::gpu::compute_pipelines::GPUMemoryOperation;
@@ -156,11 +156,10 @@ impl WeightInit {
         unsafe {
             let alloc_info = vk::CommandBufferAllocateInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 command_pool: gpu.get_command_pool(),
                 level: vk::CommandBufferLevel::PRIMARY,
                 command_buffer_count: 1,
-                _marker: std::marker::PhantomData,
             };
 
             let command_buffer = gpu
@@ -170,10 +169,9 @@ impl WeightInit {
 
             let begin_info = vk::CommandBufferBeginInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                p_inheritance_info: ptr::null(),
-                _marker: std::marker::PhantomData,
+                inheritance_info: ptr::null(),
             };
 
             gpu.get_device()
@@ -183,11 +181,10 @@ impl WeightInit {
             let set_layouts = [*gpu.get_descriptor_set_layout()];
             let desc_alloc_info = vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 descriptor_pool: *gpu.get_descriptor_pool(),
                 descriptor_set_count: 1,
-                p_set_layouts: set_layouts.as_ptr(),
-                _marker: std::marker::PhantomData,
+                set_layouts: set_layouts.as_ptr(),
             };
 
             let descriptor_set = gpu
@@ -203,20 +200,19 @@ impl WeightInit {
 
             let write_descriptor_set = vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: ptr::null(),
+                next: ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_info,
-                p_image_info: ptr::null(),
-                p_texel_buffer_view: ptr::null(),
-                _marker: std::marker::PhantomData,
+                image_info: ptr::null(),
+                buffer_info: &buffer_info,
+                texel_buffer_view: ptr::null(),
             };
 
             gpu.get_device()
-                .update_descriptor_sets(&[write_descriptor_set], &[]);
+                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
             let pipeline = gpu
                 .get_compute_pipelines()

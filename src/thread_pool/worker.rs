@@ -9,10 +9,10 @@ use crate::instruction::instruction::Instruction;
 use crate::model::weight_init::WeightInit;
 use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
-use ash::vk;
 use image::ColorType;
 use rand::distr::Uniform;
 use rand::prelude::Distribution;
+use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::thread_pool::ThreadPool;
 
@@ -414,11 +414,10 @@ impl Worker {
             // Allocate command buffers for all operations
             let alloc_info = vk::CommandBufferAllocateInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 command_pool: gpu.get_command_pool(),
                 level: vk::CommandBufferLevel::PRIMARY,
                 command_buffer_count: operations.len() as u32,
-                _marker: std::marker::PhantomData,
             };
 
             let command_buffers = match gpu.device.allocate_command_buffers(&alloc_info) {

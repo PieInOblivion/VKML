@@ -4,8 +4,8 @@ use crate::{
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use ash::vk;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
 
@@ -61,10 +61,9 @@ impl Instruction for ReshapeInstruction {
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                p_inheritance_info: std::ptr::null(),
-                _marker: std::marker::PhantomData,
+                inheritance_info: std::ptr::null(),
             };
 
             gpu.get_device()

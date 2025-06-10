@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ash::{Device, vk};
+use vulkanalia::{Device, vk, vk::DeviceV1_0};
 
 pub struct GPUMemory {
     pub buffer: vk::Buffer,

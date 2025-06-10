@@ -4,8 +4,8 @@ use crate::{
     tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use ash::vk;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
 
@@ -711,7 +711,7 @@ fn create_generic_matmul_command_buffer(
         let alloc_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool: *gpu.get_descriptor_pool(),
             descriptor_set_count: 1,
-            p_set_layouts: set_layouts.as_ptr(),
+            set_layouts: set_layouts.as_ptr(),
             ..Default::default()
         };
         let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
@@ -743,7 +743,7 @@ fn create_generic_matmul_command_buffer(
                 dst_binding: 0,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
-                p_buffer_info: &src1_buffer_info,
+                buffer_info: &src1_buffer_info,
                 ..Default::default()
             },
             vk::WriteDescriptorSet {
@@ -751,7 +751,7 @@ fn create_generic_matmul_command_buffer(
                 dst_binding: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
-                p_buffer_info: &src2_buffer_info,
+                buffer_info: &src2_buffer_info,
                 ..Default::default()
             },
             vk::WriteDescriptorSet {
@@ -759,7 +759,7 @@ fn create_generic_matmul_command_buffer(
                 dst_binding: 2,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
-                p_buffer_info: &dst_buffer_info,
+                buffer_info: &dst_buffer_info,
                 ..Default::default()
             },
             vk::WriteDescriptorSet {
@@ -767,12 +767,12 @@ fn create_generic_matmul_command_buffer(
                 dst_binding: 3, // UBO binding
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: 1,
-                p_buffer_info: &ubo_descriptor_buffer_info,
+                buffer_info: &ubo_descriptor_buffer_info,
                 ..Default::default()
             },
         ];
         gpu.get_device()
-            .update_descriptor_sets(&write_descriptor_sets, &[]);
+            .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
         gpu.get_device().cmd_bind_pipeline(
             command_buffer,
@@ -927,10 +927,9 @@ fn create_specialized_matmul_command_buffer(
 
         let begin_info = vk::CommandBufferBeginInfo {
             s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-            p_next: std::ptr::null(),
+            next: std::ptr::null(),
             flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            p_inheritance_info: std::ptr::null(),
-            _marker: std::marker::PhantomData,
+            inheritance_info: std::ptr::null(),
         };
         gpu.get_device()
             .begin_command_buffer(command_buffer, &begin_info)?;
@@ -938,11 +937,10 @@ fn create_specialized_matmul_command_buffer(
         let set_layouts = [*gpu.get_descriptor_set_layout()];
         let alloc_info = vk::DescriptorSetAllocateInfo {
             s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-            p_next: std::ptr::null(),
+            next: std::ptr::null(),
             descriptor_pool: *gpu.get_descriptor_pool(),
             descriptor_set_count: 1,
-            p_set_layouts: set_layouts.as_ptr(),
-            _marker: std::marker::PhantomData,
+            set_layouts: set_layouts.as_ptr(),
         };
 
         let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
@@ -968,47 +966,44 @@ fn create_specialized_matmul_command_buffer(
         let write_descriptor_sets = [
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_infos[0],
-                p_image_info: std::ptr::null(),
-                p_texel_buffer_view: std::ptr::null(),
-                _marker: std::marker::PhantomData,
+                buffer_info: &buffer_infos[0],
+                image_info: std::ptr::null(),
+                texel_buffer_view: std::ptr::null(),
             },
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 1,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_infos[1],
-                p_image_info: std::ptr::null(),
-                p_texel_buffer_view: std::ptr::null(),
-                _marker: std::marker::PhantomData,
+                buffer_info: &buffer_infos[1],
+                image_info: std::ptr::null(),
+                texel_buffer_view: std::ptr::null(),
             },
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: std::ptr::null(),
+                next: std::ptr::null(),
                 dst_set: descriptor_set,
                 dst_binding: 2,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &buffer_infos[2],
-                p_image_info: std::ptr::null(),
-                p_texel_buffer_view: std::ptr::null(),
-                _marker: std::marker::PhantomData,
+                buffer_info: &buffer_infos[2],
+                image_info: std::ptr::null(),
+                texel_buffer_view: std::ptr::null(),
             },
         ];
 
         gpu.get_device()
-            .update_descriptor_sets(&write_descriptor_sets, &[]);
+            .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
         let pipeline = gpu
             .get_compute_pipelines()
