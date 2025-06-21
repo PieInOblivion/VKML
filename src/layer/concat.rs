@@ -28,10 +28,6 @@ impl Layer for ConcatLayer {
         false
     }
 
-    fn requires_gradients(&self) -> bool {
-        true
-    }
-
     fn parameter_count(&self, _batch_size: usize, _input_shapes: &[&TensorDesc]) -> usize {
         0 // No parameters
     }
@@ -56,14 +52,7 @@ impl Layer for ConcatLayer {
         // Concat has no parameters, just activations
         let activation_bytes = output_shape.size_in_bytes() as u64;
 
-        // Add gradient memory if needed
-        let gradient_bytes = if self.requires_gradients() {
-            activation_bytes
-        } else {
-            0
-        };
-
-        activation_bytes + gradient_bytes
+        activation_bytes + activation_bytes
     }
 
     fn output_shapes(

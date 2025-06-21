@@ -23,9 +23,6 @@ pub trait Layer {
         self.parameter_count(0, &[]) > 0
     }
 
-    // Whether this layer requires gradient tracking
-    fn requires_gradients(&self) -> bool;
-
     // For parameterised layers, describes the required weight and bias tensors
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
         None

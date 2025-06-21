@@ -126,10 +126,6 @@ impl Layer for Conv2DLayer {
         weights_size + bias_size + activation_size + gradient_size
     }
 
-    fn requires_gradients(&self) -> bool {
-        true
-    }
-
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
         let weights = TensorDesc::new(vec![
             self.out_features,

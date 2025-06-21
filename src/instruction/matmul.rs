@@ -1,5 +1,6 @@
 use crate::{
     dataloader::error::VKMLEngineError,
+    execution::execution_mode::ExecutionMode,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -14,6 +15,7 @@ pub struct MatMulInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
     pub dst: TensorId,
+    pub execution_modes: Vec<ExecutionMode>,
 }
 
 impl Debug for MatMulInstruction {
@@ -44,6 +46,10 @@ impl Instruction for MatMulInstruction {
         if !new_outputs.is_empty() {
             self.dst = new_outputs[0];
         }
+    }
+
+    fn execution_modes(&self) -> Vec<ExecutionMode> {
+        self.execution_modes.clone()
     }
 
     fn create_command_buffer(

@@ -1,15 +1,18 @@
-# gpu_mm
+# VKML
 
 This library contains high-level abstractions to make ML model development and usage easy and compute efficient.
 
 ## Project Priorities In Order
-1. Compute efficiency
-2. Ease of use
+1. Heterogeneous compute efficiency (Utilises any Vulkan supported combination of GPU and CPU simultaneously)
+2. Predictable and consistent performance
+3. Ease of use
 
 ## Overview
-This project was inspired by research showing CUDA's limitations (as demonstrated in [this IEEE paper](https://ieeexplore.ieee.org/document/10036080)). The current focus is on Vulkan support. As Vulkan compute gradually evolves into standardised specifications and extensions, we're currently working with shader computations.
+This project was inspired by research demonstrating Vulkan out performing CUDA in FFT efficiency (as demonstrated in [this IEEE paper](https://ieeexplore.ieee.org/document/10036080)). The current focus is on Vulkan support. As Vulkan compute gradually evolves into standardised specifications and extensions, we're currently working with shader computations.
 
 The project aims to provide abstractions at a level similar to PyTorch, including multi-gpu support.
+
+The proof of concept goal for this project will be met when we are able to benchmark a simple MLP model against it's PyTorch equivalent, while remaining an extensible framework for future development.
 
 ## Current Implementation Details (Assumptions, Descisions and Todo's)
 
@@ -41,8 +44,8 @@ The project aims to provide abstractions at a level similar to PyTorch, includin
 
 ### Architecture Decisions
 * Model, Layer, Tensor etc. act as descriptors only
-  * Allows compute manager to handle all data and memory
-  * Enables future support for alternative compute managers
+  * Allows the compute manager to handle all data and memory
+  * Large seperation between blueprint layers and final tensor DAG
 * ImageBatch to f32 function assumes little endian storage
 * Current GPU memory calculations:
   * Don't account for allocation overhead (acceptable with safe memory threshold)
@@ -54,6 +57,12 @@ The project aims to provide abstractions at a level similar to PyTorch, includin
   * Sends and waits for single GPU commands
   * Future improvement: multiple simultaneous commands using threadpool or native Vulkan solution
 
+### Vulkan Usage
+* Vendor specific extensions become standard extensions depending on adoption. As of 2025, ARM appears to be focusing on adding ML specific extension to Vulkan
+  * As of 1.3.300 [VK_NV_cooperative_matrix](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_NV_cooperative_matrix.html)
+  * As of 1.4.317 [VK_EXT_shader_float8](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_shader_float8.html)
+  * As of 1.4.319 [VK_ARM_data_graph](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_ARM_data_graph.html)
+
 ## Building
 * Requires [glslc](https://github.com/google/shaderc) in PATH to compile shaders
 
@@ -64,24 +73,12 @@ The project aims to provide abstractions at a level similar to PyTorch, includin
 * [Vulkan Tutorial PDF](https://vulkan-tutorial.com/resources/vulkan_tutorial_en.pdf)
 * [Rust Vulkan Tutorial](https://github.com/unknownue/vulkan-tutorial-rust)
 * [Ash-rs](https://github.com/ash-rs/ash)
-* [Vulkano](https://github.com/vulkano-rs/vulkano)
-* [VK_NV_cooperative_matrix Spec](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_NV_cooperative_matrix.html)
-* [VkCooperativeMatrixPropertiesNV Spec](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkCooperativeMatrixPropertiesNV.html)
+* [Vulkano](https://github.com/KyleMayes/vulkanalia)
+* [Vulkanalia](https://github.com/KyleMayes/vulkanalia)
 * [VkFFT](https://github.com/DTolm/VkFFT)
 * [IEEE Paper](https://ieeexplore.ieee.org/document/10036080)
 
-### CUDA Resources
-* [cudarc Documentation](https://docs.rs/cudarc/latest/cudarc/)
-* [CUDA Driver API](https://docs.nvidia.com/cuda/cuda-driver-api/index.html)
-
-#### Additional CUDA Projects
-* [cudarc](https://github.com/coreylowman/cudarc)
-* [cuda-sys](https://github.com/rust-cuda/cuda-sys)
-* [Rust-CUDA](https://github.com/Rust-GPU/Rust-CUDA)
-* [gpgpu-rs](https://github.com/UpsettingBoy/gpgpu-rs)
-* [rust-cudnn](https://github.com/autumnai/rust-cudnn)
-* [arrayfire-rust](https://github.com/arrayfire/arrayfire-rust)
-
 ### Related Projects
+* [Burn](https://github.com/tracel-ai/burn)
 * [Candle](https://github.com/huggingface/candle)
 * [AdaptiveCpp](https://adaptivecpp.github.io/AdaptiveCpp/)

@@ -1,12 +1,30 @@
+use crate::execution::execution_mode::ExecutionMode;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TensorDesc {
     dims: Vec<usize>,
+    execution_modes: Vec<ExecutionMode>,
 }
 
 impl TensorDesc {
     pub fn new(dims: Vec<usize>) -> Self {
+        Self::new_with(dims, ExecutionMode::all())
+    }
+
+    pub fn new_with(dims: Vec<usize>, execution_modes: Vec<ExecutionMode>) -> Self {
         assert!(!dims.is_empty(), "Tensor dimensions cannot be empty");
-        Self { dims }
+        Self {
+            dims,
+            execution_modes,
+        }
+    }
+
+    pub fn execution_modes(&self) -> &Vec<ExecutionMode> {
+        &self.execution_modes
+    }
+
+    pub fn is_used_in(&self, mode: &ExecutionMode) -> bool {
+        self.execution_modes.contains(mode)
     }
 
     pub fn num_elements(&self) -> usize {
@@ -57,6 +75,7 @@ impl TensorDesc {
     pub fn flatten(&self) -> Self {
         Self {
             dims: vec![self.num_elements()],
+            execution_modes: self.execution_modes.clone(),
         }
     }
 

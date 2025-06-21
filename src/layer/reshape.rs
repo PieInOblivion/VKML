@@ -115,10 +115,6 @@ impl Layer for ReshapeLayer {
         output_shape.size_in_bytes() as u64
     }
 
-    fn requires_gradients(&self) -> bool {
-        true
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (1, Some(1))
     }

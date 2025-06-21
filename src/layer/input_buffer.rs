@@ -56,10 +56,6 @@ impl Layer for InputLayer {
         activation_memory + gradient_memory
     }
 
-    fn requires_gradients(&self) -> bool {
-        self.track_gradients
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (0, Some(0))
     }

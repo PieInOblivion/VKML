@@ -82,10 +82,6 @@ impl Layer for ActivationLayer {
         activation_size * 2
     }
 
-    fn requires_gradients(&self) -> bool {
-        true
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (1, Some(1))
     }

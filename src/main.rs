@@ -12,6 +12,8 @@ mod layer;
 
 mod tensor;
 
+mod execution;
+
 mod instruction;
 mod tensor_graph;
 

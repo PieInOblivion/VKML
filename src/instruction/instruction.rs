@@ -1,5 +1,6 @@
 use crate::{
     dataloader::error::VKMLEngineError,
+    execution::execution_mode::ExecutionMode,
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -22,7 +23,12 @@ pub trait Instruction: Debug {
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err(Box::new(VKMLEngineError::VulkanLoadError(format!(
+            "GPU execution not implemented for {:?}",
+            self
+        ))))
+    }
 
     // Execute on CPU (default implementation returns error)
     fn execute_cpu(&self, _tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
@@ -30,6 +36,18 @@ pub trait Instruction: Debug {
             "CPU execution not implemented for {:?}",
             self
         )))
+    }
+
+    // Get the execution modes this instruction is used in
+    // Default is only inference. Other specific modes must be manually set
+    // NOTE: Not sure if this default behaviour is easiest?
+    fn execution_modes(&self) -> Vec<ExecutionMode> {
+        vec![ExecutionMode::Inference]
+    }
+
+    // Check if this instruction should execute for a given mode
+    fn should_execute_for(&self, mode: &ExecutionMode) -> bool {
+        self.execution_modes().contains(mode)
     }
 
     // Clone the instruction (since trait objects can't use derive(Clone))

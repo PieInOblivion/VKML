@@ -74,10 +74,6 @@ impl Layer for ElementWiseLayer {
         activation_size * 2 // For activations and gradients
     }
 
-    fn requires_gradients(&self) -> bool {
-        true
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (2, None) // At least 2 inputs, no upper limit
     }
