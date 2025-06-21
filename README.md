@@ -2,10 +2,11 @@
 
 This library contains high-level abstractions to make ML model development and usage easy and compute efficient.
 
-## Project Priorities In Order
-1. Heterogeneous compute efficiency (Utilises any Vulkan supported combination of GPU and CPU simultaneously)
-2. Predictable and consistent performance
-3. Ease of use
+## Project Priorities
+1. Universal compute utilisation (Leverages any available hardware combination)
+2. Heterogeneous compute efficiency
+3. Predictable and consistent performance
+4. Ease of use
 
 ## Overview
 This project was inspired by research demonstrating Vulkan out performing CUDA in FFT efficiency (as demonstrated in [this IEEE paper](https://ieeexplore.ieee.org/document/10036080)). The current focus is on Vulkan support. As Vulkan compute gradually evolves into standardised specifications and extensions, we're currently working with shader computations.
