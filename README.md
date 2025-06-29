@@ -9,7 +9,9 @@ This library contains high-level abstractions to make ML model development and u
 4. Ease of use
 
 ## Overview
-This project was inspired by research demonstrating a Fast Fourier Transform Vulkan implementation having "comparable or better performance" than CUDA (as demonstrated in [this IEEE paper](https://ieeexplore.ieee.org/document/10036080)). As specific Vulkan ML extensions gradually evolve into standardised specifications and extensions, they will be implemented in this project. Currently it is working with solely shader computations, however this is changing rapidly (see [Vulkan Usage](#vulkan-usage)).
+This project was inspired by research demonstrating a Fast Fourier Transform Vulkan implementation having "comparable or better performance" than CUDA (as demonstrated in [this IEEE paper](https://ieeexplore.ieee.org/document/10036080)).
+
+As specific Vulkan ML extensions gradually evolve into standardised specifications and extensions, they will be implemented in this project. Currently it is working with solely shader computations, however this is changing rapidly (see [Vulkan Usage](#vulkan-usage)).
 
 The project aims to provide abstractions at a level similar to PyTorch with default usage of:
 - Multi-vendor GPU systems (Nvidia, AMD, Intel, Qualcomm, and more)
@@ -18,6 +20,14 @@ The project aims to provide abstractions at a level similar to PyTorch with defa
 The proof of concept goal for this project will be met when we are able to benchmark a simple MLP model against it's PyTorch equivalent, while remaining an extensible framework for future development.
 
 ## Current Implementation Details (Assumptions, Descisions and Todo's)
+
+### Overall Todo's
+* Automatic workgroup decision making
+* JIT like Descriptor Set Layout, Descriptor Sets, Pipeline Layout, Descriptor Pool optimisation implementation
+  * The current implementation is still from early basic gpu testing
+* Backwards Pass
+* Multiple data formats
+* Dataloader trait interface refactor
 
 ### Image Loading
 * Current proof of concept implementation stores all file names in memory
