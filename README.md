@@ -25,6 +25,9 @@ The proof of concept goal for this project will be met when we are able to bench
 * Automatic workgroup decision making
 * JIT like Descriptor Set Layout, Descriptor Sets, Pipeline Layout, Descriptor Pool optimisation implementation
   * The current implementation is still from early basic gpu testing
+* Vulkan Compute Queue investigations
+  * Syncing multiple compute queues on same device vs use one queue, pros, cons, vendor driver implementation differences etc
+* Interface for manual instruction and tensor modification into model and/or tensor graphs
 * Backwards Pass
 * Multiple data formats
 * Dataloader trait interface refactor
