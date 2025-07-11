@@ -34,15 +34,17 @@ The proof of concept goal for this project will be met when we are able to bench
 
 ### Image Loading
 * Current proof of concept implementation stores all file names in memory
-  * Raw filesystems typically don't store file counts and aren't sorted, so we provide users that option for replicatability
-  * Direct filesystem read into per batch means end files can never be in the first batch. Requires preread and store of filesystem
+  * Raw filesystems typically don't store file counts and aren't sorted, so we provide users options for replicatability
+  * Directly reading filesystems into batches means last seen files can never be in the first batches. Which is why currently it requires a preread and store of the directory
   * Future support planned for CSV and other formats
     * This will stop the need for prereading directory
+  * All images must be of the same colour format. There are no tools to convert or transform images yet in this library
   * Raw binary support planned
 
 ### Thread Pool Implementation
-* Currently created once, leading to single-threaded usage creating a whole pool of one worker
-  * This means tasks are loaded in advance, requiring more memory than running without a work queue
+* Typical usage is one pool shared between required functions. Allows creation of multiple pools to be used for different tasks
+* Currently always required by some functions. If single-threaded is needed, this leads to creating a pool with one worker
+  * This requires more memory than running without a worker pool
 * Thread pool will be implemented as an option in future
 * Current batch processing generates entire batch before submitting work
   * Could benefit from periodic queue flushing instead of sequential generate -> push -> work pattern
@@ -50,8 +52,8 @@ The proof of concept goal for this project will be met when we are able to bench
 ### GPU Management
 * Currently assumes all GPU memory is free
   * Will implement VK_EXT_memory_budget in future (commonly implemented extension)
-  * Final implementation will track own usage and initial usage from other processes
-    * Will include configurable threshold (e.g., 95% of free memory)
+  * Final implementation will track self usage and initial usage from other processes
+    * Will include configurable threshold (e.g, 95% of free memory)
 * GPU filtering currently checks compute capability
   * Future investigation needed for non-compute flag GPUs
 * GPU-to-GPU movement currently routes through CPU
@@ -59,19 +61,20 @@ The proof of concept goal for this project will be met when we are able to bench
   * Research needed on VK shared memory pool extensions
 
 ### Architecture Decisions
-* Model, Layer, Tensor etc. act as descriptors only
+* Model, Layer, Tensor etc. act as descriptors/blueprints only
   * Allows the compute manager to handle all data and memory
   * Large seperation between blueprint layers and final tensor DAG
 * ImageBatch to f32 function assumes little endian storage
 * Current GPU memory calculations:
-  * Don't account for allocation overhead (acceptable with safe memory threshold)
-  * Don't track CPU memory requirements
+  * Doesn't account for allocation overhead (acceptable with safe memory threshold)
+  * Doesn't track CPU memory usage past initial capacity checks
 * Model storage is sequential in memory
   * Prevents small layers being stored out of order on multi-device compute configurations
   * Avoids unnecessary CPU transfers
 * Current compute implementation:
-  * Sends and waits for single GPU commands
-  * Future improvement: multiple simultaneous commands using threadpool or native Vulkan solution
+  * All parallelisable work is done so, but no stage fusion exists yet
+  * Sends and waits for GPU per parallel execution stage
+  * Future improvement: Chain of multiple dependant commands sent to gpu using threadpool or native Vulkan solution
 
 ### Vulkan Usage
 * Vendor specific extensions become standard extensions depending on adoption. As of 2025, ARM appears to be focusing on adding ML specific extension to Vulkan
