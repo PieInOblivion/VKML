@@ -493,7 +493,7 @@ impl Worker {
 
             // Get a pointer to the specific instruction
             let instruction_ptr =
-                &(*tensor_graph_ptr).operations[instruction_idx] as *const Box<dyn Instruction>;
+                &(&(*tensor_graph_ptr).operations)[instruction_idx] as *const Box<dyn Instruction>;
 
             // Execute with separate pointers
             if let Err(e) = (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr) {

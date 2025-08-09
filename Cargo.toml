@@ -1,7 +1,14 @@
 [package]
 name = "VKML"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+authors = ["PieInOblivion"]
+license = "MIT"
+description = "High-level Vulkan-based machine learning library"
+readme = "README.md"
+repository = "https://github.com/PieInOblivion/VKML"
+keywords = ["vulkan", "machine-learning", "gpu", "compute", "ml"]
+categories = ["science", "graphics", "hardware-support"]
 
 [profile.release]
 lto = true
@@ -12,3 +19,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
+zero-pool = "0.1.0"
