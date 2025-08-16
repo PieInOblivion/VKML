@@ -12,9 +12,6 @@ pub enum VKMLError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("Image error: {0}")]
-    ImageError(#[from] image::ImageError),
-
     // TODO: Redo error types and such
     #[error("Invalid split ratios: {message}")]
     InvalidSplitRatios { message: String },
