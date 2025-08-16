@@ -1,8 +1,8 @@
 use crate::dataloader::{config::DataLoaderConfig, data_type::DataType};
 
-use super::error::VKMLError;
-
 pub trait DataLoader {
+    // Functions without default implementations
+
     /// Returns (total_dataset_size, split_lengths)
     /// split_lengths[i] contains the number of items in split i
     fn len(&self) -> (usize, Vec<usize>);
@@ -14,8 +14,25 @@ pub trait DataLoader {
     /// Number of bytes required to store one item
     fn bytes_per_item(&self) -> usize;
 
+    /// Get the bytes for a single item
+    fn get_item_bytes(&self, index: usize) -> Vec<u8>;
+
+    /// Get access to the dataloader configuration
+    fn get_config(&self) -> &DataLoaderConfig;
+
+    fn get_thread_pool(&self) -> &zero_pool::ZeroPool;
+
+    // Functions with default implementations
+
     /// The format of data stored in a batch
-    fn batch_data_type(&self) -> DataType;
+    fn batch_data_type(&self) -> DataType {
+        DataType::F32
+    }
+
+    /// Get the configured batch size
+    fn get_batch_size(&self) -> usize {
+        self.get_config().batch_size
+    }
 
     /// Number of bytes required for a full batch
     /// Default implementation: batch_size * bytes_per_item
@@ -23,17 +40,18 @@ pub trait DataLoader {
         self.get_batch_size() * self.bytes_per_item()
     }
 
-    /// Get the configured batch size
-    fn get_batch_size(&self) -> usize;
-
-    /// Get the bytes for a single item
-    fn get_item_bytes(&self, index: usize) -> Vec<u8>;
-
     /// Shuffle the entire dataset (all splits together)
-    fn shuffle_whole_dataset(&mut self) -> Result<(), VKMLError>;
+    fn shuffle_whole_dataset(&mut self) {
+        println!("shuffle_whole_dataset: not implemented for this DataLoader");
+    }
 
     /// Shuffle each split individually (preserves split boundaries)
-    fn shuffle_individual_dataset(&mut self, split_idx: usize) -> Result<(), VKMLError>;
+    fn shuffle_individual_dataset(&mut self, split_idx: usize) {
+        println!(
+            "shuffle_individual_dataset: not implemented for this DataLoader (split_idx: {})",
+            split_idx
+        );
+    }
 
     /// Get the number of batches in a specific split
     fn batches_in_split(&self, split_idx: usize) -> usize {
@@ -56,9 +74,4 @@ pub trait DataLoader {
     fn num_splits(&self) -> usize {
         self.len().1.len()
     }
-
-    /// Get access to the dataloader configuration
-    fn get_config(&self) -> &DataLoaderConfig;
-
-    fn get_thread_pool(&self) -> &zero_pool::ThreadPool;
 }

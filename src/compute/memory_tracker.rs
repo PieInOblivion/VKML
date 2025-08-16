@@ -1,7 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::dataloader::error::VKMLError;
-
 pub struct MemoryTracker {
     maximum: u64,
     current: AtomicU64,
@@ -18,28 +16,26 @@ impl MemoryTracker {
         }
     }
 
-    pub fn allocate(&self, size: u64) -> Result<(), VKMLError> {
+    pub fn allocate(&self, size: u64) {
         let prev = self.current.fetch_add(size, Ordering::SeqCst);
         let new = match prev.checked_add(size) {
             Some(v) => v,
             None => {
                 self.current.fetch_sub(size, Ordering::SeqCst);
-                return Err(VKMLError::OutOfMemory(format!(
+                panic!(
                     "Memory allocation would overflow: current {} + size {}",
                     prev, size
-                )));
+                );
             }
         };
 
         if new > self.maximum {
             self.current.fetch_sub(size, Ordering::SeqCst);
-            return Err(VKMLError::OutOfMemory(format!(
+            panic!(
                 "Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used",
                 size, prev, self.maximum
-            )));
+            );
         }
-
-        Ok(())
     }
 
     pub fn deallocate(&self, size: u64) {

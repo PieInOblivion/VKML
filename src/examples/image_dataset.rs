@@ -2,7 +2,6 @@ use image::{self, ColorType};
 use rand::seq::SliceRandom;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use vkml::dataloader::{
     config::DataLoaderConfig,
     data_type::DataType,
@@ -11,7 +10,7 @@ use vkml::dataloader::{
     info::print_dataset_info,
     par_iter::DataLoaderParIter,
 };
-use zero_pool::{zp_define_task_fn, zp_task_params, ThreadPool};
+use zero_pool::ZeroPool;
 
 impl From<ColorType> for DataType {
     fn from(color_type: ColorType) -> Self {
@@ -41,21 +40,22 @@ pub struct ImagesDirDataLoader {
     image_color_type: ColorType,
     image_data_type: DataType,
     config: DataLoaderConfig,
-    thread_pool: ThreadPool,
+    thread_pool: ZeroPool,
 }
 
 impl ImagesDirDataLoader {
     pub fn new(
         dir: &str,
         config: Option<DataLoaderConfig>,
-        thread_pool: ThreadPool,
+        thread_pool: ZeroPool,
     ) -> Result<Self, VKMLError> {
         let path = Path::new(dir);
         if !path.exists() {
-            return Err(VKMLError::DirectoryNotFound {
-                path: dir.to_string(),
-            });
-        }
+    return Err(VKMLError::Generic(format!(
+        "Directory not found: {}",
+        dir
+    )));
+}
 
         let valid_extensions = image::ImageFormat::all()
             .flat_map(|format| format.extensions_str())
@@ -99,15 +99,17 @@ impl ImagesDirDataLoader {
             .collect();
 
         if self.dataset.is_empty() {
-            return Err(VKMLError::EmptyDataset);
-        }
+    return Err(VKMLError::Generic(
+        "No images found in the dataset".to_string()
+    ));
+}
 
         if self.config.sort_dataset {
             self.dataset.sort_unstable();
         }
 
         self.dataset_indices = (0..self.dataset.len()).collect();
-        self.shuffle_whole_dataset()?;
+        self.shuffle_whole_dataset();
 
         Ok(())
     }
@@ -188,46 +190,46 @@ impl DataLoader for ImagesDirDataLoader {
         img.as_bytes().to_vec()
     }
 
-    fn shuffle_whole_dataset(&mut self) -> Result<(), VKMLError> {
-        let mut rng = self.config.rng.as_ref()
-            .ok_or(VKMLError::RngNotSet)?
-            .lock()
-            .map_err(|_| VKMLError::RngLockError)?;
-        self.dataset_indices.shuffle(&mut *rng);
-        Ok(())
-    }
+    fn shuffle_whole_dataset(&mut self) {
+    let mut rng = self.config.rng.as_ref()
+        .expect("RNG should always be initialized")
+        .lock()
+        .expect("Failed to acquire RNG lock");
+    self.dataset_indices.shuffle(&mut *rng);
+}
 
-    fn shuffle_individual_dataset(&mut self, split_idx: usize) -> Result<(), VKMLError> {
-        let (_, split_sizes) = self.len();
-        if split_idx >= split_sizes.len() {
-            return Err(VKMLError::InvalidSplitIndex { index: split_idx });
-        }
+    fn shuffle_individual_dataset(&mut self, split_idx: usize) {
+    let (_, split_sizes) = self.len();
+    assert!(
+        split_idx < split_sizes.len(),
+        "Invalid split index: {}, only {} splits available",
+        split_idx, split_sizes.len()
+    );
 
-        let split_start: usize = split_sizes[..split_idx].iter().sum();
-        let split_end = split_start + split_sizes[split_idx];
+    let split_start: usize = split_sizes[..split_idx].iter().sum();
+    let split_end = split_start + split_sizes[split_idx];
 
-        let mut rng = self.config.rng.as_ref()
-            .ok_or(VKMLError::RngNotSet)?
-            .lock()
-            .map_err(|_| VKMLError::RngLockError)?;
+    let mut rng = self.config.rng.as_ref()
+        .expect("RNG should always be initialized")
+        .lock()
+        .expect("Failed to acquire RNG lock");
 
-        self.dataset_indices[split_start..split_end].shuffle(&mut *rng);
-        Ok(())
-    }
+    self.dataset_indices[split_start..split_end].shuffle(&mut *rng);
+}
 
     fn get_config(&self) -> &DataLoaderConfig {
         &self.config
     }
 
-    fn get_thread_pool(&self) -> &ThreadPool {
+    fn get_thread_pool(&self) -> &ZeroPool {
         &self.thread_pool
     }
 }
 
 fn main() {
     // Example usage
-    let thread_pool = zero_pool::with_workers(4);
-    
+    let thread_pool = ZeroPool::new();
+
     let config = DataLoaderConfig {
         batch_size: 32,
         split_ratios: vec![0.7, 0.2, 0.1], // train, test, val

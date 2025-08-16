@@ -501,7 +501,7 @@ impl GPU {
         }
     }
 
-    pub fn allocate_memory(&self, size: u64) -> Result<(), VKMLError> {
+    pub fn allocate_memory(&self, size: u64) {
         self.memory_tracker.allocate(size)
     }
 

@@ -18,7 +18,7 @@ vulkanalia = { version = "0.29", features = ["libloading"] }
 rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
-zero-pool = "0.1"
+zero-pool = "0.2"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

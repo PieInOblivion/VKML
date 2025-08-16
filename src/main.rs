@@ -16,18 +16,12 @@ mod tensor_graph;
 use std::sync::Arc;
 
 use compute::compute_manager::ComputeManager;
-use dataloader::{
-    config::DataLoaderConfig,
-    data_batch::DataBatch,
-    dataloader::{DatasetSplit, SourceFormat},
-    for_imagesdir::DirectoryImageLoader,
-    par_iter::MultithreadedDataLoaderIterator,
-};
+use dataloader::{config::DataLoaderConfig, data_batch::DataBatch};
 use gpu::vk_gpu::GPU;
 
 use layer::factory::Layers;
 use model::{graph_model::GraphModel, layer_connection::LayerConnection};
-use thread_pool::thread_pool::ThreadPool;
+use zero_pool::ZeroPool;
 
 /* Design descisions and some TODOs
     Current proof of concept implementation of image loader stores all file names in memory
@@ -71,7 +65,8 @@ use thread_pool::thread_pool::ThreadPool;
 fn main() {
     // Standard implementation, create one threadpool and share it.
     // Otherwise structs that require a threadpool will create their own.
-    let thread_pool = ThreadPool::new();
+    let thread_pool = ZeroPool::new();
+    let tp = ZeroPool::with_workers(5);
 
     // - - - - Data loader and parralel iterator testing - - - -
     let config = DataLoaderConfig {

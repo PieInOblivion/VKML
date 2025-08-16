@@ -1,6 +1,6 @@
 use rand::distr::{Distribution, Uniform};
 use std::f32::consts::PI;
-use zero_pool::{ThreadPool, zp_define_task_fn, zp_task_params};
+use zero_pool::{ZeroPool, zp_define_task_fn, zp_task_params};
 
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -79,7 +79,7 @@ impl WeightInit {
         shape: &TensorDesc,
         total_elements: usize,
         chunk_size: usize,
-        thread_pool: &ThreadPool,
+        thread_pool: &ZeroPool,
     ) -> Vec<f32> {
         let mut result = vec![0.0; total_elements];
         let (fan_in, fan_out) = shape.calculate_fan_in_out();

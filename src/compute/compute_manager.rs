@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use zero_pool::ThreadPool;
+use zero_pool::ZeroPool;
 
 use crate::dataloader::data_batch::DataBatch;
 use crate::dataloader::data_type::DataType;
@@ -29,21 +29,21 @@ pub enum DeviceLocation {
 pub struct ComputeManager {
     gpus: Vec<GPU>,
     cpu: CPUCompute,
-    thread_pool: Arc<ThreadPool>,
+    thread_pool: Arc<ZeroPool>,
 
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
 }
 
 impl ComputeManager {
-    pub fn new(model: GraphModel, thread_pool: Arc<ThreadPool>) -> Result<Self, VKMLError> {
+    pub fn new(model: GraphModel, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
         let gpus = Self::available_gpus()?;
         Self::new_with(model, thread_pool, gpus, None)
     }
 
     pub fn new_with(
         mut model: GraphModel,
-        thread_pool: Arc<ThreadPool>,
+        thread_pool: Arc<ZeroPool>,
         gpus: Vec<GPU>,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
@@ -72,7 +72,7 @@ impl ComputeManager {
             + manager.cpu.memory_tracking.get_available();
 
         if total_memory > total_available {
-            return Err(VKMLError::OutOfMemory(format!(
+            return Err(VKMLError::Generic(format!(
                 "Model requires {} bytes but only {} available",
                 total_memory, total_available
             )));
@@ -436,12 +436,12 @@ impl ComputeManager {
                     }
                 };
 
-                self.cpu.memory_tracking.allocate(size_in_bytes)?;
+                self.cpu.memory_tracking.allocate(size_in_bytes);
                 Ok(TensorData::new_cpu(initial_data))
             }
             DeviceLocation::GPU(idx) => {
                 let gpu = &self.gpus[idx];
-                gpu.allocate_memory(size_in_bytes)?;
+                gpu.allocate_memory(size_in_bytes);
 
                 // TODO: weight init probably shouldn't do the gpu memory allocation itself. it's fine enough for now
                 let gpu_memory = weight_init

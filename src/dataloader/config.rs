@@ -2,8 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
-use super::error::VKMLError;
-
 pub struct DataLoaderConfig {
     pub prefetch_count: usize,
     pub batch_size: usize,
@@ -43,29 +41,6 @@ impl DataLoaderConfig {
         ))));
 
         self
-    }
-
-    fn validate_split_ratios(&self) -> Result<(), VKMLError> {
-        if self.split_ratios.is_empty() {
-            return Err(VKMLError::InvalidSplitRatios {
-                message: "Split ratios cannot be empty".to_string(),
-            });
-        }
-
-        let sum: f32 = self.split_ratios.iter().sum();
-        if (sum - 1.0).abs() > 1e-6 {
-            return Err(VKMLError::InvalidSplitRatios {
-                message: format!("Split ratios must sum to 1.0, got {}", sum),
-            });
-        }
-
-        if self.split_ratios.iter().any(|&ratio| ratio <= 0.0) {
-            return Err(VKMLError::InvalidSplitRatios {
-                message: "All split ratios must be positive".to_string(),
-            });
-        }
-
-        Ok(())
     }
 
     pub fn num_splits(&self) -> usize {
