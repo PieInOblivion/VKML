@@ -1,6 +1,6 @@
 use rand::distr::{Distribution, Uniform};
 use std::f32::consts::PI;
-use std::sync::Arc;
+use zero_pool::{ThreadPool, zp_define_task_fn, zp_task_params};
 
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -10,8 +10,6 @@ use crate::gpu::compute_pipelines::GPUMemoryOperation;
 use crate::gpu::gpu_memory::GPUMemory;
 use crate::gpu::vk_gpu::GPU;
 use crate::tensor::tensor_desc::TensorDesc;
-use crate::thread_pool::thread_pool::ThreadPool;
-use crate::thread_pool::worker::{DataPtrF32, WorkType};
 
 #[derive(Clone)]
 pub enum WeightInit {
@@ -81,30 +79,30 @@ impl WeightInit {
         shape: &TensorDesc,
         total_elements: usize,
         chunk_size: usize,
-        thread_pool: Arc<ThreadPool>,
+        thread_pool: &ThreadPool,
     ) -> Vec<f32> {
         let mut result = vec![0.0; total_elements];
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
         let num_chunks = (total_elements + chunk_size - 1) / chunk_size;
-        let data_ptr = DataPtrF32(result.as_mut_ptr());
-        let mut work_items = Vec::with_capacity(num_chunks);
 
-        for chunk_idx in 0..num_chunks {
-            let start = chunk_idx * chunk_size;
-            let end = (start + chunk_size).min(total_elements);
+        let tasks: Vec<_> = (0..num_chunks)
+            .map(|chunk_idx| {
+                let start = chunk_idx * chunk_size;
+                let end = (start + chunk_size).min(total_elements);
 
-            work_items.push(WorkType::WeightInitChunk {
-                init_type: self.clone(),
-                start_idx: start,
-                end_idx: end,
-                data_ptr,
-                fan_in,
-                fan_out,
-            });
-        }
+                WeightInitChunkParams::new(
+                    self.clone(),
+                    start,
+                    end,
+                    result.as_mut_ptr(),
+                    fan_in,
+                    fan_out,
+                )
+            })
+            .collect();
 
-        let work_batch = thread_pool.submit_batch(work_items);
-        work_batch.wait();
+        let future = thread_pool.submit_batch_uniform(weight_init_chunk_task, &tasks);
+        future.wait();
 
         result
     }
@@ -269,3 +267,53 @@ impl WeightInit {
         Ok(gpu_buffer)
     }
 }
+
+zp_task_params! {
+    WeightInitChunkParams {
+        init_type: WeightInit,
+        start_idx: usize,
+        end_idx: usize,
+        data_ptr: *mut f32,
+        fan_in: usize,
+        fan_out: usize,
+    }
+}
+
+zp_define_task_fn!(weight_init_chunk_task, WeightInitChunkParams, |params| {
+    let mut rng = rand::rng();
+
+    unsafe {
+        match &params.init_type {
+            WeightInit::Xavier => {
+                let limit = (6.0 / (params.fan_in + params.fan_out) as f32).sqrt();
+                let dist = Uniform::new(-limit, limit);
+                for i in params.start_idx..params.end_idx {
+                    *params.data_ptr.add(i) = dist.unwrap().sample(&mut rng);
+                }
+            }
+            WeightInit::He => {
+                let std_dev = (2.0 / params.fan_in as f32).sqrt();
+                for i in params.start_idx..params.end_idx {
+                    *params.data_ptr.add(i) = WeightInit::normal_sample(0.0, std_dev);
+                }
+            }
+            WeightInit::LeCun => {
+                let std_dev = (1.0 / params.fan_in as f32).sqrt();
+                for i in params.start_idx..params.end_idx {
+                    *params.data_ptr.add(i) = WeightInit::normal_sample(0.0, std_dev);
+                }
+            }
+            WeightInit::UniformRandom { min, max } => {
+                let dist = Uniform::new(*min, *max);
+                for i in params.start_idx..params.end_idx {
+                    *params.data_ptr.add(i) = dist.unwrap().sample(&mut rng);
+                }
+            }
+            WeightInit::Constant(value) => {
+                for i in params.start_idx..params.end_idx {
+                    *params.data_ptr.add(i) = *value;
+                }
+            }
+        }
+    }
+});

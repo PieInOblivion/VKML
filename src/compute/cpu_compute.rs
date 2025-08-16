@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::thread_pool::thread_pool::ThreadPool;
+use zero_pool::ThreadPool;
 
 use super::memory_tracker::MemoryTracker;
 

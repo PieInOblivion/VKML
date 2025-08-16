@@ -1,7 +1,5 @@
 mod gpu;
 
-mod thread_pool;
-
 mod compute;
 
 mod model;

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use zero_pool::ThreadPool;
+
 use crate::dataloader::data_batch::DataBatch;
 use crate::dataloader::data_type::DataType;
 use crate::instruction::factory::Instructions;
@@ -8,14 +10,13 @@ use crate::instruction::instruction::Instruction;
 use crate::tensor::compute_tensor::ComputeTensor;
 use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
-use crate::thread_pool::worker::WorkType;
 use crate::{
     dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     model::{graph_model::GraphModel, layer_connection::LayerId, weight_init::WeightInit},
     tensor::{tensor_data::TensorData, tensor_desc::TensorDesc},
-    thread_pool::thread_pool::ThreadPool,
 };
+use vulkanalia::vk::DeviceV1_0;
 
 use super::cpu_compute::CPUCompute;
 
@@ -430,7 +431,7 @@ impl ComputeManager {
                             desc,
                             total_elements,
                             parallel_threshold,
-                            self.thread_pool.clone(),
+                            &self.thread_pool,
                         )
                     }
                 };
@@ -549,7 +550,6 @@ impl ComputeManager {
 
                 match device {
                     DeviceLocation::GPU(idx) => {
-                        // GPU operations - submit as batch to worker thread
                         let gpu_ref = &self.gpus[idx];
 
                         let shared_gpu = SharedGPU {
@@ -559,22 +559,29 @@ impl ComputeManager {
                         let instruction_indices: Vec<usize> =
                             per_device_ops.iter().map(|op_id| *op_id).collect();
 
-                        futures.push(self.thread_pool.submit_work(WorkType::GpuBatchOperations {
-                            operations: per_device_ops,
+                        let task = GpuBatchOperationsParams::new(
+                            per_device_ops,
                             instruction_indices,
-                            shared_gpu: Arc::new(shared_gpu),
-                            shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
-                        }));
+                            Arc::new(shared_gpu),
+                            Arc::new(shared_tensor_graph.clone()),
+                        );
+
+                        futures.push(
+                            self.thread_pool
+                                .submit_task(gpu_batch_operations_task, &task),
+                        );
                     }
                     DeviceLocation::CPU => {
                         for &op_id in &per_device_ops {
-                            futures.push(self.thread_pool.submit_work(
-                                WorkType::SingleCpuOperation {
-                                    operation_id: op_id,
-                                    instruction_idx: op_id,
-                                    shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
-                                },
-                            ));
+                            let task = SingleCpuOperationParams::new(
+                                op_id,
+                                op_id,
+                                Arc::new(shared_tensor_graph.clone()),
+                            );
+                            futures.push(
+                                self.thread_pool
+                                    .submit_task(single_cpu_operation_task, &task),
+                            );
                         }
                     }
                 }
@@ -690,3 +697,112 @@ impl Drop for ComputeManager {
         }
     }
 }
+
+use zero_pool::{zp_define_task_fn, zp_task_params};
+
+zp_task_params! {
+    GpuBatchOperationsParams {
+        operations: Vec<OperationId>,
+        instruction_indices: Vec<usize>,
+        shared_gpu: Arc<SharedGPU>,
+        shared_tensor_graph: Arc<SharedTensorGraph>,
+    }
+}
+
+zp_task_params! {
+    SingleCpuOperationParams {
+        operation_id: OperationId,
+        instruction_idx: usize,
+        shared_tensor_graph: Arc<SharedTensorGraph>,
+    }
+}
+
+zp_define_task_fn!(
+    gpu_batch_operations_task,
+    GpuBatchOperationsParams,
+    |params| {
+        let Some(gpu) = params.shared_gpu.gpu.map(|gpu_ptr| unsafe { &*gpu_ptr }) else {
+            return;
+        };
+
+        if params.operations.is_empty() {
+            return;
+        }
+
+        unsafe {
+            let alloc_info = vulkanalia::vk::CommandBufferAllocateInfo {
+                s_type: vulkanalia::vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                next: std::ptr::null(),
+                command_pool: gpu.get_command_pool(),
+                level: vulkanalia::vk::CommandBufferLevel::PRIMARY,
+                command_buffer_count: params.operations.len() as u32,
+            };
+
+            let Ok(command_buffers) = gpu.device.allocate_command_buffers(&alloc_info) else {
+                eprintln!("Failed to allocate command buffers");
+                return;
+            };
+
+            if command_buffers.len() != params.operations.len() {
+                eprintln!("Mismatch between allocated command buffers and operations");
+                gpu.device
+                    .free_command_buffers(gpu.get_command_pool(), &command_buffers);
+                return;
+            }
+
+            let mut valid_buffers = Vec::new();
+            let tensor_graph = &*params.shared_tensor_graph.tensor_graph;
+
+            for i in 0..params.operations.len() {
+                let instruction =
+                    tensor_graph.get_instruction_or_panic(params.instruction_indices[i]);
+
+                if instruction
+                    .create_command_buffer(gpu, command_buffers[i], tensor_graph)
+                    .is_ok()
+                {
+                    valid_buffers.push(command_buffers[i]);
+                } else {
+                    eprintln!(
+                        "Failed to record command buffer for operation {:?}",
+                        &params.operations[i]
+                    );
+                }
+            }
+
+            if !valid_buffers.is_empty() {
+                if let Err(e) = gpu.submit_command_buffers_and_wait(&valid_buffers) {
+                    eprintln!("Failed to submit batch operations: {}", e);
+                }
+            }
+
+            gpu.device
+                .free_command_buffers(gpu.get_command_pool(), &command_buffers);
+        }
+    }
+);
+
+zp_define_task_fn!(
+    single_cpu_operation_task,
+    SingleCpuOperationParams,
+    |params| {
+        unsafe {
+            let tensor_graph_ptr = params.shared_tensor_graph.tensor_graph as *mut TensorGraph;
+
+            if params.instruction_idx >= (*tensor_graph_ptr).operations.len() {
+                eprintln!("Invalid instruction index: {}", params.instruction_idx);
+                return;
+            }
+
+            let instruction_ptr = &(&(*tensor_graph_ptr).operations)[params.instruction_idx]
+                as *const Box<dyn Instruction>;
+
+            if let Err(e) = (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr) {
+                eprintln!(
+                    "CPU execution failed for operation {}: {}",
+                    params.operation_id, e
+                );
+            }
+        }
+    }
+);
