@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    dataloader::error::VKMLEngineError, tensor::tensor_desc::TensorDesc,
+    dataloader::error::VKMLError, tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
 
@@ -13,7 +13,7 @@ pub trait Layer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError>;
+    ) -> Result<Vec<TensorDesc>, VKMLError>;
 
     // Get memory requirements for this layer
     fn memory_requirements(&self, input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64;
@@ -68,5 +68,5 @@ pub trait Layer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError>;
+    ) -> Result<LayerExecution, VKMLError>;
 }

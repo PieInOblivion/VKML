@@ -4,7 +4,7 @@ use crate::{model::layer_connection::LayerId, tensor_graph::tensor_graph::Operat
 
 // TODO: Seperate concerns of error types
 #[derive(Error, Debug)]
-pub enum VKMLEngineError {
+pub enum VKMLError {
     // IO and System Errors
     #[error("Directory not found: {0}")]
     DirectoryNotFound(String),
@@ -16,8 +16,20 @@ pub enum VKMLEngineError {
     ImageError(#[from] image::ImageError),
 
     // TODO: Redo error types and such
-    #[error("Invalid dataset split ratios. Train: {train}, Test: {test}")]
-    InvalidSplitRatios { train: f32, test: f32 },
+    #[error("Invalid split ratios: {message}")]
+    InvalidSplitRatios { message: String },
+
+    #[error(
+        "Invalid batch index: {batch_idx}, only {max_batches} batches available for split {split_idx}"
+    )]
+    InvalidBatchIndex {
+        batch_idx: usize,
+        max_batches: usize,
+        split_idx: usize,
+    },
+
+    #[error("Invalid split index: {split_idx}, only {max_splits} splits available")]
+    InvalidSplitIndex { split_idx: usize, max_splits: usize },
 
     #[error("No images found in the dataset")]
     EmptyDataset,
@@ -28,8 +40,8 @@ pub enum VKMLEngineError {
     #[error("Failed to acquire lock on RNG")]
     RngLockError,
 
-    // Vulkan/Ash, compute and other errors
-    #[error("Vulkan/Ash error: {0}")]
+    // Vulkan, compute and other errors
+    #[error("Vulkan error: {0}")]
     VulkanLoadError(String),
 
     #[error("Out of memory error: {0}")]

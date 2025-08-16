@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -383,7 +383,7 @@ impl Instruction for Conv2DInstruction {
         }
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
         let weights_data = tensor_graph.tensors[self.weights].data.borrow_cpu_data()?;
         let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
@@ -404,7 +404,7 @@ impl Instruction for Conv2DInstruction {
         let dst_dims = dst_tensor.desc.to_dims();
 
         if src_dims.len() != 4 || weight_dims.len() != 4 || dst_dims.len() != 4 {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Conv2D requires 4D tensors for input, weights, and output".to_string(),
             ));
         }
@@ -424,7 +424,7 @@ impl Instruction for Conv2DInstruction {
 
         // Verify output dimensions
         if batch_size != dst_dims[0] || out_channels != dst_dims[1] {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Output dimensions mismatch: expected [{}x{}x{}x{}], got {:?}",
                 batch_size, out_channels, out_height, out_width, dst_dims
             )));
@@ -432,7 +432,7 @@ impl Instruction for Conv2DInstruction {
 
         // Verify filter dimensions
         if in_channels != filter_in_channels {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Filter input channels {} doesn't match input channels {}",
                 filter_in_channels, in_channels
             )));

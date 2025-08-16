@@ -19,4 +19,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
-zero-pool = "0.1.0"
+zero-pool = "0.1"

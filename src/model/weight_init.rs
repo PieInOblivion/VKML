@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-use crate::dataloader::error::VKMLEngineError;
+use crate::dataloader::error::VKMLError;
 use crate::gpu::compute_pipelines::GPUMemoryOperation;
 use crate::gpu::gpu_memory::GPUMemory;
 use crate::gpu::vk_gpu::GPU;
@@ -109,14 +109,14 @@ impl WeightInit {
         result
     }
 
-    pub fn init_gpu(&self, shape: &TensorDesc, gpu: &GPU) -> Result<GPUMemory, VKMLEngineError> {
+    pub fn init_gpu(&self, shape: &TensorDesc, gpu: &GPU) -> Result<GPUMemory, VKMLError> {
         let total_elements = shape.num_elements();
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
 
         // allocate uninitialised GPU memory
         let gpu_buffer = gpu
             .allocate_uninitialised_gpu_memory_f32(total_elements)
-            .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+            .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
         // push constants for the compute shader
         let mut push_constants = [0.0f32; 32];
@@ -165,7 +165,7 @@ impl WeightInit {
             let command_buffer = gpu
                 .get_device()
                 .allocate_command_buffers(&alloc_info)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?[0];
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?[0];
 
             let begin_info = vk::CommandBufferBeginInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
@@ -176,7 +176,7 @@ impl WeightInit {
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             let set_layouts = [*gpu.get_descriptor_set_layout()];
             let desc_alloc_info = vk::DescriptorSetAllocateInfo {
@@ -190,7 +190,7 @@ impl WeightInit {
             let descriptor_set = gpu
                 .get_device()
                 .allocate_descriptor_sets(&desc_alloc_info)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?[0];
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?[0];
 
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: gpu_buffer.buffer,
@@ -218,10 +218,7 @@ impl WeightInit {
                 .get_compute_pipelines()
                 .get_pipeline(gpu_operation)
                 .ok_or_else(|| {
-                    VKMLEngineError::VulkanLoadError(format!(
-                        "{:?} pipeline not found",
-                        gpu_operation
-                    ))
+                    VKMLError::VulkanLoadError(format!("{:?} pipeline not found", gpu_operation))
                 })?;
 
             gpu.get_device().cmd_bind_pipeline(
@@ -260,10 +257,10 @@ impl WeightInit {
 
             gpu.get_device()
                 .end_command_buffer(command_buffer)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             gpu.submit_command_buffers_and_wait(&[command_buffer])
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             gpu.get_device()
                 .free_command_buffers(gpu.get_command_pool(), &[command_buffer]);

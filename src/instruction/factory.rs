@@ -1,6 +1,5 @@
 use crate::{
     compute::compute_manager::DeviceLocation,
-    execution::{self, execution_mode::ExecutionMode},
     instruction::{
         div_inplace::DivInplaceInstruction, max_inplace::MaxInplaceInstruction,
         min_inplace::MinInplaceInstruction, mul_inplace::MulInplaceInstruction,
@@ -105,26 +104,11 @@ impl Instructions {
 
     // Matrix operations
     pub fn matmul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
-        Box::new(MatMulInstruction {
-            src1,
-            src2,
-            dst,
-            execution_modes: ExecutionMode::all(),
-        })
+        Box::new(MatMulInstruction { src1, src2, dst })
     }
 
-    pub fn matmul_with(
-        src1: TensorId,
-        src2: TensorId,
-        dst: TensorId,
-        execution_modes: Vec<ExecutionMode>,
-    ) -> Box<dyn Instruction> {
-        Box::new(MatMulInstruction {
-            src1,
-            src2,
-            dst,
-            execution_modes,
-        })
+    pub fn matmul_with(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
+        Box::new(MatMulInstruction { src1, src2, dst })
     }
 
     // Convolution

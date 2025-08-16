@@ -5,7 +5,7 @@ use vulkanalia::{
     vk::{self, DeviceV1_0, InstanceV1_0},
 };
 
-use crate::{compute::memory_tracker::MemoryTracker, dataloader::error::VKMLEngineError};
+use crate::{compute::memory_tracker::MemoryTracker, dataloader::error::VKMLError};
 
 use super::{compute_pipelines::ComputePipelines, gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
@@ -33,9 +33,9 @@ impl GPU {
     pub fn new(device_index: usize) -> Result<Self, Box<dyn std::error::Error>> {
         unsafe {
             let loader = LibloadingLoader::new(LIBRARY)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
             let entry = Arc::new(
-                Entry::new(loader).map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?,
+                Entry::new(loader).map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?,
             );
             let aname = CString::new("VK GPU")?;
 
@@ -270,19 +270,19 @@ impl GPU {
         }
     }
 
-    pub fn available_gpus() -> Result<Vec<GPUInfo>, VKMLEngineError> {
+    pub fn available_gpus() -> Result<Vec<GPUInfo>, VKMLError> {
         unsafe {
             let loader = LibloadingLoader::new(LIBRARY)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
             let entry =
-                Entry::new(loader).map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                Entry::new(loader).map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             let instance = Self::create_instance(&entry)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             let physical_devices = instance
                 .enumerate_physical_devices()
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
             // Create GPUInfo for each device and filter for compute support
             let mut gpu_infos: Vec<_> = physical_devices
@@ -501,7 +501,7 @@ impl GPU {
         }
     }
 
-    pub fn allocate_memory(&self, size: u64) -> Result<(), VKMLEngineError> {
+    pub fn allocate_memory(&self, size: u64) -> Result<(), VKMLError> {
         self.memory_tracker.allocate(size)
     }
 

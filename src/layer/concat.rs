@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    dataloader::error::VKMLError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -59,9 +59,9 @@ impl Layer for ConcatLayer {
         &self,
         _batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Concat layer requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -71,7 +71,7 @@ impl Layer for ConcatLayer {
         let ndim = input_shapes[0].to_dims().len();
         for shape in input_shapes.iter().skip(1) {
             if shape.to_dims().len() != ndim {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "All inputs to Concat must have same number of dimensions"
                 )));
             }
@@ -79,7 +79,7 @@ impl Layer for ConcatLayer {
 
         // Check that concatenation dimension is valid
         if self.dim >= ndim {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Concat dimension {} out of range for {}-dimensional tensors",
                 self.dim, ndim
             )));
@@ -94,7 +94,7 @@ impl Layer for ConcatLayer {
             let size = input_shapes[0].to_dims()[d];
             for shape in input_shapes.iter().skip(1) {
                 if shape.to_dims()[d] != size {
-                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanLoadError(format!(
                         "Dimension {} must have same size for all inputs to Concat",
                         d
                     )));
@@ -121,9 +121,9 @@ impl Layer for ConcatLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Concat layer requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));

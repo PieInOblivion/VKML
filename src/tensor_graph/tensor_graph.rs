@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::gpu_memory::GPUMemory,
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
@@ -36,11 +36,9 @@ pub struct TensorGraph {
 }
 
 impl TensorGraph {
-    pub fn from_graph_model(model: &GraphModel) -> Result<Self, VKMLEngineError> {
+    pub fn from_graph_model(model: &GraphModel) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
-            return Err(VKMLEngineError::VulkanLoadError(
-                "Model not verified".into(),
-            ));
+            return Err(VKMLError::VulkanLoadError("Model not verified".into()));
         }
 
         let execution_order = &model.verified.as_ref().unwrap().execution_order;
@@ -55,7 +53,7 @@ impl TensorGraph {
         // --- Pass 1: Build LayerExecutions (determines local tensor descs and ops for each layer) ---
         for &layer_id in execution_order {
             let layer_wrapper = model.layers.get(&layer_id).ok_or_else(|| {
-                VKMLEngineError::VulkanLoadError(format!("Layer {} not found in model", layer_id))
+                VKMLError::VulkanLoadError(format!("Layer {} not found in model", layer_id))
             })?;
 
             let input_descs: Vec<TensorDesc> = layer_wrapper
@@ -65,7 +63,7 @@ impl TensorGraph {
                     let src_layer_id = conn.get_layerid();
                     let src_output_idx = conn.get_outputidx();
                     let src_exec = layer_executions.get(&src_layer_id).ok_or_else(|| {
-                        VKMLEngineError::VulkanLoadError(format!(
+                        VKMLError::VulkanLoadError(format!(
                             // Changed to InternalError
                             "Source LayerExecution for {} not found when building layer {}",
                             src_layer_id, layer_id
@@ -75,7 +73,7 @@ impl TensorGraph {
                     let src_local_tensor_idx = src_exec.outputs[src_output_idx];
                     Ok(src_exec.tensors[src_local_tensor_idx].clone())
                 })
-                .collect::<Result<Vec<TensorDesc>, VKMLEngineError>>()?;
+                .collect::<Result<Vec<TensorDesc>, VKMLError>>()?;
 
             let input_desc_refs: Vec<&TensorDesc> = input_descs.iter().collect();
             let layer_exec = layer_wrapper

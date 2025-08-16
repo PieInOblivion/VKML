@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -67,13 +67,13 @@ impl Instruction for MulInplaceInstruction {
 
         // broadcast checks
         let bc = TensorDesc::broadcast_shape(&dims_a, &dims_b).ok_or_else(|| {
-            Box::new(VKMLEngineError::ShapeMismatch(format!(
+            Box::new(VKMLError::ShapeMismatch(format!(
                 "InplaceMul: can't broadcast {:?} vs {:?}",
                 dims_a, dims_b
             )))
         })?;
         if bc != dims_a {
-            return Err(Box::new(VKMLEngineError::ShapeMismatch(format!(
+            return Err(Box::new(VKMLError::ShapeMismatch(format!(
                 "InplaceMul: broadcast {:?} != out {:?}",
                 bc, dims_a
             ))));
@@ -81,7 +81,7 @@ impl Instruction for MulInplaceInstruction {
 
         let rank = dims_a.len() as u32;
         if rank > 8 {
-            return Err(Box::new(VKMLEngineError::VulkanLoadError(format!(
+            return Err(Box::new(VKMLError::VulkanLoadError(format!(
                 "Tensor rank {} > 8 not supported",
                 rank
             ))));
@@ -211,14 +211,14 @@ impl Instruction for MulInplaceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         let a = &tensor_graph.tensors[self.dst];
         let b = &tensor_graph.tensors[self.src1];
         let da = a.desc.to_dims();
         let db = b.desc.to_dims();
 
         let out = TensorDesc::broadcast_shape(&da, &db).ok_or_else(|| {
-            VKMLEngineError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", da, db))
+            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", da, db))
         })?;
         let mut data_a = a.data.borrow_mut_cpu_data()?;
         let data_b = b.data.borrow_cpu_data()?;

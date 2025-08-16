@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    dataloader::error::VKMLError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -34,9 +34,9 @@ impl Layer for ReshapeLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Reshape layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -48,7 +48,7 @@ impl Layer for ReshapeLayer {
         // Handle flatten specially
         if self.is_flatten() {
             if input_elements % batch_size != 0 {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "Cannot flatten {} elements into batches of size {}, not evenly divisible",
                     input_elements, batch_size
                 )));
@@ -70,7 +70,7 @@ impl Layer for ReshapeLayer {
             // No inference needed, just check total elements
             let total_new = target_dims.iter().product::<usize>();
             if total_new != input_elements {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "Cannot reshape {} elements into shape with {} elements",
                     input_elements, total_new
                 )));
@@ -86,7 +86,7 @@ impl Layer for ReshapeLayer {
                 let known_product: usize = new_dims.iter().filter(|&&d| d != 0).product();
 
                 if input_elements % known_product != 0 {
-                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanLoadError(format!(
                         "Cannot reshape {} elements: not divisible by product of known dimensions ({})",
                         input_elements, known_product
                     )));
@@ -104,7 +104,7 @@ impl Layer for ReshapeLayer {
 
                 Ok(vec![TensorDesc::new(new_dims)])
             } else {
-                return Err(VKMLEngineError::VulkanLoadError(
+                return Err(VKMLError::VulkanLoadError(
                     "At most one dimension can be inferred (set to 0) in reshape".to_string(),
                 ));
             }
@@ -151,9 +151,9 @@ impl Layer for ReshapeLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Reshape layer requires an input".to_string(),
             ));
         }

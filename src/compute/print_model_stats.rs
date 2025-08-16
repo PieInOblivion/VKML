@@ -1,6 +1,6 @@
 use crate::{
     compute::compute_manager::ComputeManager,
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     model::layer_connection::{LayerConnection, LayerId},
     tensor_graph::tensor_graph::TensorId,
 };
@@ -249,12 +249,12 @@ fn get_layer_output_tensors(cm: &ComputeManager, layer_id: LayerId) -> Vec<Tenso
     outputs
 }
 
-pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), VKMLEngineError> {
+pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), VKMLError> {
     let layer = cm
         .model
         .layers
         .get(&layer_id)
-        .ok_or(VKMLEngineError::VulkanLoadError(format!(
+        .ok_or(VKMLError::VulkanLoadError(format!(
             "Layer ID {} not found",
             layer_id
         )))?;

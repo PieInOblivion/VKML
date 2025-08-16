@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 
-use crate::{dataloader::error::VKMLEngineError, gpu::gpu_memory::GPUMemory};
+use crate::{dataloader::error::VKMLError, gpu::gpu_memory::GPUMemory};
 
 pub enum TensorData {
     CPU(RefCell<Vec<f32>>),
@@ -9,55 +9,55 @@ pub enum TensorData {
 }
 
 impl TensorData {
-    pub fn get_data(&self) -> Result<Vec<f32>, VKMLEngineError> {
+    pub fn get_data(&self) -> Result<Vec<f32>, VKMLError> {
         match self {
             TensorData::CPU(data) => Ok(data.borrow().clone()),
             TensorData::GPU { gpu_idx: _, memory } => memory
                 .read_memory()
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string())),
-            TensorData::Unallocated => Err(VKMLEngineError::VulkanLoadError(
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string())),
+            TensorData::Unallocated => Err(VKMLError::VulkanLoadError(
                 "Cannot read from unallocated tensor".to_string(),
             )),
         }
     }
 
-    pub fn borrow_cpu_data(&self) -> Result<Ref<Vec<f32>>, VKMLEngineError> {
+    pub fn borrow_cpu_data(&self) -> Result<Ref<Vec<f32>>, VKMLError> {
         match self {
             TensorData::CPU(cell) => Ok(cell.borrow()),
-            TensorData::GPU { .. } => Err(VKMLEngineError::VulkanLoadError(
+            TensorData::GPU { .. } => Err(VKMLError::VulkanLoadError(
                 "Expected CPU tensor, found GPU tensor".to_string(),
             )),
-            TensorData::Unallocated => Err(VKMLEngineError::VulkanLoadError(
+            TensorData::Unallocated => Err(VKMLError::VulkanLoadError(
                 "Cannot borrow data from unallocated tensor".to_string(),
             )),
         }
     }
 
-    pub fn borrow_mut_cpu_data(&self) -> Result<RefMut<Vec<f32>>, VKMLEngineError> {
+    pub fn borrow_mut_cpu_data(&self) -> Result<RefMut<Vec<f32>>, VKMLError> {
         match self {
             TensorData::CPU(cell) => Ok(cell.borrow_mut()),
-            TensorData::GPU { .. } => Err(VKMLEngineError::VulkanLoadError(
+            TensorData::GPU { .. } => Err(VKMLError::VulkanLoadError(
                 "Expected CPU tensor, found GPU tensor".to_string(),
             )),
-            TensorData::Unallocated => Err(VKMLEngineError::VulkanLoadError(
+            TensorData::Unallocated => Err(VKMLError::VulkanLoadError(
                 "Cannot borrow data from unallocated tensor".to_string(),
             )),
         }
     }
 
-    pub fn update_data(&self, data: Vec<f32>) -> Result<(), VKMLEngineError> {
+    pub fn update_data(&self, data: Vec<f32>) -> Result<(), VKMLError> {
         let expected_elements = match self {
             TensorData::CPU(cpu_data) => cpu_data.borrow().len(),
             TensorData::GPU { memory, .. } => (memory.size as usize) / std::mem::size_of::<f32>(),
             TensorData::Unallocated => {
-                return Err(VKMLEngineError::VulkanLoadError(
+                return Err(VKMLError::VulkanLoadError(
                     "Cannot update unallocated tensor".to_string(),
                 ));
             }
         };
 
         if data.len() != expected_elements {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Input data size mismatch: expected {} elements, got {}",
                 expected_elements,
                 data.len()
@@ -71,7 +71,7 @@ impl TensorData {
             }
             TensorData::GPU { memory, .. } => memory
                 .copy_into(&data)
-                .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string())),
+                .map_err(|e| VKMLError::VulkanLoadError(e.to_string())),
             TensorData::Unallocated => unreachable!(),
         }
     }

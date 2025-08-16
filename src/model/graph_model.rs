@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    dataloader::error::VKMLEngineError, layer::layer::Layer, tensor::tensor_desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, layer::layer::Layer, tensor::tensor_desc::TensorDesc};
 
 use super::{
     layer_connection::{LayerConnection, LayerId},
@@ -127,7 +125,7 @@ impl GraphModel {
         id
     }
 
-    pub fn verify(&mut self) -> Result<(), VKMLEngineError> {
+    pub fn verify(&mut self) -> Result<(), VKMLError> {
         // Identify input layers as those with no incoming connections
         let input_layer_ids: Vec<LayerId> = self
             .layers
@@ -138,7 +136,7 @@ impl GraphModel {
 
         // There should be at least one input layer
         if input_layer_ids.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Model must have at least one input layer".into(),
             ));
         }
@@ -154,7 +152,7 @@ impl GraphModel {
             .collect();
 
         if !invalid_input_layers.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Input layers cannot have inputs themselves: {:?}",
                 invalid_input_layers
             )));
@@ -169,7 +167,7 @@ impl GraphModel {
             .collect();
 
         if exit_points.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Model has no exit points".into(),
             ));
         }
@@ -182,7 +180,7 @@ impl GraphModel {
 
                 // Check that the referenced layer exists
                 if !self.layers.contains_key(&input_id) {
-                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanLoadError(format!(
                         "Layer {} references non-existent input layer {}",
                         layer.id, input_id
                     )));
@@ -204,7 +202,7 @@ impl GraphModel {
                 match input_layer.layer.output_shapes(1, &empty_vec) {
                     Ok(shapes) => {
                         if output_idx >= shapes.len() {
-                            return Err(VKMLEngineError::VulkanLoadError(format!(
+                            return Err(VKMLError::VulkanLoadError(format!(
                                 "Layer {} requests output {} from layer {}, but it only has {} outputs",
                                 layer.id,
                                 output_idx,
@@ -216,7 +214,7 @@ impl GraphModel {
                     Err(e) => {
                         // If this is an input layer, it's expected to work with empty inputs
                         if min_inputs == 0 {
-                            return Err(VKMLEngineError::VulkanLoadError(format!(
+                            return Err(VKMLError::VulkanLoadError(format!(
                                 "Input layer {} failed to validate outputs: {}",
                                 input_id, e
                             )));
@@ -225,7 +223,7 @@ impl GraphModel {
                         // For non-input layers, this is expected since we're providing empty inputs
                         // Instead of causing an error, we'll assume they have at least one output
                         if output_idx > 0 {
-                            return Err(VKMLEngineError::VulkanLoadError(format!(
+                            return Err(VKMLError::VulkanLoadError(format!(
                                 "Layer {} requests output {} from layer {}, but we can only validate index 0",
                                 layer.id, output_idx, input_id
                             )));
@@ -239,7 +237,7 @@ impl GraphModel {
                 let output_id = connection.get_layerid();
 
                 if !self.layers.contains_key(&output_id) {
-                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanLoadError(format!(
                         "Layer {} references non-existent output layer {}",
                         layer.id, output_id
                     )));
@@ -260,7 +258,7 @@ impl GraphModel {
                         .any(|conn| conn.get_layerid() == layer.id);
 
                     if !is_connected {
-                        return Err(VKMLEngineError::VulkanLoadError(format!(
+                        return Err(VKMLError::VulkanLoadError(format!(
                             "Connection inconsistency: Layer {} lists {} as output, but {} does not list {} as input",
                             layer.id, output_id, output_id, layer.id
                         )));
@@ -279,7 +277,7 @@ impl GraphModel {
                         .any(|conn| conn.get_layerid() == layer.id);
 
                     if !is_connected {
-                        return Err(VKMLEngineError::VulkanLoadError(format!(
+                        return Err(VKMLError::VulkanLoadError(format!(
                             "Connection inconsistency: Layer {} lists {} as input, but {} does not list {} as output",
                             layer.id, input_id, input_id, layer.id
                         )));
@@ -299,7 +297,7 @@ impl GraphModel {
             .collect();
 
         if !non_input_layers_without_inputs.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Non-input layers without inputs: {:?}",
                 non_input_layers_without_inputs
             )));
@@ -311,7 +309,7 @@ impl GraphModel {
             let actual_inputs = layer.input_connections.len();
 
             if actual_inputs < min_inputs {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "Layer {} requires at least {} inputs, but has {}",
                     layer.id, min_inputs, actual_inputs
                 )));
@@ -319,7 +317,7 @@ impl GraphModel {
 
             if let Some(max) = max_inputs {
                 if actual_inputs > max {
-                    return Err(VKMLEngineError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanLoadError(format!(
                         "Layer {} requires at most {} inputs, but has {}",
                         layer.id, max, actual_inputs
                     )));
@@ -329,9 +327,7 @@ impl GraphModel {
 
         // Detect cycles using a depth-first search
         if self.has_cycle() {
-            return Err(VKMLEngineError::VulkanLoadError(
-                "Model contains cycles".into(),
-            ));
+            return Err(VKMLError::VulkanLoadError("Model contains cycles".into()));
         }
 
         // Generate execution order (topological sort)
@@ -339,7 +335,7 @@ impl GraphModel {
 
         // Verify that execution order includes all layers
         if execution_order.len() != self.layers.len() {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Execution order has {} layers but model has {} layers",
                 execution_order.len(),
                 self.layers.len()
@@ -355,7 +351,7 @@ impl GraphModel {
         Ok(())
     }
 
-    fn topological_sort(&self) -> Result<Vec<LayerId>, VKMLEngineError> {
+    fn topological_sort(&self) -> Result<Vec<LayerId>, VKMLError> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         let mut temp = HashSet::new();
@@ -419,9 +415,9 @@ impl GraphModel {
         visited: &mut HashSet<LayerId>,
         temp: &mut HashSet<LayerId>,
         result: &mut Vec<LayerId>,
-    ) -> Result<(), VKMLEngineError> {
+    ) -> Result<(), VKMLError> {
         if temp.contains(&id) {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Cycle detected involving layer {}",
                 id
             )));

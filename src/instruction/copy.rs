@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -83,13 +83,13 @@ impl Instruction for CopyInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
         let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
 
         // Verify tensor sizes
         if dst_data.len() != src_data.len() {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Destination tensor size {} doesn't match source tensor size {}",
                 dst_data.len(),
                 src_data.len()

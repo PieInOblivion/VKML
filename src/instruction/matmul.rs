@@ -1,6 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
-    execution::execution_mode::ExecutionMode,
+    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -15,7 +14,6 @@ pub struct MatMulInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
     pub dst: TensorId,
-    pub execution_modes: Vec<ExecutionMode>,
 }
 
 impl Debug for MatMulInstruction {
@@ -46,10 +44,6 @@ impl Instruction for MatMulInstruction {
         if !new_outputs.is_empty() {
             self.dst = new_outputs[0];
         }
-    }
-
-    fn execution_modes(&self) -> Vec<ExecutionMode> {
-        self.execution_modes.clone()
     }
 
     fn create_command_buffer(
@@ -91,9 +85,9 @@ impl Instruction for MatMulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Cannot use MatMul for in-place operation".to_string(),
             ));
         }
@@ -118,7 +112,7 @@ impl Instruction for MatMulInstruction {
         // Handle special cases for 1D tensors
         let (effective_src1_dims, effective_src2_dims) = match (src1_dims.len(), src2_dims.len()) {
             (1, 1) => {
-                return Err(VKMLEngineError::VulkanLoadError(
+                return Err(VKMLError::VulkanLoadError(
                     "MatMul between two 1D tensors is not supported".to_string(),
                 ));
             }
@@ -141,7 +135,7 @@ impl Instruction for MatMulInstruction {
 
         // Extract core matrix dimensions
         if effective_src1_dims.len() < 2 || effective_src2_dims.len() < 2 {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "After adjustment, tensors must have at least 2 dimensions for MatMul".to_string(),
             ));
         }
@@ -156,7 +150,7 @@ impl Instruction for MatMulInstruction {
         let n = src2_matrix_dims[1];
 
         if k1 != k2 {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Inner dimensions don't match for matrix multiplication: {} vs {}",
                 k1, k2
             )));
@@ -174,7 +168,7 @@ impl Instruction for MatMulInstruction {
         } else if src1_batch_dims == src2_batch_dims {
             src1_batch_dims.to_vec()
         } else {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Incompatible batch dimensions: {:?} vs {:?}",
                 src1_batch_dims, src2_batch_dims
             )));
@@ -202,7 +196,7 @@ impl Instruction for MatMulInstruction {
 
         // Validate output dimensions
         if dst_dims != expected_output_dims {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Output dimensions mismatch: expected {:?}, got {:?}",
                 expected_output_dims, dst_dims
             )));

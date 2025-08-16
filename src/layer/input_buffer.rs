@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{dataloader::error::VKMLEngineError, tensor::tensor_desc::TensorDesc};
+use crate::{dataloader::error::VKMLError, tensor::tensor_desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -31,10 +31,10 @@ impl Layer for InputLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         // Input layers ignore input_shapes since they're entry points
         if !input_shapes.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "InputBuffer expects 0 inputs, got {}",
                 input_shapes.len()
             )));
@@ -80,7 +80,7 @@ impl Layer for InputLayer {
         &self,
         batch_size: usize,
         _input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         // Input layers don't need input_shapes - they create their own shapes
         let mut tensors = Vec::new();
 

@@ -1,30 +1,23 @@
-use crate::execution::execution_mode::ExecutionMode;
+use crate::dataloader::data_type::DataType;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct TensorDesc {
     dims: Vec<usize>,
-    execution_modes: Vec<ExecutionMode>,
+    data_type: DataType,
 }
 
 impl TensorDesc {
     pub fn new(dims: Vec<usize>) -> Self {
-        Self::new_with(dims, ExecutionMode::all())
+        Self::new_with_type(dims, DataType::F32)
     }
 
-    pub fn new_with(dims: Vec<usize>, execution_modes: Vec<ExecutionMode>) -> Self {
+    pub fn new_with_type(dims: Vec<usize>, data_type: DataType) -> Self {
         assert!(!dims.is_empty(), "Tensor dimensions cannot be empty");
-        Self {
-            dims,
-            execution_modes,
-        }
+        Self { dims, data_type }
     }
 
-    pub fn execution_modes(&self) -> &Vec<ExecutionMode> {
-        &self.execution_modes
-    }
-
-    pub fn is_used_in(&self, mode: &ExecutionMode) -> bool {
-        self.execution_modes.contains(mode)
+    pub fn data_type(&self) -> DataType {
+        self.data_type
     }
 
     pub fn num_elements(&self) -> usize {
@@ -75,7 +68,7 @@ impl TensorDesc {
     pub fn flatten(&self) -> Self {
         Self {
             dims: vec![self.num_elements()],
-            execution_modes: self.execution_modes.clone(),
+            data_type: self.data_type,
         }
     }
 

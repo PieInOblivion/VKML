@@ -1,42 +1,107 @@
-use super::{dataloader::SourceFormat, datasource::LabelType};
+use crate::dataloader::data_type::DataType;
 
 pub struct DataBatch {
-    pub data: Box<[u8]>,
-    pub samples_in_batch: usize,
-    pub bytes_per_sample: usize,
-    pub format: SourceFormat,
-    pub labels: Option<Vec<LabelType>>,
-    pub batch_number: usize,
+    data: Box<[u8]>,
+    data_type: DataType,
 }
 
 impl DataBatch {
-    pub fn to_f32(&self) -> Vec<f32> {
-        let num_components = self.data.len() / self.format.bytes_per_element();
-
-        let mut result = Vec::with_capacity(num_components);
-        unsafe {
-            result.set_len(num_components);
+    pub fn new(size: usize, data_type: DataType) -> Self {
+        Self {
+            data: vec![0u8; size].into_boxed_slice(),
+            data_type,
         }
-
-        match self.format {
-            SourceFormat::U8 => {
-                for (i, &x) in self.data.iter().enumerate() {
-                    result[i] = x as f32;
-                }
-            }
-            SourceFormat::U16 => {
-                for (i, chunk) in self.data.chunks_exact(2).enumerate() {
-                    result[i] = u16::from_le_bytes([chunk[0], chunk[1]]) as f32;
-                }
-            }
-            SourceFormat::F32 => {
-                for (i, chunk) in self.data.chunks_exact(4).enumerate() {
-                    result[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                }
-            }
-            _ => panic!("Unsupported colour type in to_f32 ImageBatch"),
-        }
-
-        result
     }
+
+    pub fn from_bytes(bytes: Vec<u8>, data_type: DataType) -> Self {
+        Self {
+            data: bytes.into_boxed_slice(),
+            data_type,
+        }
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.data.as_mut_ptr()
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.data.as_ptr()
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
+    pub fn num_elements(&self) -> usize {
+        self.data.len() / self.data_type.bytes_per_element()
+    }
+
+    pub fn to_f32(&self) -> Vec<f32> {
+        match self.data_type {
+            DataType::U8 => self.data.iter().map(|&x| x as f32).collect(),
+            DataType::U16 => self
+                .data
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) as f32)
+                .collect(),
+            DataType::F32 => self
+                .data
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+        }
+    }
+
+    pub fn to_data_type(&mut self, target_type: DataType) {
+        if self.data_type == target_type {
+            return;
+        }
+
+        let converted_bytes = match (self.data_type, target_type) {
+            // To F32 conversions
+            (DataType::U8, DataType::F32) => {
+                let mut result = Vec::with_capacity(self.data.len() * 4);
+                for &byte in self.data.iter() {
+                    let f = byte as f32;
+                    result.extend_from_slice(&f.to_le_bytes());
+                }
+                result
+            }
+            (DataType::U16, DataType::F32) => {
+                let mut result = Vec::with_capacity((self.data.len() / 2) * 4);
+                for chunk in self.data.chunks_exact(2) {
+                    let u = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    let f = u as f32;
+                    result.extend_from_slice(&f.to_le_bytes());
+                }
+                result
+            }
+
+            _ => {
+                panic!(
+                    "Conversion from {:?} to {:?} not implemented",
+                    self.data_type, target_type
+                );
+            }
+        };
+
+        self.data = converted_bytes.into_boxed_slice();
+        self.data_type = target_type;
+    }
+
+    /*
+    pub fn write_at(&mut self, offset: usize, src: &[u8]) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), self.0.as_mut_ptr().add(offset), src.len());
+        }
+    }
+    */
 }

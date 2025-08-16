@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::dataloader::data_batch::DataBatch;
-use crate::dataloader::dataloader::SourceFormat;
+use crate::dataloader::data_type::DataType;
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
 use crate::tensor::compute_tensor::ComputeTensor;
@@ -10,7 +10,7 @@ use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::thread_pool::worker::WorkType;
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     model::{graph_model::GraphModel, layer_connection::LayerId, weight_init::WeightInit},
     tensor::{tensor_data::TensorData, tensor_desc::TensorDesc},
@@ -35,7 +35,7 @@ pub struct ComputeManager {
 }
 
 impl ComputeManager {
-    pub fn new(model: GraphModel, thread_pool: Arc<ThreadPool>) -> Result<Self, VKMLEngineError> {
+    pub fn new(model: GraphModel, thread_pool: Arc<ThreadPool>) -> Result<Self, VKMLError> {
         let gpus = Self::available_gpus()?;
         Self::new_with(model, thread_pool, gpus, None)
     }
@@ -45,7 +45,7 @@ impl ComputeManager {
         thread_pool: Arc<ThreadPool>,
         gpus: Vec<GPU>,
         cpu_memory_limit_bytes: Option<u64>,
-    ) -> Result<Self, VKMLEngineError> {
+    ) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
             model.verify()?;
         }
@@ -71,7 +71,7 @@ impl ComputeManager {
             + manager.cpu.memory_tracking.get_available();
 
         if total_memory > total_available {
-            return Err(VKMLEngineError::OutOfMemory(format!(
+            return Err(VKMLError::OutOfMemory(format!(
                 "Model requires {} bytes but only {} available",
                 total_memory, total_available
             )));
@@ -82,7 +82,7 @@ impl ComputeManager {
         Ok(manager)
     }
 
-    fn available_gpus() -> Result<Vec<GPU>, VKMLEngineError> {
+    fn available_gpus() -> Result<Vec<GPU>, VKMLError> {
         let gpu_info = GPU::available_gpus()?;
         let mut gpus = Vec::with_capacity(gpu_info.len());
 
@@ -122,7 +122,7 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
 
-    fn allocate_tensors(&mut self) -> Result<(), VKMLEngineError> {
+    fn allocate_tensors(&mut self) -> Result<(), VKMLError> {
         // Get execution plan and flatten to a linear sequence of operations
         let execution_plan = self.tensor_graph.create_execution_plan();
         let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();
@@ -333,7 +333,7 @@ impl ComputeManager {
         // Now apply all of our planned changes
 
         // 1. Create all new tensors for transfers
-        for (tensor_desc, device_location, weight_init, layer_id) in new_tensors {
+        for (tensor_desc, device_location, _weight_init, layer_id) in new_tensors {
             // Add the new tensor
             self.tensor_graph.tensors.push(ComputeTensor {
                 desc: tensor_desc,
@@ -413,7 +413,7 @@ impl ComputeManager {
         desc: &TensorDesc,
         target_device: &DeviceLocation,
         weight_init: &WeightInit,
-    ) -> Result<TensorData, VKMLEngineError> {
+    ) -> Result<TensorData, VKMLError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match *target_device {
@@ -445,44 +445,48 @@ impl ComputeManager {
                 // TODO: weight init probably shouldn't do the gpu memory allocation itself. it's fine enough for now
                 let gpu_memory = weight_init
                     .init_gpu(desc, gpu)
-                    .map_err(|e| VKMLEngineError::VulkanLoadError(e.to_string()))?;
+                    .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
                 Ok(TensorData::new_gpu(idx, gpu_memory))
             }
         }
     }
 
-    pub fn forward(&mut self, batches: Vec<DataBatch>) -> Result<Vec<DataBatch>, VKMLEngineError> {
+    pub fn forward(&mut self, batches: Vec<DataBatch>) -> Result<Vec<DataBatch>, VKMLError> {
         // Get input tensor indices
         let input_tensor_ids = &self.tensor_graph.input_tensors;
 
         // Validate input batch count
         if batches.len() != input_tensor_ids.len() {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Expected {} input batches, got {}",
                 input_tensor_ids.len(),
                 batches.len()
             )));
         }
 
-        // Validate all batch sizes upfront
-        for (batch_idx, batch) in batches.iter().enumerate() {
+        // Load input data into tensors
+        for (batch_idx, mut batch) in batches.into_iter().enumerate() {
             let tensor_id = input_tensor_ids[batch_idx];
-            let expected_size = self.tensor_graph.tensors[tensor_id].desc.num_elements();
-            let data_size = batch.data.len() / batch.format.bytes_per_element();
+            let tensor = &self.tensor_graph.tensors[tensor_id];
 
-            if data_size != expected_size {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
-                    "Input batch {} size mismatch: got {}, expected {}",
-                    batch_idx, data_size, expected_size
+            // Convert to tensor's expected type if needed
+            batch.to_data_type(tensor.desc.data_type());
+
+            // Validate size after conversion
+            let expected_bytes = tensor.desc.size_in_bytes();
+            if batch.len() != expected_bytes {
+                return Err(VKMLError::VulkanLoadError(format!(
+                    "Input batch {} size mismatch: got {} bytes, expected {} bytes",
+                    batch_idx,
+                    batch.len(),
+                    expected_bytes
                 )));
             }
-        }
 
-        // Load input data into tensors
-        for (batch_idx, batch) in batches.into_iter().enumerate() {
-            let tensor_id = input_tensor_ids[batch_idx];
+            // Get the data as f32 vector for tensor operations
             let data = batch.to_f32();
+
             self.tensor_graph.tensors[tensor_id]
                 .data
                 .update_data(data)?;
@@ -495,28 +499,26 @@ impl ComputeManager {
         let output_tensor_ids = &self.tensor_graph.output_tensors;
         let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
 
-        for (idx, &tensor_id) in output_tensor_ids.iter().enumerate() {
-            // Get output data
-            let output_data = self.tensor_graph.tensors[tensor_id].data.get_data()?;
+        for &tensor_id in output_tensor_ids.iter() {
             let tensor = &self.tensor_graph.tensors[tensor_id];
 
-            // Convert f32 data to bytes
+            // Get data from tensor (currently returns f32, but will return native type in future)
+            let output_data = tensor.data.get_data()?;
+
+            // For now, get_data() returns f32, so we need to convert to bytes
+            // In future, get_data() will return bytes in the tensor's native format
             let mut bytes = Vec::with_capacity(output_data.len() * 4);
             for &value in &output_data {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
 
-            // Create DataBatch with appropriate metadata
-            // This portion will become more advanced in the future.
-            // Perhaps with statistics or something more
-            let batch = DataBatch {
-                data: bytes.into_boxed_slice(),
-                samples_in_batch: self.model.batch_size,
-                bytes_per_sample: tensor.desc.size_in_bytes(),
-                format: SourceFormat::F32,
-                labels: None,
-                batch_number: idx,
-            };
+            // Create DataBatch with tensor's data type
+            // No conversion - just packaging the tensor's data with its type
+            let mut batch = DataBatch::from_bytes(bytes, DataType::F32);
+
+            // If tensor has a different type, convert the batch to match
+            // (temporary until get_data() returns native type)
+            batch.to_data_type(tensor.desc.data_type());
 
             output_batches.push(batch);
         }
@@ -524,7 +526,7 @@ impl ComputeManager {
         Ok(output_batches)
     }
 
-    pub fn execute(&self) -> Result<(), VKMLEngineError> {
+    pub fn execute(&self) -> Result<(), VKMLError> {
         let execution_plan = self.tensor_graph.create_execution_plan();
         let device_grouped_plan = self.group_operations_by_device(&execution_plan)?;
 
@@ -589,7 +591,7 @@ impl ComputeManager {
     fn group_operations_by_device(
         &self,
         execution_plan: &[Vec<OperationId>],
-    ) -> Result<Vec<Vec<Vec<OperationId>>>, VKMLEngineError> {
+    ) -> Result<Vec<Vec<Vec<OperationId>>>, VKMLError> {
         let mut device_grouped_plan = Vec::with_capacity(execution_plan.len());
 
         for stage in execution_plan {
@@ -608,10 +610,7 @@ impl ComputeManager {
         Ok(device_grouped_plan)
     }
 
-    fn determine_operation_device(
-        &self,
-        op_id: &OperationId,
-    ) -> Result<DeviceLocation, VKMLEngineError> {
+    fn determine_operation_device(&self, op_id: &OperationId) -> Result<DeviceLocation, VKMLError> {
         let input_tensor_ids = self.tensor_graph.get_operation_inputs(*op_id);
 
         // Check input tensors to determine device
@@ -634,7 +633,7 @@ impl ComputeManager {
             }
         }
 
-        Err(VKMLEngineError::VulkanLoadError(format!(
+        Err(VKMLError::VulkanLoadError(format!(
             "Operation {:?} has no tensors allocated to a device",
             op_id
         )))
@@ -668,7 +667,7 @@ impl ComputeManager {
         crate::compute::print_model_stats::print_model_stats(self);
     }
 
-    pub fn print_layer_values(&self, layer_id: LayerId) -> Result<(), VKMLEngineError> {
+    pub fn print_layer_values(&self, layer_id: LayerId) -> Result<(), VKMLError> {
         crate::compute::print_model_stats::print_layer_values(self, layer_id)
     }
 

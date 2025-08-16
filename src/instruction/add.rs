@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -77,7 +77,7 @@ impl Instruction for AddInstruction {
 
         let rank = dst_dims_usize.len() as u32;
         if rank > 8 {
-            return Err(Box::new(VKMLEngineError::VulkanLoadError(format!(
+            return Err(Box::new(VKMLError::VulkanLoadError(format!(
                 "Tensor rank {} for dst tensor {} is not supported by the shader (must be <= 8).",
                 rank, self.dst
             ))));
@@ -91,14 +91,14 @@ impl Instruction for AddInstruction {
         // Calculate broadcast shape and strides (similar to execute_cpu)
         let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
             .ok_or_else(|| {
-                Box::new(VKMLEngineError::ShapeMismatch(format!(
+                Box::new(VKMLError::ShapeMismatch(format!(
                     "GPU Add: Can't broadcast {:?} vs {:?}",
                     src1_dims_usize, src2_dims_usize
                 )))
             })?;
 
         if broadcast_dims != dst_dims_usize {
-            return Err(Box::new(VKMLEngineError::ShapeMismatch(format!(
+            return Err(Box::new(VKMLError::ShapeMismatch(format!(
                 "GPU Add: Broadcast shape {:?} != dst shape {:?}",
                 broadcast_dims, dst_dims_usize
             ))));
@@ -285,10 +285,10 @@ impl Instruction for AddInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         // First check that this isn't being used as an in-place operation
         if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Cannot use Add for in-place operation.".to_string(),
             ));
         }
@@ -303,11 +303,11 @@ impl Instruction for AddInstruction {
 
         // 1 compute broadcast shape
         let bc = TensorDesc::broadcast_shape(&a, &b).ok_or_else(|| {
-            VKMLEngineError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
+            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
         })?;
         // 2 must match dst
         if bc != c {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Broadcast {:?} != dst {:?}",
                 bc, c
             )));

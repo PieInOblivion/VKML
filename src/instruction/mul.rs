@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -184,10 +184,10 @@ impl Instruction for MulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         // First check that this isn't being used as an in-place operation
         if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Cannot use Mul for in-place operation. Use MulInplace instead.".to_string(),
             ));
         }
@@ -201,10 +201,10 @@ impl Instruction for MulInstruction {
         let c = dst.desc.to_dims();
 
         let bc = TensorDesc::broadcast_shape(&a, &b).ok_or_else(|| {
-            VKMLEngineError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
+            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
         })?;
         if bc != c {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Broadcast {:?} != dst {:?}",
                 bc, c
             )));

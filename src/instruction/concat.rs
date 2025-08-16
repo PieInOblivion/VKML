@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError,
+    dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -58,12 +58,12 @@ impl Instruction for ConcatInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLEngineError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
         let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
 
         // Check if this is a supported concat dimension
         if self.dim != 1 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "CPU Concat only implemented for dimension 1, got {}",
                 self.dim
             )));
@@ -71,16 +71,14 @@ impl Instruction for ConcatInstruction {
 
         // Get the first source tensor to determine batch size
         let first_source = self.sources.first().ok_or_else(|| {
-            VKMLEngineError::VulkanLoadError(
-                "Concat requires at least one source tensor".to_string(),
-            )
+            VKMLError::VulkanLoadError("Concat requires at least one source tensor".to_string())
         })?;
 
         let src_tensor = &tensor_graph.tensors[*first_source];
         let src_dims = src_tensor.desc.to_dims();
 
         if src_dims.len() != 2 {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Concat only supports 2D tensors".to_string(),
             ));
         }
@@ -94,13 +92,13 @@ impl Instruction for ConcatInstruction {
             let src_dims = src_tensor.desc.to_dims();
 
             if src_dims.len() != 2 {
-                return Err(VKMLEngineError::VulkanLoadError(
+                return Err(VKMLError::VulkanLoadError(
                     "All source tensors must be 2D for Concat".to_string(),
                 ));
             }
 
             if src_dims[0] != batch_size {
-                return Err(VKMLEngineError::ShapeMismatch(format!(
+                return Err(VKMLError::ShapeMismatch(format!(
                     "All source tensors must have same batch size {}, got {}",
                     batch_size, src_dims[0]
                 )));
@@ -112,7 +110,7 @@ impl Instruction for ConcatInstruction {
         // Verify destination tensor size
         let dst_dims = tensor_graph.tensors[self.dst].desc.to_dims();
         if dst_dims.len() != 2 || dst_dims[0] != batch_size || dst_dims[1] != total_features {
-            return Err(VKMLEngineError::ShapeMismatch(format!(
+            return Err(VKMLError::ShapeMismatch(format!(
                 "Destination shape {:?} doesn't match expected [{}x{}]",
                 dst_dims, batch_size, total_features
             )));

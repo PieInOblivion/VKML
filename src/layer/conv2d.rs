@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    dataloader::error::VKMLError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -63,9 +63,9 @@ impl Layer for Conv2DLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Conv2D layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -75,7 +75,7 @@ impl Layer for Conv2DLayer {
 
         // Check if it's a 4D tensor (batch, channels, height, width)
         if input_shape.ndim() != 4 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Conv2D requires 4D input tensor, got {:?}",
                 input_shape
             )));
@@ -84,7 +84,7 @@ impl Layer for Conv2DLayer {
         // Verify input channels match
         let in_channels = input_shape.to_dims()[1];
         if in_channels != self.in_features {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Conv2D expected {} input channels, got {}",
                 self.in_features, in_channels
             )));
@@ -179,9 +179,9 @@ impl Layer for Conv2DLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Conv2D layer requires an input".to_string(),
             ));
         }
@@ -189,7 +189,7 @@ impl Layer for Conv2DLayer {
         let input_shape = input_shapes[0];
 
         if input_shape.ndim() != 4 {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Conv2D layer expects 4D tensor input".into(),
             ));
         }
@@ -199,7 +199,7 @@ impl Layer for Conv2DLayer {
         let in_width = input_shape.to_dims()[3];
 
         if in_channels != self.in_features {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Conv2D layer expects {} input channels, got {}",
                 self.in_features, in_channels
             )));

@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    dataloader::error::VKMLError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -34,9 +34,9 @@ impl Layer for LinearLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Linear layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -46,7 +46,7 @@ impl Layer for LinearLayer {
 
         // Check if it's a 2D tensor (batch, features)
         if input_shape.ndim() != 2 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Linear layer requires matrix input, got tensor with {} dimensions",
                 input_shape.ndim()
             )));
@@ -54,7 +54,7 @@ impl Layer for LinearLayer {
 
         let cols = input_shape.to_dims()[1];
         if cols != self.in_features {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Linear layer expected {} input features, got {}",
                 self.in_features, cols
             )));
@@ -124,9 +124,9 @@ impl Layer for LinearLayer {
         &self,
         batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "LinearLayer requires at least one input".to_string(),
             ));
         }
@@ -134,14 +134,14 @@ impl Layer for LinearLayer {
         let input_shape = input_shapes[0]; // Use the first input shape
 
         if input_shape.ndim() != 2 {
-            return Err(VKMLEngineError::VulkanLoadError(
+            return Err(VKMLError::VulkanLoadError(
                 "Linear layer expects matrix input".into(),
             ));
         }
 
         let cols = input_shape.to_dims()[1];
         if cols != self.in_features {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Linear layer expects {} input features, got {}",
                 self.in_features, cols
             )));

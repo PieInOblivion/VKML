@@ -1,5 +1,5 @@
 use crate::{
-    dataloader::error::VKMLEngineError, instruction::factory::Instructions,
+    dataloader::error::VKMLError, instruction::factory::Instructions,
     tensor::tensor_desc::TensorDesc,
 };
 
@@ -44,9 +44,9 @@ impl Layer for ElementWiseLayer {
         &self,
         _batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<Vec<TensorDesc>, VKMLEngineError> {
+    ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Element-wise operation requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -56,7 +56,7 @@ impl Layer for ElementWiseLayer {
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
             if shape.to_dims() != first_shape.to_dims() {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
                     first_shape.to_dims(),
                     shape.to_dims()
@@ -86,9 +86,9 @@ impl Layer for ElementWiseLayer {
         &self,
         _batch_size: usize,
         input_shapes: &[&TensorDesc],
-    ) -> Result<LayerExecution, VKMLEngineError> {
+    ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLEngineError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanLoadError(format!(
                 "Element-wise operation requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -98,7 +98,7 @@ impl Layer for ElementWiseLayer {
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
             if shape.to_dims() != first_shape.to_dims() {
-                return Err(VKMLEngineError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanLoadError(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
                     first_shape.to_dims(),
                     shape.to_dims()
