@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -157,18 +156,23 @@ impl Instruction for GELUInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        let src_data = tensor_graph.tensors[self.src]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst]
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
 
-        // Verify tensor sizes
-        if dst_data.len() != src_data.len() {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Destination tensor size {} doesn't match source tensor size {}",
-                dst_data.len(),
-                src_data.len()
-            )));
-        }
+        assert_eq!(
+            dst_data.len(),
+            src_data.len(),
+            "Destination tensor size {} doesn't match source tensor size {}",
+            dst_data.len(),
+            src_data.len()
+        );
 
         // GELU constants
         // GELU approximation: x * 0.5 * (1.0 + tanh(sqrt(2.0/PI) * (x + 0.044715 * x^3)))
@@ -180,7 +184,5 @@ impl Instruction for GELUInstruction {
             let val = src_data[i];
             dst_data[i] = val * 0.5 * (1.0 + (sqrt2_over_pi * (val + coef * val.powi(3))).tanh());
         }
-
-        Ok(())
     }
 }

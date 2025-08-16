@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -66,26 +65,23 @@ impl Instruction for AddInplaceInstruction {
         }
 
         // broadcast checks
-        let bc = TensorDesc::broadcast_shape(&dims_a, &dims_b).ok_or_else(|| {
-            Box::new(VKMLError::ShapeMismatch(format!(
-                "InplaceAdd: can't broadcast {:?} vs {:?}",
-                dims_a, dims_b
-            )))
-        })?;
-        if bc != dims_a {
-            return Err(Box::new(VKMLError::ShapeMismatch(format!(
-                "InplaceAdd: broadcast {:?} != out {:?}",
-                bc, dims_a
-            ))));
-        }
+        let bc = TensorDesc::broadcast_shape(&dims_a, &dims_b).expect(&format!(
+            "InplaceAdd: can't broadcast {:?} vs {:?}",
+            dims_a, dims_b
+        ));
+
+        assert_eq!(
+            bc, dims_a,
+            "InplaceAdd: broadcast {:?} != out {:?}",
+            bc, dims_a
+        );
 
         let rank = dims_a.len() as u32;
-        if rank > 8 {
-            return Err(Box::new(VKMLError::VulkanLoadError(format!(
-                "Tensor rank {} > 8 not supported",
-                rank
-            ))));
-        }
+        assert!(
+            rank <= 8,
+            "InplaceAdd: tensor rank {} exceeds maximum supported rank of 8",
+            rank
+        );
 
         let mut dims_arr = [0u32; 8];
         for i in 0..dims_a.len() {
@@ -211,17 +207,22 @@ impl Instruction for AddInplaceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
         let a = &tensor_graph.tensors[self.dst];
         let b = &tensor_graph.tensors[self.src1];
         let da = a.desc.to_dims();
         let db = b.desc.to_dims();
 
-        let out = TensorDesc::broadcast_shape(&da, &db).ok_or_else(|| {
-            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", da, db))
-        })?;
-        let mut data_a = a.data.borrow_mut_cpu_data()?;
-        let data_b = b.data.borrow_cpu_data()?;
+        let out = TensorDesc::broadcast_shape(&da, &db)
+            .expect(&format!("Can't broadcast {:?} vs {:?}", da, db));
+        let mut data_a = a
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
+        let data_b = b
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor should have CPU data");
 
         let sa = TensorDesc::broadcast_strides(&da, &out);
         let sb = TensorDesc::broadcast_strides(&db, &out);
@@ -232,6 +233,5 @@ impl Instruction for AddInplaceInstruction {
             let offb = TensorDesc::offset(&idxs, &sb);
             data_a[offa] += data_b[offb];
         }
-        Ok(())
     }
 }

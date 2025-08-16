@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -85,16 +84,24 @@ impl Instruction for MatMulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLError::VulkanLoadError(
-                "Cannot use MatMul for in-place operation".to_string(),
-            ));
-        }
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        assert!(
+            self.src1 != self.dst && self.src2 != self.dst,
+            "Cannot use MatMul for in-place operation"
+        );
 
-        let src1_data = tensor_graph.tensors[self.src1].data.borrow_cpu_data()?;
-        let src2_data = tensor_graph.tensors[self.src2].data.borrow_cpu_data()?;
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+        let src1_data = tensor_graph.tensors[self.src1]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 1 should have CPU data");
+        let src2_data = tensor_graph.tensors[self.src2]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 2 should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst]
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
 
         let src1_tensor = tensor_graph.tensors.get(self.src1).unwrap();
         let src2_tensor = tensor_graph.tensors.get(self.src2).unwrap();
@@ -112,19 +119,15 @@ impl Instruction for MatMulInstruction {
         // Handle special cases for 1D tensors
         let (effective_src1_dims, effective_src2_dims) = match (src1_dims.len(), src2_dims.len()) {
             (1, 1) => {
-                return Err(VKMLError::VulkanLoadError(
-                    "MatMul between two 1D tensors is not supported".to_string(),
-                ));
+                panic!("MatMul between two 1D tensors is not supported");
             }
             (1, _) => {
-                // Convert [k] to [1,k] for matrix multiplication purposes
                 let mut dims = Vec::with_capacity(src1_dims.len() + 1);
                 dims.push(1);
                 dims.extend_from_slice(&src1_dims);
                 (dims, src2_dims.clone())
             }
             (_, 1) => {
-                // Convert [k] to [k,1] for matrix multiplication purposes
                 let mut dims = Vec::with_capacity(src2_dims.len() + 1);
                 dims.extend_from_slice(&src2_dims);
                 dims.push(1);
@@ -134,11 +137,10 @@ impl Instruction for MatMulInstruction {
         };
 
         // Extract core matrix dimensions
-        if effective_src1_dims.len() < 2 || effective_src2_dims.len() < 2 {
-            return Err(VKMLError::VulkanLoadError(
-                "After adjustment, tensors must have at least 2 dimensions for MatMul".to_string(),
-            ));
-        }
+        assert!(
+            effective_src1_dims.len() >= 2 && effective_src2_dims.len() >= 2,
+            "After adjustment, tensors must have at least 2 dimensions for MatMul"
+        );
 
         let src1_matrix_dims = &effective_src1_dims[effective_src1_dims.len() - 2..];
         let src2_matrix_dims = &effective_src2_dims[effective_src2_dims.len() - 2..];
@@ -149,12 +151,11 @@ impl Instruction for MatMulInstruction {
         let k2 = src2_matrix_dims[0];
         let n = src2_matrix_dims[1];
 
-        if k1 != k2 {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Inner dimensions don't match for matrix multiplication: {} vs {}",
-                k1, k2
-            )));
-        }
+        assert_eq!(
+            k1, k2,
+            "Inner dimensions don't match for matrix multiplication: {} vs {}",
+            k1, k2
+        );
 
         // Extract batch dimensions
         let src1_batch_dims = &effective_src1_dims[..effective_src1_dims.len() - 2];
@@ -168,10 +169,10 @@ impl Instruction for MatMulInstruction {
         } else if src1_batch_dims == src2_batch_dims {
             src1_batch_dims.to_vec()
         } else {
-            return Err(VKMLError::ShapeMismatch(format!(
+            panic!(
                 "Incompatible batch dimensions: {:?} vs {:?}",
                 src1_batch_dims, src2_batch_dims
-            )));
+            );
         };
 
         // Calculate expected output dims
@@ -195,12 +196,11 @@ impl Instruction for MatMulInstruction {
         };
 
         // Validate output dimensions
-        if dst_dims != expected_output_dims {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Output dimensions mismatch: expected {:?}, got {:?}",
-                expected_output_dims, dst_dims
-            )));
-        }
+        assert_eq!(
+            dst_dims, expected_output_dims,
+            "Output dimensions mismatch: expected {:?}, got {:?}",
+            expected_output_dims, dst_dims
+        );
 
         // Calculate strides for each tensor
         let calculate_strides = |dims: &[usize]| -> Vec<usize> {
@@ -319,8 +319,6 @@ impl Instruction for MatMulInstruction {
                 }
             }
         }
-
-        Ok(())
     }
 }
 

@@ -30,11 +30,8 @@ pub trait Instruction: Debug {
     }
 
     // Execute on CPU (default implementation returns error)
-    fn execute_cpu(&self, _tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        Err(VKMLError::VulkanLoadError(format!(
-            "CPU execution not implemented for {:?}",
-            self
-        )))
+    fn execute_cpu(&self, _tensor_graph: &mut TensorGraph) {
+        panic!("CPU execution not implemented for {:?}", self)
     }
 
     // Clone the instruction (since trait objects can't use derive(Clone))

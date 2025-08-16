@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -76,12 +75,11 @@ impl Instruction for AddInstruction {
         }
 
         let rank = dst_dims_usize.len() as u32;
-        if rank > 8 {
-            return Err(Box::new(VKMLError::VulkanLoadError(format!(
-                "Tensor rank {} for dst tensor {} is not supported by the shader (must be <= 8).",
-                rank, self.dst
-            ))));
-        }
+        assert!(
+            rank <= 8,
+            "Add: tensor rank {} exceeds maximum supported rank of 8",
+            rank
+        );
 
         let mut dims_arr = [0u32; 8];
         for i in 0..dst_dims_usize.len() {
@@ -90,19 +88,16 @@ impl Instruction for AddInstruction {
 
         // Calculate broadcast shape and strides (similar to execute_cpu)
         let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
-            .ok_or_else(|| {
-                Box::new(VKMLError::ShapeMismatch(format!(
-                    "GPU Add: Can't broadcast {:?} vs {:?}",
-                    src1_dims_usize, src2_dims_usize
-                )))
-            })?;
+            .expect(&format!(
+                "GPU Add: Can't broadcast {:?} vs {:?}",
+                src1_dims_usize, src2_dims_usize
+            ));
 
-        if broadcast_dims != dst_dims_usize {
-            return Err(Box::new(VKMLError::ShapeMismatch(format!(
-                "GPU Add: Broadcast shape {:?} != dst shape {:?}",
-                broadcast_dims, dst_dims_usize
-            ))));
-        }
+        assert_eq!(
+            broadcast_dims, dst_dims_usize,
+            "GPU Add: Broadcast shape {:?} != dst shape {:?}",
+            broadcast_dims, dst_dims_usize
+        );
 
         let strides_a_usize = TensorDesc::broadcast_strides(&src1_dims_usize, &dst_dims_usize);
         let strides_b_usize = TensorDesc::broadcast_strides(&src2_dims_usize, &dst_dims_usize);
@@ -285,13 +280,11 @@ impl Instruction for AddInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        // First check that this isn't being used as an in-place operation
-        if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLError::VulkanLoadError(
-                "Cannot use Add for in-place operation.".to_string(),
-            ));
-        }
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        assert!(
+            self.src1 != self.dst && self.src2 != self.dst,
+            "Cannot use Add for in-place operation"
+        );
 
         let src1 = &tensor_graph.tensors[self.src1];
         let src2 = &tensor_graph.tensors[self.src2];
@@ -301,25 +294,26 @@ impl Instruction for AddInstruction {
         let b = src2.desc.to_dims();
         let c = dst.desc.to_dims();
 
-        // 1 compute broadcast shape
-        let bc = TensorDesc::broadcast_shape(&a, &b).ok_or_else(|| {
-            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
-        })?;
-        // 2 must match dst
-        if bc != c {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Broadcast {:?} != dst {:?}",
-                bc, c
-            )));
-        }
+        let bc = TensorDesc::broadcast_shape(&a, &b)
+            .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
+
+        assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        // Simplified direct data access (no aliasing possible)
-        let mut dd = dst.data.borrow_mut_cpu_data()?;
-        let d1 = src1.data.borrow_cpu_data()?;
-        let d2 = src2.data.borrow_cpu_data()?;
+        let mut dd = dst
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
+        let d1 = src1
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 1 should have CPU data");
+        let d2 = src2
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 2 should have CPU data");
 
         for i in 0..dd.len() {
             let idxs = TensorDesc::unravel(i, &c);
@@ -327,7 +321,5 @@ impl Instruction for AddInstruction {
             let off2 = TensorDesc::offset(&idxs, &sb);
             dd[i] = d1[off1] + d2[off2];
         }
-
-        Ok(())
     }
 }

@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor::tensor_desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -184,13 +183,11 @@ impl Instruction for SubInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        // First check that this isn't being used as an in-place operation
-        if self.src1 == self.dst || self.src2 == self.dst {
-            return Err(VKMLError::VulkanLoadError(
-                "Cannot use Sub for in-place operation. Use SubInplace instead.".to_string(),
-            ));
-        }
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        assert!(
+            self.src1 != self.dst && self.src2 != self.dst,
+            "Cannot use Sub for in-place operation. Use SubInplace instead."
+        );
 
         let src1 = &tensor_graph.tensors[self.src1];
         let src2 = &tensor_graph.tensors[self.src2];
@@ -200,22 +197,25 @@ impl Instruction for SubInstruction {
         let b = src2.desc.to_dims();
         let c = dst.desc.to_dims();
 
-        let bc = TensorDesc::broadcast_shape(&a, &b).ok_or_else(|| {
-            VKMLError::ShapeMismatch(format!("Can't broadcast {:?} vs {:?}", a, b))
-        })?;
-        if bc != c {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Broadcast {:?} != dst {:?}",
-                bc, c
-            )));
-        }
+        let bc = TensorDesc::broadcast_shape(&a, &b)
+            .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
+        assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        let mut dd = dst.data.borrow_mut_cpu_data()?;
-        let d1 = src1.data.borrow_cpu_data()?;
-        let d2 = src2.data.borrow_cpu_data()?;
+        let mut dd = dst
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
+        let d1 = src1
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 1 should have CPU data");
+        let d2 = src2
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor 2 should have CPU data");
 
         for i in 0..dd.len() {
             let idxs = TensorDesc::unravel(i, &c);
@@ -223,7 +223,5 @@ impl Instruction for SubInstruction {
             let off2 = TensorDesc::offset(&idxs, &sb);
             dd[i] = d1[off1] - d2[off2];
         }
-
-        Ok(())
     }
 }

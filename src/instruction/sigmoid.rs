@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -160,24 +159,26 @@ impl Instruction for SigmoidInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        let src_data = tensor_graph.tensors[self.src]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst]
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
 
-        // Verify tensor sizes
-        if dst_data.len() != src_data.len() {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Destination tensor size {} doesn't match source tensor size {}",
-                dst_data.len(),
-                src_data.len()
-            )));
-        }
+        assert_eq!(
+            dst_data.len(),
+            src_data.len(),
+            "Destination tensor size {} doesn't match source tensor size {}",
+            dst_data.len(),
+            src_data.len()
+        );
 
-        // Update in-place
         for i in 0..src_data.len() {
             dst_data[i] = 1.0 / (1.0 + (-src_data[i]).exp());
         }
-
-        Ok(())
     }
 }

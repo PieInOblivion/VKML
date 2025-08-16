@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -58,9 +57,12 @@ impl Instruction for SoftmaxInstruction {
         let tensor = tensor_graph.tensors.get(self.src).unwrap();
 
         // Currently we only support softmax on the last dimension
-        if self.dim != tensor.desc.to_dims().len() - 1 {
-            return Err(format!("Only softmax on the last dimension is currently implemented, requested dimension: {}", self.dim).into());
-        }
+        assert_eq!(
+            self.dim,
+            tensor.desc.to_dims().len() - 1,
+            "Only softmax on the last dimension is currently implemented, requested dimension: {}",
+            self.dim
+        );
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -195,43 +197,44 @@ impl Instruction for SoftmaxInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        let src_data = tensor_graph.tensors[self.src]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst]
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
 
-        // Verify tensor sizes
-        if dst_data.len() != src_data.len() {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Destination tensor size {} doesn't match source tensor size {}",
-                dst_data.len(),
-                src_data.len()
-            )));
-        }
+        assert_eq!(
+            dst_data.len(),
+            src_data.len(),
+            "Destination tensor size {} doesn't match source tensor size {}",
+            dst_data.len(),
+            src_data.len()
+        );
 
         let tensor = &tensor_graph.tensors[self.src];
         let dims = tensor.desc.to_dims();
 
-        // CPU implementation currently only supports softmax on the last dimension
-        if self.dim != dims.len() - 1 {
-            return Err(VKMLError::VulkanLoadError(
-                "CPU Softmax currently only supports the last dimension".to_string(),
-            ));
-        }
+        assert_eq!(
+            self.dim,
+            dims.len() - 1,
+            "CPU Softmax currently only supports the last dimension"
+        );
 
         let feature_size = dims[self.dim];
         let batch_size = src_data.len() / feature_size;
 
-        // Process each batch separately
         for b in 0..batch_size {
             let offset = b * feature_size;
 
-            // Find max for numerical stability
             let mut max_val = f32::MIN;
             for i in 0..feature_size {
                 max_val = max_val.max(src_data[offset + i]);
             }
 
-            // Compute exponentials and sum
             let mut sum = 0.0;
             for i in 0..feature_size {
                 let exp_val = (src_data[offset + i] - max_val).exp();
@@ -239,12 +242,9 @@ impl Instruction for SoftmaxInstruction {
                 sum += exp_val;
             }
 
-            // Normalize
             for i in 0..feature_size {
                 dst_data[offset + i] /= sum;
             }
         }
-
-        Ok(())
     }
 }

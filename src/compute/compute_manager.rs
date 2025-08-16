@@ -797,12 +797,7 @@ zp_define_task_fn!(
             let instruction_ptr = &(&(*tensor_graph_ptr).operations)[params.instruction_idx]
                 as *const Box<dyn Instruction>;
 
-            if let Err(e) = (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr) {
-                eprintln!(
-                    "CPU execution failed for operation {}: {}",
-                    params.operation_id, e
-                );
-            }
+            (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr);
         }
     }
 );

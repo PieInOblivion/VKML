@@ -1,6 +1,5 @@
 use crate::{
     compute::compute_manager::DeviceLocation,
-    dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -70,9 +69,14 @@ impl Instruction for TransferToDeviceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        let data = tensor_graph.tensors[self.src].data.get_data()?;
-        tensor_graph.tensors[self.dst].data.update_data(data)?;
-        Ok(())
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        let data = tensor_graph.tensors[self.src]
+            .data
+            .get_data()
+            .expect("Source tensor should have data");
+        tensor_graph.tensors[self.dst]
+            .data
+            .update_data(data)
+            .expect("Failed to update destination tensor data");
     }
 }

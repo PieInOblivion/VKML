@@ -1,5 +1,4 @@
 use crate::{
-    dataloader::error::VKMLError,
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -383,14 +382,28 @@ impl Instruction for Conv2DInstruction {
         }
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) -> Result<(), VKMLError> {
-        let src_data = tensor_graph.tensors[self.src].data.borrow_cpu_data()?;
-        let weights_data = tensor_graph.tensors[self.weights].data.borrow_cpu_data()?;
-        let mut dst_data = tensor_graph.tensors[self.dst].data.borrow_mut_cpu_data()?;
+    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+        let src_data = tensor_graph.tensors[self.src]
+            .data
+            .borrow_cpu_data()
+            .expect("Source tensor should have CPU data");
+        let weights_data = tensor_graph.tensors[self.weights]
+            .data
+            .borrow_cpu_data()
+            .expect("Weights tensor should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst]
+            .data
+            .borrow_mut_cpu_data()
+            .expect("Destination tensor should have CPU data");
 
         // Check optional bias tensor
         let bias_data = if let Some(bias_id) = self.bias {
-            Some(tensor_graph.tensors[bias_id].data.borrow_cpu_data()?)
+            Some(
+                tensor_graph.tensors[bias_id]
+                    .data
+                    .borrow_cpu_data()
+                    .expect("Bias tensor should have CPU data"),
+            )
         } else {
             None
         };
@@ -403,11 +416,9 @@ impl Instruction for Conv2DInstruction {
         let weight_dims = weights_tensor.desc.to_dims();
         let dst_dims = dst_tensor.desc.to_dims();
 
-        if src_dims.len() != 4 || weight_dims.len() != 4 || dst_dims.len() != 4 {
-            return Err(VKMLError::VulkanLoadError(
-                "Conv2D requires 4D tensors for input, weights, and output".to_string(),
-            ));
-        }
+        assert_eq!(src_dims.len(), 4, "Conv2D requires 4D input tensor");
+        assert_eq!(weight_dims.len(), 4, "Conv2D requires 4D weight tensor");
+        assert_eq!(dst_dims.len(), 4, "Conv2D requires 4D output tensor");
 
         let batch_size = src_dims[0];
         let in_channels = src_dims[1];
@@ -423,20 +434,21 @@ impl Instruction for Conv2DInstruction {
         let out_width = dst_dims[3];
 
         // Verify output dimensions
-        if batch_size != dst_dims[0] || out_channels != dst_dims[1] {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Output dimensions mismatch: expected [{}x{}x{}x{}], got {:?}",
-                batch_size, out_channels, out_height, out_width, dst_dims
-            )));
-        }
-
-        // Verify filter dimensions
-        if in_channels != filter_in_channels {
-            return Err(VKMLError::ShapeMismatch(format!(
-                "Filter input channels {} doesn't match input channels {}",
-                filter_in_channels, in_channels
-            )));
-        }
+        assert_eq!(
+            batch_size, dst_dims[0],
+            "Batch size mismatch: input={}, output={}",
+            batch_size, dst_dims[0]
+        );
+        assert_eq!(
+            out_channels, dst_dims[1],
+            "Output channel mismatch: filter={}, output={}",
+            out_channels, dst_dims[1]
+        );
+        assert_eq!(
+            in_channels, filter_in_channels,
+            "Input channel mismatch: input={}, filter={}",
+            in_channels, filter_in_channels
+        );
 
         // Zero initialize result
         for val in dst_data.iter_mut() {
@@ -486,8 +498,6 @@ impl Instruction for Conv2DInstruction {
                 }
             }
         }
-
-        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
