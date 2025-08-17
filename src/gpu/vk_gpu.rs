@@ -5,7 +5,10 @@ use vulkanalia::{
     vk::{self, DeviceV1_0, InstanceV1_0},
 };
 
-use crate::{compute::memory_tracker::MemoryTracker, dataloader::error::VKMLError};
+use crate::{
+    compute::memory_tracker::MemoryTracker, dataloader::error::VKMLError,
+    utils::expect_msg::ExpectMsg,
+};
 
 use super::{compute_pipelines::ComputePipelines, gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
@@ -32,11 +35,9 @@ pub struct GPU {
 impl GPU {
     pub fn new(device_index: usize) -> Result<Self, Box<dyn std::error::Error>> {
         unsafe {
-            let loader = LibloadingLoader::new(LIBRARY)
-                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
-            let entry = Arc::new(
-                Entry::new(loader).map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?,
-            );
+            let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
+            let entry =
+                Arc::new(Entry::new(loader).expect_msg("Failed to create Vulkan entry point"));
             let aname = CString::new("VK GPU")?;
 
             let appinfo = vk::ApplicationInfo {
@@ -60,9 +61,13 @@ impl GPU {
                 enabled_extension_names: ptr::null(),
             };
 
-            let instance = entry.create_instance(&create_info, None)?;
+            let instance = entry
+                .create_instance(&create_info, None)
+                .expect_msg("Failed to create Vulkan instance");
 
-            let physical_devices = instance.enumerate_physical_devices()?;
+            let physical_devices = instance
+                .enumerate_physical_devices()
+                .expect_msg("Failed to enumerate physical devices");
             let physical_device = *physical_devices
                 .get(device_index)
                 .ok_or("GPU index out of range")?;
@@ -73,7 +78,7 @@ impl GPU {
                 .enumerate()
                 .find(|(_, properties)| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
                 .map(|(index, _)| index as u32)
-                .ok_or("No compute queue family found")?;
+                .expect("No compute queue family found on device");
 
             // Get queue family properties to find the number of available queues
             let queue_family_props =
@@ -109,7 +114,9 @@ impl GPU {
                 enabled_features: &device_features,
             };
 
-            let device = instance.create_device(physical_device, &device_create_info, None)?;
+            let device = instance
+                .create_device(physical_device, &device_create_info, None)
+                .expect_msg("Failed to create Vulkan device");
 
             // Get all compute queues
             let mut compute_queues = Vec::with_capacity(queue_count as usize);
@@ -124,7 +131,9 @@ impl GPU {
                 queue_family_index,
             };
 
-            let command_pool = device.create_command_pool(&command_pool_info, None)?;
+            let command_pool = device
+                .create_command_pool(&command_pool_info, None)
+                .expect_msg("Failed to create command pool");
 
             let bindings = [
                 // Input buffer 1 (used by all operations)
@@ -186,9 +195,12 @@ impl GPU {
                 pool_sizes: pool_sizes.as_ptr(),
             };
 
-            let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_info, None)?;
+            let descriptor_pool = device
+                .create_descriptor_pool(&descriptor_pool_info, None)
+                .expect_msg("Failed to create descriptor pool");
 
-            let compute_pipelines = ComputePipelines::new(&device, descriptor_set_layout)?;
+            let compute_pipelines = ComputePipelines::new(&device, descriptor_set_layout)
+                .expect_msg("Failed to create compute pipelines");
 
             let memory_properties = instance.get_physical_device_memory_properties(physical_device);
             let total_memory = {
@@ -224,8 +236,8 @@ impl GPU {
         }
     }
 
-    unsafe fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn std::error::Error>> {
-        let aname = CString::new("gpu_mm")?;
+    unsafe fn create_instance(entry: &Entry) -> Instance {
+        let aname = CString::new("gpu_mm").expect_msg("Failed to create application name");
         let appinfo = vk::ApplicationInfo {
             s_type: vk::StructureType::APPLICATION_INFO,
             next: ptr::null(),
@@ -247,7 +259,11 @@ impl GPU {
             enabled_extension_names: ptr::null(),
         };
 
-        Ok(unsafe { entry.create_instance(&create_info, None) }?)
+        unsafe {
+            entry
+                .create_instance(&create_info, None)
+                .expect_msg("Failed to create Vulkan instance")
+        }
     }
 
     pub fn total_memory(&self) -> u64 {
@@ -277,8 +293,7 @@ impl GPU {
             let entry =
                 Entry::new(loader).map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
-            let instance = Self::create_instance(&entry)
-                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
+            let instance = Self::create_instance(&entry);
 
             let physical_devices = instance
                 .enumerate_physical_devices()
@@ -308,7 +323,7 @@ impl GPU {
     pub fn move_to_gpu_as_f32(
         &self,
         data: &[f32],
-    ) -> Result<GPUMemory, Box<dyn std::error::Error>> {
+    ) -> GPUMemory {
         let size_in_bytes = (data.len() * std::mem::size_of::<f32>()) as vk::DeviceSize;
 
         unsafe {
@@ -324,7 +339,10 @@ impl GPU {
                 queue_family_indices: ptr::null(),
             };
 
-            let buffer = self.device.create_buffer(&buffer_info, None)?;
+            let buffer = self
+                .device
+                .create_buffer(&buffer_info, None)
+                .expect_msg("Failed to create buffer");
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
             let memory_type = self.find_memory_type(
@@ -339,14 +357,19 @@ impl GPU {
                 memory_type_index: memory_type,
             };
 
-            let memory = self.device.allocate_memory(&alloc_info, None)?;
-            self.device.bind_buffer_memory(buffer, memory, 0)?;
+            let memory = self
+                .device
+                .allocate_memory(&alloc_info, None)
+                .expect_msg("Failed to allocate buffer memory");
+            self.device
+                .bind_buffer_memory(buffer, memory, 0)
+                .expect_msg("Failed to bind buffer memory");
 
             // Map memory and write data
-            let data_ptr =
-                self.device
-                    .map_memory(memory, 0, size_in_bytes, vk::MemoryMapFlags::empty())?
-                    as *mut f32;
+            let data_ptr = self
+                .device
+                .map_memory(memory, 0, size_in_bytes, vk::MemoryMapFlags::empty())
+                .expect_msg("Failed to map buffer memory") as *mut f32;
 
             // Copy the data
             std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
@@ -362,7 +385,10 @@ impl GPU {
                 set_layouts: set_layouts.as_ptr(),
             };
 
-            let descriptor_set = self.device.allocate_descriptor_sets(&alloc_info)?[0];
+            let descriptor_set = self
+                .device
+                .allocate_descriptor_sets(&alloc_info)
+                .expect_msg("Failed to allocate descriptor set")[0];
 
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer,
@@ -386,13 +412,13 @@ impl GPU {
             self.device
                 .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
-            Ok(GPUMemory {
+            GPUMemory {
                 buffer,
                 memory,
                 size: size_in_bytes,
                 device: Arc::new(self.device.clone()),
                 descriptor_set,
-            })
+            }
         }
     }
 
