@@ -5,10 +5,7 @@ use vulkanalia::{
     vk::{self, DeviceV1_0, InstanceV1_0},
 };
 
-use crate::{
-    compute::memory_tracker::MemoryTracker, dataloader::error::VKMLError,
-    utils::expect_msg::ExpectMsg,
-};
+use crate::{compute::memory_tracker::MemoryTracker, utils::expect_msg::ExpectMsg};
 
 use super::{compute_pipelines::ComputePipelines, gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
@@ -286,18 +283,16 @@ impl GPU {
         }
     }
 
-    pub fn available_gpus() -> Result<Vec<GPUInfo>, VKMLError> {
+    pub fn available_gpus() -> Vec<GPUInfo> {
         unsafe {
-            let loader = LibloadingLoader::new(LIBRARY)
-                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
-            let entry =
-                Entry::new(loader).map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
+            let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
+            let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
 
             let instance = Self::create_instance(&entry);
 
             let physical_devices = instance
                 .enumerate_physical_devices()
-                .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
+                .expect_msg("Failed to enumerate physical devices");
 
             // Create GPUInfo for each device and filter for compute support
             let mut gpu_infos: Vec<_> = physical_devices
@@ -316,14 +311,11 @@ impl GPU {
             });
 
             instance.destroy_instance(None);
-            Ok(gpu_infos)
+            gpu_infos
         }
     }
 
-    pub fn move_to_gpu_as_f32(
-        &self,
-        data: &[f32],
-    ) -> GPUMemory {
+    pub fn move_to_gpu_as_f32(&self, data: &[f32]) -> GPUMemory {
         let size_in_bytes = (data.len() * std::mem::size_of::<f32>()) as vk::DeviceSize;
 
         unsafe {

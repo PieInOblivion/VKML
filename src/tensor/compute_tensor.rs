@@ -1,6 +1,8 @@
-use super::{tensor_data::TensorData, tensor_desc::TensorDesc};
+use crate::tensor::storage::r#trait::TensorStorage;
+
+use super::tensor_desc::TensorDesc;
 
 pub struct ComputeTensor {
     pub desc: TensorDesc,
-    pub data: TensorData,
+    pub data: Box<dyn TensorStorage>,
 }

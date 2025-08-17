@@ -1,5 +1,5 @@
 //! VKML - High-level abstractions for ML model development using Vulkan compute
-//! 
+//!
 //! This library provides universal compute utilisation across different hardware vendors
 //! with a focus on performance and ease of use.
 

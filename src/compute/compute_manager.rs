@@ -84,7 +84,7 @@ impl ComputeManager {
     }
 
     fn available_gpus() -> Result<Vec<GPU>, VKMLError> {
-        let gpu_info = GPU::available_gpus()?;
+        let gpu_info = GPU::available_gpus();
         let mut gpus = Vec::with_capacity(gpu_info.len());
 
         for info in gpu_info {
@@ -490,7 +490,7 @@ impl ComputeManager {
 
             self.tensor_graph.tensors[tensor_id]
                 .data
-                .update_data(data)?;
+                .update_data(data);
         }
 
         // Execute the model
@@ -504,7 +504,7 @@ impl ComputeManager {
             let tensor = &self.tensor_graph.tensors[tensor_id];
 
             // Get data from tensor (currently returns f32, but will return native type in future)
-            let output_data = tensor.data.get_data()?;
+            let output_data = tensor.data.get_data();
 
             // For now, get_data() returns f32, so we need to convert to bytes
             // In future, get_data() will return bytes in the tensor's native format
