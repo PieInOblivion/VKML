@@ -330,7 +330,7 @@ impl GPU {
             let memory_type = self.find_memory_type(
                 mem_requirements.memory_type_bits,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
+            );
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
@@ -420,7 +420,7 @@ impl GPU {
             let memory_type = self.find_memory_type(
                 mem_requirements.memory_type_bits,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
+            );
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
@@ -477,11 +477,7 @@ impl GPU {
         }
     }
 
-    pub fn find_memory_type(
-        &self,
-        type_filter: u32,
-        properties: vk::MemoryPropertyFlags,
-    ) -> Result<u32, Box<dyn std::error::Error>> {
+    pub fn find_memory_type(&self, type_filter: u32, properties: vk::MemoryPropertyFlags) -> u32 {
         unsafe {
             let mem_properties = self
                 .instance
@@ -493,11 +489,11 @@ impl GPU {
                         .property_flags
                         .contains(properties)
                 {
-                    return Ok(i);
+                    return i;
                 }
             }
 
-            Err("Failed to find suitable memory type".into())
+            panic!("Failed to find suitable memory type")
         }
     }
 

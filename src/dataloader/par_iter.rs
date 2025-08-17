@@ -1,12 +1,12 @@
 use super::{data_batch::DataBatch, dataloader::DataLoader};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use zero_pool::{zp_define_task_fn, zp_task_params};
+use zero_pool::{TaskFuture, zp_define_task_fn, zp_task_params};
 
 /// A pending batch with its future and the allocated data
 struct PendingBatch {
     batch: DataBatch,
-    future: zero_pool::WorkFuture,
+    future: TaskFuture,
 }
 
 /// Extension trait for parallel iteration using zero-pool

@@ -11,7 +11,10 @@ mod layer;
 mod tensor;
 
 mod instruction;
+
 mod tensor_graph;
+
+mod utils;
 
 use std::sync::Arc;
 

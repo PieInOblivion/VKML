@@ -680,7 +680,7 @@ fn create_generic_matmul_command_buffer(
         let ubo_memory_type_index = gpu.find_memory_type(
             ubo_mem_req.memory_type_bits,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )?;
+        );
 
         let ubo_alloc_info = vk::MemoryAllocateInfo {
             allocation_size: ubo_mem_req.size,

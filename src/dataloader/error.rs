@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-// TODO: Seperate concerns of error types
 #[derive(Error, Debug)]
 pub enum VKMLError {
     // Vulkan, compute and other errors
