@@ -3,7 +3,7 @@ use crate::gpu::gpu_memory::GPUMemory;
 
 pub struct ComputeTensor {
     pub desc: TensorDesc,
-    pub data: TensorStorage,  // Direct enum, no Box needed!
+    pub data: TensorStorage,
 }
 
 impl ComputeTensor {
@@ -13,7 +13,7 @@ impl ComputeTensor {
             data: TensorStorage::new_cpu(data),
         }
     }
-    
+
     pub fn new_cpu_zeros(desc: TensorDesc) -> Self {
         let num_elements = desc.num_elements();
         Self {
@@ -21,14 +21,14 @@ impl ComputeTensor {
             data: TensorStorage::new_cpu_zeros(num_elements),
         }
     }
-    
+
     pub fn new_gpu(desc: TensorDesc, gpu_idx: usize, memory: GPUMemory) -> Self {
         Self {
             desc,
             data: TensorStorage::new_gpu(gpu_idx, memory),
         }
     }
-    
+
     pub fn new_unallocated(desc: TensorDesc) -> Self {
         Self {
             desc,

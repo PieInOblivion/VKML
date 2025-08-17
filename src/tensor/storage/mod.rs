@@ -1,16 +1,16 @@
-mod r#trait;
 mod cpu;
 mod gpu;
+mod r#trait;
 mod unallocated;
 
+pub use cpu::{CpuReadGuard, CpuTensorStorage, CpuWriteGuard};
+pub use gpu::{GpuReadGuard, GpuTensorStorage, GpuWriteGuard};
 pub use r#trait::TensorStorageOps;
-pub use cpu::{CpuTensorStorage, CpuReadGuard, CpuWriteGuard};
-pub use gpu::{GpuTensorStorage, GpuReadGuard, GpuWriteGuard};
-pub use unallocated::{UnallocatedTensorStorage, UnallocatedGuard}; 
+pub use unallocated::{UnallocatedGuard, UnallocatedTensorStorage};
 
 use std::ops::{Deref, DerefMut};
 
-/// Main enum for tensor storage - dyn compatible!
+/// Main enum for tensor storage
 pub enum TensorStorage {
     CPU(CpuTensorStorage),
     GPU(GpuTensorStorage),
@@ -33,7 +33,7 @@ pub enum WriteGuard<'a> {
 
 impl<'a> Deref for ReadGuard<'a> {
     type Target = [f32];
-    
+
     fn deref(&self) -> &Self::Target {
         match self {
             ReadGuard::CPU(guard) => guard.deref(),
@@ -45,7 +45,7 @@ impl<'a> Deref for ReadGuard<'a> {
 
 impl<'a> Deref for WriteGuard<'a> {
     type Target = [f32];
-    
+
     fn deref(&self) -> &Self::Target {
         match self {
             WriteGuard::CPU(guard) => guard.deref(),
@@ -69,19 +69,19 @@ impl TensorStorage {
     pub fn new_cpu(data: Vec<f32>) -> Self {
         TensorStorage::CPU(CpuTensorStorage::new(data))
     }
-    
+
     pub fn new_cpu_zeros(size: usize) -> Self {
         TensorStorage::CPU(CpuTensorStorage::with_zeros(size))
     }
-    
+
     pub fn new_gpu(gpu_idx: usize, memory: crate::gpu::gpu_memory::GPUMemory) -> Self {
         TensorStorage::GPU(GpuTensorStorage::new(gpu_idx, memory))
     }
-    
+
     pub fn new_unallocated() -> Self {
         TensorStorage::Unallocated(UnallocatedTensorStorage)
     }
-    
+
     /// Get read-only access to tensor data
     pub fn read_data(&self) -> ReadGuard<'_> {
         match self {
@@ -90,7 +90,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => ReadGuard::Unallocated(storage.read_data()),
         }
     }
-    
+
     /// Get mutable access to tensor data
     pub fn write_data(&self) -> WriteGuard<'_> {
         match self {
@@ -99,7 +99,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => WriteGuard::Unallocated(storage.write_data()),
         }
     }
-    
+
     /// Read all data from storage as f32 vector (full copy)
     pub fn get_data(&self) -> Vec<f32> {
         match self {
@@ -108,7 +108,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => storage.get_data(),
         }
     }
-    
+
     /// Update storage with new data - panics on size mismatch or failure
     pub fn update_data(&self, data: Vec<f32>) {
         match self {
@@ -117,7 +117,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => storage.update_data(data),
         }
     }
-    
+
     /// Get size in bytes
     pub fn size_in_bytes(&self) -> u64 {
         match self {
@@ -126,7 +126,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => storage.size_in_bytes(),
         }
     }
-    
+
     /// Check if storage is allocated
     pub fn is_allocated(&self) -> bool {
         match self {
@@ -135,7 +135,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => storage.is_allocated(),
         }
     }
-    
+
     /// Get GPU index if this is GPU storage, None for CPU/other storage
     pub fn gpu_idx(&self) -> Option<usize> {
         match self {
@@ -144,7 +144,7 @@ impl TensorStorage {
             TensorStorage::Unallocated(storage) => storage.gpu_idx(),
         }
     }
-    
+
     /// Get human-readable location description
     pub fn location_string(&self) -> String {
         match self {

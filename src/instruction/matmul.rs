@@ -1,6 +1,6 @@
 use crate::{
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
-    tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData},
+    tensor::{compute_tensor::ComputeTensor, storage::TensorStorage},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -90,18 +90,9 @@ impl Instruction for MatMulInstruction {
             "Cannot use MatMul for in-place operation"
         );
 
-        let src1_data = tensor_graph.tensors[self.src1]
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor 1 should have CPU data");
-        let src2_data = tensor_graph.tensors[self.src2]
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor 2 should have CPU data");
-        let mut dst_data = tensor_graph.tensors[self.dst]
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
+        let src1_data = tensor_graph.tensors[self.src1].data.read_data();
+        let src2_data = tensor_graph.tensors[self.src2].data.read_data();
+        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
         let src1_tensor = tensor_graph.tensors.get(self.src1).unwrap();
         let src2_tensor = tensor_graph.tensors.get(self.src2).unwrap();
@@ -589,17 +580,15 @@ fn create_generic_matmul_command_buffer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         let src1_gpu_mem = match &src1_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Source tensor 1 not on GPU".into()),
         };
-
         let src2_gpu_mem = match &src2_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Source tensor 2 not on GPU".into()),
         };
-
         let dst_gpu_mem = match &dst_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Destination tensor not on GPU".into()),
         };
 
@@ -909,17 +898,15 @@ fn create_specialized_matmul_command_buffer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         let src1_mem = match &src1_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Source tensor 1 not in GPU memory".into()),
         };
-
         let src2_mem = match &src2_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Source tensor 2 not in GPU memory".into()),
         };
-
         let dst_mem = match &dst_tensor.data {
-            TensorData::GPU { memory, .. } => memory,
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
             _ => return Err("Destination tensor not in GPU memory".into()),
         };
 

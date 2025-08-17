@@ -4,7 +4,7 @@ use crate::{
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::{compute_tensor::ComputeTensor, tensor_data::TensorData, tensor_desc::TensorDesc},
+    tensor::{compute_tensor::ComputeTensor, storage::TensorStorage, tensor_desc::TensorDesc},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -96,10 +96,7 @@ impl TensorGraph {
                     // Only if not an input reference
                     let global_tensor_id = tensors.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
-                    tensors.push(ComputeTensor {
-                        desc: local_tensor_desc.clone(),
-                        data: TensorData::Unallocated,
-                    });
+                    tensors.push(ComputeTensor::new_unallocated(local_tensor_desc.clone()));
                     tensor_to_layer_map.push(Some(layer_id));
                     // Ensure latest_producer_op_for_tensor is large enough
                     if global_tensor_id >= latest_producer_op_for_tensor.len() {
@@ -253,13 +250,13 @@ impl TensorGraph {
         plan
     }
 
-    pub fn get_gpu_memory_or_panic(&self, tensor_id: &TensorId) -> &GPUMemory {
-        match &self.tensors[*tensor_id].data {
-            TensorData::GPU { memory, .. } => memory,
-            TensorData::CPU(_) => {
+    pub fn get_gpu_memory_or_panic(&self, tensor_id: usize) -> &GPUMemory {
+        match &self.tensors[tensor_id].data {
+            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
+            TensorStorage::CPU(_) => {
                 panic!("Tensor {} is in CPU memory, expected GPU memory", tensor_id)
             }
-            TensorData::Unallocated => {
+            TensorStorage::Unallocated(_) => {
                 panic!("Tensor {} is unallocated, expected GPU memory", tensor_id)
             }
         }

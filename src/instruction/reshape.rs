@@ -54,8 +54,8 @@ impl Instruction for ReshapeInstruction {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Reshape in Vulkan is a logical operation, not a physical one
         // We essentially need to copy data between the tensors
-        let src_mem = tensor_graph.get_gpu_memory_or_panic(&self.src);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
+        let src_mem = tensor_graph.get_gpu_memory_or_panic(self.src);
+        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -93,14 +93,8 @@ impl Instruction for ReshapeInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
-        let src_data = tensor_graph.tensors[self.src]
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor should have CPU data");
-        let mut dst_data = tensor_graph.tensors[self.dst]
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
+        let src_data = tensor_graph.tensors[self.src].data.read_data();
+        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
         assert_eq!(
             dst_data.len(),

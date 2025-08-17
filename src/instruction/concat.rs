@@ -58,10 +58,7 @@ impl Instruction for ConcatInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
-        let mut dst_data = tensor_graph.tensors[self.dst]
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
+        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
         assert_eq!(
             self.dim, 1,
@@ -110,10 +107,7 @@ impl Instruction for ConcatInstruction {
         let mut dst_idx = 0;
         for b in 0..batch_size {
             for &src_id in &self.sources {
-                let src_data = tensor_graph.tensors[src_id]
-                    .data
-                    .borrow_cpu_data()
-                    .expect("Source tensor should have CPU data");
+                let src_data = tensor_graph.tensors[src_id].data.read_data();
                 let src_tensor = &tensor_graph.tensors[src_id];
                 let src_dims = src_tensor.desc.to_dims();
                 let feat_dim = src_dims[1];

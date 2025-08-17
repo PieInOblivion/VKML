@@ -64,9 +64,9 @@ impl Instruction for Conv2DInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_mem = tensor_graph.get_gpu_memory_or_panic(&self.src);
-        let weights_mem = tensor_graph.get_gpu_memory_or_panic(&self.weights);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
+        let src_mem = tensor_graph.get_gpu_memory_or_panic(self.src);
+        let weights_mem = tensor_graph.get_gpu_memory_or_panic(self.weights);
+        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
 
         let src_tensor = tensor_graph.tensors.get(self.src).unwrap();
         let weights_tensor = tensor_graph.tensors.get(self.weights).unwrap();
@@ -75,7 +75,7 @@ impl Instruction for Conv2DInstruction {
         let bias_mem = self
             .bias
             .as_ref()
-            .map(|bias_id| tensor_graph.get_gpu_memory_or_panic(bias_id));
+            .map(|bias_id| tensor_graph.get_gpu_memory_or_panic(*bias_id));
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -383,27 +383,13 @@ impl Instruction for Conv2DInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
-        let src_data = tensor_graph.tensors[self.src]
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor should have CPU data");
-        let weights_data = tensor_graph.tensors[self.weights]
-            .data
-            .borrow_cpu_data()
-            .expect("Weights tensor should have CPU data");
-        let mut dst_data = tensor_graph.tensors[self.dst]
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
+        let src_data = tensor_graph.tensors[self.src].data.read_data();
+        let weights_data = tensor_graph.tensors[self.weights].data.read_data();
+        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
         // Check optional bias tensor
         let bias_data = if let Some(bias_id) = self.bias {
-            Some(
-                tensor_graph.tensors[bias_id]
-                    .data
-                    .borrow_cpu_data()
-                    .expect("Bias tensor should have CPU data"),
-            )
+            Some(tensor_graph.tensors[bias_id].data.read_data())
         } else {
             None
         };

@@ -1,5 +1,6 @@
 use crate::{
-    compute::compute_manager::ComputeManager, tensor::tensor_data::TensorData,
+    compute::compute_manager::ComputeManager,
+    tensor::storage::{TensorStorage, TensorStorageOps},
     tensor_graph::tensor_graph::TensorId,
 };
 use std::collections::HashSet;
@@ -56,9 +57,11 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.data {
-                    TensorData::CPU(_) => "CPU".to_string(),
-                    TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
-                    TensorData::Unallocated => "Unallocated".to_string(),
+                    TensorStorage::CPU(_) => "CPU".to_string(),
+                    TensorStorage::GPU(gpu_storage) => {
+                        format!("GPU {}", gpu_storage.gpu_idx().unwrap())
+                    }
+                    TensorStorage::Unallocated(_) => "Unallocated".to_string(),
                 };
 
                 let producers: String = cm
@@ -89,9 +92,11 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.data {
-                    TensorData::CPU(_) => "CPU".to_string(),
-                    TensorData::GPU { gpu_idx, .. } => format!("GPU {}", gpu_idx),
-                    TensorData::Unallocated => "Unallocated".to_string(),
+                    TensorStorage::CPU(_) => "CPU".to_string(),
+                    TensorStorage::GPU(gpu_storage) => {
+                        format!("GPU {}", gpu_storage.gpu_idx().unwrap())
+                    }
+                    TensorStorage::Unallocated(_) => "Unallocated".to_string(),
                 };
 
                 let consumers: Vec<String> = cm

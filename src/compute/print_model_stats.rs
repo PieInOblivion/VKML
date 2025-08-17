@@ -2,6 +2,8 @@ use crate::{
     compute::compute_manager::ComputeManager,
     dataloader::error::VKMLError,
     model::layer_connection::{LayerConnection, LayerId},
+    tensor::storage::TensorStorage,
+    tensor::storage::TensorStorageOps,
     tensor_graph::tensor_graph::TensorId,
 };
 
@@ -122,11 +124,11 @@ pub fn print_model_stats(cm: &ComputeManager) {
                 .sum();
 
             let device_location = match &cm.tensor_graph.tensors[output_tensor].data {
-                crate::tensor::tensor_data::TensorData::CPU(_) => "CPU".to_string(),
-                crate::tensor::tensor_data::TensorData::GPU { gpu_idx, .. } => {
-                    format!("GPU {}", gpu_idx)
+                TensorStorage::CPU(_) => "CPU".to_string(),
+                TensorStorage::GPU(gpu_storage) => {
+                    format!("GPU {}", gpu_storage.gpu_idx().unwrap())
                 }
-                crate::tensor::tensor_data::TensorData::Unallocated => "Unallocated".to_string(),
+                TensorStorage::Unallocated(_) => "Unallocated".to_string(),
             };
 
             let layer_type = layer.layer.name();
@@ -310,8 +312,8 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
 
     for tensor_id in &tensor_ids {
         let tensor = &cm.tensor_graph.tensors[*tensor_id];
-        let data = tensor.data.get_data()?;
-        let gpu_idx = tensor.data.get_gpu_idx();
+        let data = tensor.data.get_data();
+        let gpu_idx = tensor.data.gpu_idx();
 
         println!("\nTensor {}:", tensor_id);
         println!(

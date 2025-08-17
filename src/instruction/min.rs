@@ -51,9 +51,9 @@ impl Instruction for MinInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_mem = tensor_graph.get_gpu_memory_or_panic(&self.src1);
-        let src2_mem = tensor_graph.get_gpu_memory_or_panic(&self.src2);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(&self.dst);
+        let src1_mem = tensor_graph.get_gpu_memory_or_panic(self.src1);
+        let src2_mem = tensor_graph.get_gpu_memory_or_panic(self.src2);
+        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -204,18 +204,9 @@ impl Instruction for MinInstruction {
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        let mut dd = dst
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
-        let d1 = src1
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor 1 should have CPU data");
-        let d2 = src2
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor 2 should have CPU data");
+        let mut dd = dst.data.write_data();
+        let d1 = src1.data.read_data();
+        let d2 = src2.data.read_data();
 
         // Simplified loop without aliasing checks
         for i in 0..dd.len() {

@@ -8,13 +8,14 @@ use crate::dataloader::data_type::DataType;
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
 use crate::tensor::compute_tensor::ComputeTensor;
+use crate::tensor::storage::TensorStorageOps;
 use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
     dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     model::{graph_model::GraphModel, layer_connection::LayerId, weight_init::WeightInit},
-    tensor::{tensor_data::TensorData, tensor_desc::TensorDesc},
+    tensor::{storage::TensorStorage, tensor_desc::TensorDesc},
 };
 use vulkanalia::vk::DeviceV1_0;
 
@@ -336,10 +337,9 @@ impl ComputeManager {
         // 1. Create all new tensors for transfers
         for (tensor_desc, device_location, _weight_init, layer_id) in new_tensors {
             // Add the new tensor
-            self.tensor_graph.tensors.push(ComputeTensor {
-                desc: tensor_desc,
-                data: TensorData::Unallocated, // Will be allocated later
-            });
+            self.tensor_graph
+                .tensors
+                .push(ComputeTensor::new_unallocated(tensor_desc));
 
             // Add the same layer ID to maintain the connection
             self.tensor_graph.tensor_to_layer.push(layer_id);
@@ -414,7 +414,7 @@ impl ComputeManager {
         desc: &TensorDesc,
         target_device: &DeviceLocation,
         weight_init: &WeightInit,
-    ) -> Result<TensorData, VKMLError> {
+    ) -> Result<TensorStorage, VKMLError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match *target_device {
@@ -437,7 +437,7 @@ impl ComputeManager {
                 };
 
                 self.cpu.memory_tracking.allocate(size_in_bytes);
-                Ok(TensorData::new_cpu(initial_data))
+                Ok(TensorStorage::new_cpu(initial_data))
             }
             DeviceLocation::GPU(idx) => {
                 let gpu = &self.gpus[idx];
@@ -448,7 +448,7 @@ impl ComputeManager {
                     .init_gpu(desc, gpu)
                     .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
-                Ok(TensorData::new_gpu(idx, gpu_memory))
+                Ok(TensorStorage::new_gpu(idx, gpu_memory))
             }
         }
     }
@@ -488,9 +488,7 @@ impl ComputeManager {
             // Get the data as f32 vector for tensor operations
             let data = batch.to_f32();
 
-            self.tensor_graph.tensors[tensor_id]
-                .data
-                .update_data(data);
+            self.tensor_graph.tensors[tensor_id].data.update_data(data);
         }
 
         // Execute the model
@@ -623,9 +621,11 @@ impl ComputeManager {
         // Check input tensors to determine device
         for &tensor_id in &input_tensor_ids {
             match &self.tensor_graph.tensors[tensor_id].data {
-                TensorData::CPU(_) => return Ok(DeviceLocation::CPU),
-                TensorData::GPU { gpu_idx, .. } => return Ok(DeviceLocation::GPU(*gpu_idx)),
-                TensorData::Unallocated => continue,
+                TensorStorage::CPU(_) => return Ok(DeviceLocation::CPU),
+                TensorStorage::GPU(gpu_storage) => {
+                    return Ok(DeviceLocation::GPU(gpu_storage.gpu_idx().unwrap()));
+                }
+                TensorStorage::Unallocated(_) => continue,
             }
         }
 
@@ -634,9 +634,11 @@ impl ComputeManager {
 
         for &tensor_id in &output_tensor_ids {
             match &self.tensor_graph.tensors[tensor_id].data {
-                TensorData::CPU(_) => return Ok(DeviceLocation::CPU),
-                TensorData::GPU { gpu_idx, .. } => return Ok(DeviceLocation::GPU(*gpu_idx)),
-                TensorData::Unallocated => continue,
+                TensorStorage::CPU(_) => return Ok(DeviceLocation::CPU),
+                TensorStorage::GPU(gpu_storage) => {
+                    return Ok(DeviceLocation::GPU(gpu_storage.gpu_idx().unwrap()));
+                }
+                TensorStorage::Unallocated(_) => continue,
             }
         }
 

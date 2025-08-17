@@ -45,8 +45,8 @@ impl Instruction for MulInplaceInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mem_a = tensor_graph.get_gpu_memory_or_panic(&self.dst);
-        let mem_b = tensor_graph.get_gpu_memory_or_panic(&self.src1);
+        let mem_a = tensor_graph.get_gpu_memory_or_panic(self.dst);
+        let mem_b = tensor_graph.get_gpu_memory_or_panic(self.src1);
 
         let desc_a = &tensor_graph.tensors[self.dst].desc;
         let desc_b = &tensor_graph.tensors[self.src1].desc;
@@ -215,14 +215,9 @@ impl Instruction for MulInplaceInstruction {
 
         let out = TensorDesc::broadcast_shape(&da, &db)
             .expect(&format!("Can't broadcast {:?} vs {:?}", da, db));
-        let mut data_a = a
-            .data
-            .borrow_mut_cpu_data()
-            .expect("Destination tensor should have CPU data");
-        let data_b = b
-            .data
-            .borrow_cpu_data()
-            .expect("Source tensor should have CPU data");
+
+        let mut data_a = a.data.write_data();
+        let data_b = b.data.read_data();
 
         let sa = TensorDesc::broadcast_strides(&da, &out);
         let sb = TensorDesc::broadcast_strides(&db, &out);
