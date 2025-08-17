@@ -1,5 +1,6 @@
+use std::ops::{Deref, DerefMut};
 use crate::{gpu::gpu_memory::GPUMemory, utils::expect_msg::ExpectMsg};
-use super::r#trait::TensorStorage;
+use super::r#trait::TensorStorageOps;
 
 pub struct GpuTensorStorage {
     gpu_idx: usize,
@@ -11,13 +12,29 @@ impl GpuTensorStorage {
         Self { gpu_idx, memory }
     }
     
-    // Direct GPU memory access if needed
+    /// Get direct access to GPU memory (for Vulkan operations)
     pub fn memory(&self) -> &GPUMemory {
         &self.memory
     }
 }
 
-impl TensorStorage for GpuTensorStorage {
+impl TensorStorageOps for GpuTensorStorage {
+    type ReadGuard<'a> = GpuReadGuard;
+    type WriteGuard<'a> = GpuWriteGuard<'a>;
+    
+    fn read_data(&self) -> Self::ReadGuard<'_> {
+        let data = self.memory.read_memory().expect_msg("Failed to read GPU memory");
+        GpuReadGuard { data }
+    }
+    
+    fn write_data(&self) -> Self::WriteGuard<'_> {
+        let data = self.memory.read_memory().expect_msg("Failed to read GPU memory");
+        GpuWriteGuard {
+            data,
+            memory: &self.memory,
+        }
+    }
+    
     fn get_data(&self) -> Vec<f32> {
         self.memory.read_memory().expect_msg("Failed to read GPU memory")
     }
@@ -45,5 +62,44 @@ impl TensorStorage for GpuTensorStorage {
     
     fn location_string(&self) -> String {
         format!("GPU {} Tensor", self.gpu_idx)
+    }
+}
+
+// Read guard for GPU - just holds the copied data
+pub struct GpuReadGuard {
+    data: Vec<f32>,
+}
+
+impl Deref for GpuReadGuard {
+    type Target = [f32];
+    
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+// Write guard for GPU - copies back to GPU on drop
+pub struct GpuWriteGuard<'a> {
+    data: Vec<f32>,
+    memory: &'a GPUMemory,
+}
+
+impl<'a> Deref for GpuWriteGuard<'a> {
+    type Target = [f32];
+    
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<'a> DerefMut for GpuWriteGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+impl<'a> Drop for GpuWriteGuard<'a> {
+    fn drop(&mut self) {
+        self.memory.copy_into(&self.data).expect_msg("Failed to write data back to GPU memory");
     }
 }

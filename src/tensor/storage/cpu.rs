@@ -1,6 +1,7 @@
 use std::sync::RwLock;
+use std::ops::{Deref, DerefMut};
 use crate::utils::expect_msg::ExpectMsg;
-use super::r#trait::TensorStorage;
+use super::r#trait::TensorStorageOps;
 
 pub struct CpuTensorStorage {
     data: RwLock<Vec<f32>>,
@@ -19,18 +20,25 @@ impl CpuTensorStorage {
         }
     }
     
-    // Optional: Keep these for CPU-specific direct access if needed
-    // But now they return RwLock guards instead of RefCell guards
-    pub fn read_data(&self) -> std::sync::RwLockReadGuard<Vec<f32>> {
-        self.data.read().expect_msg("Failed to acquire read lock on CPU tensor data")
-    }
-    
-    pub fn write_data(&self) -> std::sync::RwLockWriteGuard<Vec<f32>> {
-        self.data.write().expect_msg("Failed to acquire write lock on CPU tensor data")
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            data: RwLock::new(Vec::with_capacity(capacity)),
+        }
     }
 }
 
-impl TensorStorage for CpuTensorStorage {
+impl TensorStorageOps for CpuTensorStorage {
+    type ReadGuard<'a> = CpuReadGuard<'a>;
+    type WriteGuard<'a> = CpuWriteGuard<'a>;
+    
+    fn read_data(&self) -> Self::ReadGuard<'_> {
+        CpuReadGuard(self.data.read().expect_msg("Failed to acquire read lock on CPU tensor data"))
+    }
+    
+    fn write_data(&self) -> Self::WriteGuard<'_> {
+        CpuWriteGuard(self.data.write().expect_msg("Failed to acquire write lock on CPU tensor data"))
+    }
+    
     fn get_data(&self) -> Vec<f32> {
         self.data.read()
             .expect_msg("Failed to acquire read lock on CPU tensor data")
@@ -65,5 +73,33 @@ impl TensorStorage for CpuTensorStorage {
     
     fn location_string(&self) -> String {
         "CPU Tensor".to_string()
+    }
+}
+
+// Wrapper for RwLockReadGuard to implement Deref for [f32]
+pub struct CpuReadGuard<'a>(std::sync::RwLockReadGuard<'a, Vec<f32>>);
+
+impl<'a> Deref for CpuReadGuard<'a> {
+    type Target = [f32];
+    
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+// Wrapper for RwLockWriteGuard to implement DerefMut for [f32]
+pub struct CpuWriteGuard<'a>(std::sync::RwLockWriteGuard<'a, Vec<f32>>);
+
+impl<'a> Deref for CpuWriteGuard<'a> {
+    type Target = [f32];
+    
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> DerefMut for CpuWriteGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
