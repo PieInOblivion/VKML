@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::importers::onnx_parser::OnnxParser;
+use onnx_extractor::OnnxModel;
 use zero_pool::ZeroPool;
 
 use crate::dataloader::data_batch::DataBatch;
@@ -81,6 +83,78 @@ impl ComputeManager {
 
         manager.allocate_tensors()?;
 
+        Ok(manager)
+    }
+
+    pub fn new_onnx(onnx_path: &str, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
+        let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
+            VKMLError::OnnxImporterError(format!(
+                "Failed to load ONNX model from '{}': {}",
+                onnx_path, e
+            ))
+        })?;
+
+        let tensor_graph = OnnxParser::parse_onnx_model(&onnx_model)?;
+
+        let gpus = Self::available_gpus()?;
+        Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, None)
+    }
+
+    /// Create ComputeManager from ONNX file with custom settings
+    pub fn new_onnx_with(
+        onnx_path: &str,
+        thread_pool: Arc<ZeroPool>,
+        gpus: Vec<GPU>,
+        cpu_memory_limit_bytes: Option<u64>,
+    ) -> Result<Self, VKMLError> {
+        let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
+            VKMLError::OnnxImporterError(format!(
+                "Failed to load ONNX model from '{}': {}",
+                onnx_path, e
+            ))
+        })?;
+
+        let tensor_graph = OnnxParser::parse_onnx_model(&onnx_model)?;
+
+        Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, cpu_memory_limit_bytes)
+    }
+
+    pub fn new_from_tensor_graph_with(
+        tensor_graph: TensorGraph,
+        thread_pool: Arc<ZeroPool>,
+        gpus: Vec<GPU>,
+        cpu_memory_limit_bytes: Option<u64>,
+    ) -> Result<Self, VKMLError> {
+        let cpu = CPUCompute::new(cpu_memory_limit_bytes, thread_pool.clone());
+
+        // TODO: Implement one type of model representation.
+        // Placeholder minimal model until graph-only mode is supported
+        let model = GraphModel::new(1);
+
+        let mut manager = Self {
+            gpus,
+            cpu,
+            thread_pool,
+            model,
+            tensor_graph,
+        };
+
+        let total_memory = manager.tensor_graph.calculate_memory_requirements();
+        let total_available: u64 = manager
+            .gpus
+            .iter()
+            .map(|gpu| gpu.available_memory())
+            .sum::<u64>()
+            + manager.cpu.memory_tracking.get_available();
+
+        if total_memory > total_available {
+            return Err(VKMLError::Generic(format!(
+                "Model requires {} bytes but only {} available",
+                total_memory, total_available
+            )));
+        }
+
+        manager.allocate_tensors()?;
         Ok(manager)
     }
 
