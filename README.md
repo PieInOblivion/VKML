@@ -100,4 +100,5 @@ The proof of concept goal for this project will be met when we are able to bench
 ### Related Projects
 * [Burn](https://github.com/tracel-ai/burn)
 * [Candle](https://github.com/huggingface/candle)
+* [tinygrad](https://github.com/tinygrad/tinygrad)
 * [AdaptiveCpp](https://adaptivecpp.github.io/AdaptiveCpp/)
