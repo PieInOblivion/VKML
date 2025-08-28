@@ -1,6 +1,6 @@
 use rand::distr::{Distribution, Uniform};
 use std::f32::consts::PI;
-use zero_pool::{ZeroPool, zp_define_task_fn, zp_task_params};
+use zero_pool::{ZeroPool, zp_define_task_fn};
 
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -90,14 +90,14 @@ impl WeightInit {
                 let start = chunk_idx * chunk_size;
                 let end = (start + chunk_size).min(total_elements);
 
-                WeightInitChunkParams::new(
-                    self.clone(),
-                    start,
-                    end,
-                    result.as_mut_ptr(),
+                WeightInitChunkParams {
+                    init_type: self.clone(),
+                    start_idx: start,
+                    end_idx: end,
+                    data_ptr: result.as_mut_ptr(),
                     fan_in,
                     fan_out,
-                )
+                }
             })
             .collect();
 
@@ -268,15 +268,13 @@ impl WeightInit {
     }
 }
 
-zp_task_params! {
-    WeightInitChunkParams {
-        init_type: WeightInit,
-        start_idx: usize,
-        end_idx: usize,
-        data_ptr: *mut f32,
-        fan_in: usize,
-        fan_out: usize,
-    }
+struct WeightInitChunkParams {
+    init_type: WeightInit,
+    start_idx: usize,
+    end_idx: usize,
+    data_ptr: *mut f32,
+    fan_in: usize,
+    fan_out: usize,
 }
 
 zp_define_task_fn!(weight_init_chunk_task, WeightInitChunkParams, |params| {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::importers::onnx_parser::OnnxParser;
 use onnx_extractor::OnnxModel;
-use zero_pool::ZeroPool;
+use zero_pool::{ZeroPool, zp_define_task_fn};
 
 use crate::dataloader::data_batch::DataBatch;
 use crate::dataloader::data_type::DataType;
@@ -631,12 +631,12 @@ impl ComputeManager {
                         let instruction_indices: Vec<usize> =
                             per_device_ops.iter().map(|op_id| *op_id).collect();
 
-                        let task = GpuBatchOperationsParams::new(
-                            per_device_ops,
+                        let task = GpuBatchOperationsParams {
+                            operations: per_device_ops,
                             instruction_indices,
-                            Arc::new(shared_gpu),
-                            Arc::new(shared_tensor_graph.clone()),
-                        );
+                            shared_gpu: Arc::new(shared_gpu),
+                            shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
+                        };
 
                         futures.push(
                             self.thread_pool
@@ -644,12 +644,11 @@ impl ComputeManager {
                         );
                     }
                     DeviceLocation::CPU => {
-                        for &op_id in &per_device_ops {
-                            let task = SingleCpuOperationParams::new(
-                                op_id,
-                                op_id,
-                                Arc::new(shared_tensor_graph.clone()),
-                            );
+                        for &operation_id in &per_device_ops {
+                            let task = SingleCpuOperationParams {
+                                operation_id,
+                                shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
+                            };
                             futures.push(
                                 self.thread_pool
                                     .submit_task(single_cpu_operation_task, &task),
@@ -774,23 +773,16 @@ impl Drop for ComputeManager {
     }
 }
 
-use zero_pool::{zp_define_task_fn, zp_task_params};
-
-zp_task_params! {
-    GpuBatchOperationsParams {
-        operations: Vec<OperationId>,
-        instruction_indices: Vec<usize>,
-        shared_gpu: Arc<SharedGPU>,
-        shared_tensor_graph: Arc<SharedTensorGraph>,
-    }
+struct GpuBatchOperationsParams {
+    operations: Vec<OperationId>,
+    instruction_indices: Vec<usize>,
+    shared_gpu: Arc<SharedGPU>,
+    shared_tensor_graph: Arc<SharedTensorGraph>,
 }
 
-zp_task_params! {
-    SingleCpuOperationParams {
-        operation_id: OperationId,
-        instruction_idx: usize,
-        shared_tensor_graph: Arc<SharedTensorGraph>,
-    }
+struct SingleCpuOperationParams {
+    operation_id: OperationId,
+    shared_tensor_graph: Arc<SharedTensorGraph>,
 }
 
 zp_define_task_fn!(
@@ -865,12 +857,12 @@ zp_define_task_fn!(
         unsafe {
             let tensor_graph_ptr = params.shared_tensor_graph.tensor_graph as *mut TensorGraph;
 
-            if params.instruction_idx >= (*tensor_graph_ptr).operations.len() {
-                eprintln!("Invalid instruction index: {}", params.instruction_idx);
+            if params.operation_id >= (*tensor_graph_ptr).operations.len() {
+                eprintln!("Invalid instruction index: {}", params.operation_id);
                 return;
             }
 
-            let instruction_ptr = &(&(*tensor_graph_ptr).operations)[params.instruction_idx]
+            let instruction_ptr = &(&(*tensor_graph_ptr).operations)[params.operation_id]
                 as *const Box<dyn Instruction>;
 
             (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr);

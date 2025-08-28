@@ -1,7 +1,7 @@
 use super::{data_batch::DataBatch, dataloader::DataLoader};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use zero_pool::{TaskFuture, zp_define_task_fn, zp_task_params};
+use zero_pool::{TaskFuture, zp_define_task_fn};
 
 /// A pending batch with its future and the allocated data
 struct PendingBatch {
@@ -84,12 +84,12 @@ impl<T: DataLoader> ParallelDataIterator<T> {
             .iter()
             .enumerate()
             .map(|(i, &index)| {
-                LoadItemTask::new(
-                    Arc::as_ptr(&self.dataloader) as *const dyn DataLoader,
+                LoadItemTask {
+                    dataloader: Arc::as_ptr(&self.dataloader) as *const dyn DataLoader,
                     index,
-                    batch.as_mut_ptr(),
-                    i * bytes_per_item,
-                )
+                    dest_ptr: batch.as_mut_ptr(),
+                    offset: i * bytes_per_item,
+                };
             })
             .collect();
 
@@ -127,13 +127,11 @@ impl<T: DataLoader> Iterator for ParallelDataIterator<T> {
 }
 
 // Zero-pool task for loading individual items
-zp_task_params! {
-    LoadItemTask {
-        dataloader: *const dyn DataLoader,
-        index: usize,
-        dest_ptr: *mut u8,
-        offset: usize,
-    }
+struct LoadItemTask {
+    dataloader: *const dyn DataLoader,
+    index: usize,
+    dest_ptr: *mut u8,
+    offset: usize,
 }
 
 zp_define_task_fn!(load_item_task, LoadItemTask, |params| {

@@ -20,9 +20,9 @@ impl OnnxParser {
 
         // Create tensors from ONNX model
         for (name, onnx_tensor) in &onnx_model.tensors {
-            let tensor_desc = Self::convert_onnx_tensor_to_desc(onnx_tensor)?;
+            let tensor_desc = Self::convert_onnx_tensor_to_desc_f32(onnx_tensor)?;
             let compute_tensor = if onnx_tensor.has_data() {
-                let data = Self::extract_tensor_data(onnx_tensor)?;
+                let data = Self::extract_tensor_data_f32(onnx_tensor)?;
                 ComputeTensor::new_cpu(tensor_desc, data)
             } else {
                 ComputeTensor::new_unallocated(tensor_desc)
@@ -66,10 +66,12 @@ impl OnnxParser {
         })
     }
 
-    fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensorInfo) -> Result<TensorDesc, VKMLError> {
+    fn convert_onnx_tensor_to_desc_f32(
+        onnx_tensor: &OnnxTensorInfo,
+    ) -> Result<TensorDesc, VKMLError> {
         // Currently only Float32 tensors are supported end-to-end
         let data_type = match &onnx_tensor.data_type {
-            onnx_extractor::DataType::Float32 => VkmlDataType::F32,
+            onnx_extractor::DataType::Float => VkmlDataType::F32,
             unsupported => {
                 return Err(VKMLError::OnnxImporterError(format!(
                     "ONNX data type {:?} is not supported (expected Float32)",
@@ -111,9 +113,9 @@ impl OnnxParser {
         Ok(TensorDesc::new_with_type(dims, data_type))
     }
 
-    fn extract_tensor_data(onnx_tensor: &OnnxTensorInfo) -> Result<Vec<f32>, VKMLError> {
+    fn extract_tensor_data_f32(onnx_tensor: &OnnxTensorInfo) -> Result<Vec<f32>, VKMLError> {
         match &onnx_tensor.data_type {
-            onnx_extractor::DataType::Float32 => onnx_tensor.get_f32_data().map_err(|e| {
+            onnx_extractor::DataType::Float => onnx_tensor.get_data().map_err(|e| {
                 VKMLError::OnnxImporterError(format!(
                     "Failed to extract f32 data from tensor '{}': {}",
                     onnx_tensor.name, e
