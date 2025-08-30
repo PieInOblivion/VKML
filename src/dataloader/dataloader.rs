@@ -1,4 +1,5 @@
-use crate::dataloader::{config::DataLoaderConfig, data_type::DataType};
+use onnx_extractor::DataType;
+use crate::dataloader::config::DataLoaderConfig;
 
 pub trait DataLoader {
     // Functions without default implementations
@@ -26,7 +27,7 @@ pub trait DataLoader {
 
     /// The format of data stored in a batch
     fn batch_data_type(&self) -> DataType {
-        DataType::F32
+        DataType::Float
     }
 
     /// Get the configured batch size

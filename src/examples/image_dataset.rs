@@ -4,24 +4,24 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use vkml::dataloader::{
     config::DataLoaderConfig,
-    data_type::DataType,
     dataloader::DataLoader,
     error::VKMLError,
     info::print_dataset_info,
     par_iter::DataLoaderParIter,
 };
+use onnx_extractor::DataType;
 use zero_pool::ZeroPool;
 
 impl From<ColorType> for DataType {
     fn from(color_type: ColorType) -> Self {
         match color_type {
             ColorType::L8 | ColorType::La8 | ColorType::Rgb8 | ColorType::Rgba8 => {
-                DataType::U8
+                DataType::Uint8
             }
             ColorType::L16 | ColorType::La16 | ColorType::Rgb16 | ColorType::Rgba16 => {
-                DataType::U16
+                DataType::Uint16
             }
-            ColorType::Rgb32F | ColorType::Rgba32F => DataType::F32,
+            ColorType::Rgb32F | ColorType::Rgba32F => DataType::Float,
             _ => panic!("Unsupported color type"),
         }
     }
@@ -75,7 +75,7 @@ impl ImagesDirDataLoader {
             image_bytes_per_pixel: 0,
             image_bytes_per_image: 0,
             image_color_type: ColorType::Rgb32F,
-            image_data_type: DataType::F32,
+            image_data_type: DataType::Float,
             config,
             thread_pool,
         };
@@ -256,7 +256,7 @@ fn main() {
         );
         
         // Example: Convert to f32 if needed for model
-        if batch.data_type() != DataType::F32 {
+    if batch.data_type() != DataType::Float {
             let f32_data = batch.to_f32();
             println!("  Converted {} elements to f32", f32_data.len());
         }

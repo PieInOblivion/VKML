@@ -5,8 +5,8 @@ use crate::importers::onnx_parser::OnnxParser;
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
 
+use onnx_extractor::DataType;
 use crate::dataloader::data_batch::DataBatch;
-use crate::dataloader::data_type::DataType;
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
 use crate::tensor::compute_tensor::ComputeTensor;
@@ -587,7 +587,7 @@ impl ComputeManager {
 
             // Create DataBatch with tensor's data type
             // No conversion - just packaging the tensor's data with its type
-            let mut batch = DataBatch::from_bytes(bytes, DataType::F32);
+            let mut batch = DataBatch::from_bytes(bytes, DataType::Float);
 
             // If tensor has a different type, convert the batch to match
             // (temporary until get_data() returns native type)

@@ -1,4 +1,4 @@
-use crate::dataloader::data_type::DataType;
+use onnx_extractor::DataType;
 
 #[derive(Clone, Debug)]
 pub struct TensorDesc {
@@ -8,7 +8,7 @@ pub struct TensorDesc {
 
 impl TensorDesc {
     pub fn new(dims: Vec<usize>) -> Self {
-        Self::new_with_type(dims, DataType::F32)
+        Self::new_with_type(dims, DataType::Float)
     }
 
     pub fn new_with_type(dims: Vec<usize>, data_type: DataType) -> Self {

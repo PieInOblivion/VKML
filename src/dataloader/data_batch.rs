@@ -1,4 +1,4 @@
-use crate::dataloader::data_type::DataType;
+use onnx_extractor::DataType;
 
 pub struct DataBatch {
     data: Box<[u8]>,
@@ -41,22 +41,26 @@ impl DataBatch {
     }
 
     pub fn num_elements(&self) -> usize {
-        self.data.len() / self.data_type.bytes_per_element()
+        self.data.len() / self.data_type.size_in_bytes().unwrap_or(4)
     }
 
     pub fn to_f32(&self) -> Vec<f32> {
         match self.data_type {
-            DataType::U8 => self.data.iter().map(|&x| x as f32).collect(),
-            DataType::U16 => self
+            DataType::Uint8 => self.data.iter().map(|&x| x as f32).collect(),
+            DataType::Uint16 => self
                 .data
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) as f32)
                 .collect(),
-            DataType::F32 => self
+            DataType::Float => self
                 .data
                 .chunks_exact(4)
                 .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect(),
+            other => panic!(
+                "Conversion from data type {:?} to f32 not implemented",
+                other
+            ),
         }
     }
 
@@ -66,8 +70,8 @@ impl DataBatch {
         }
 
         let converted_bytes = match (self.data_type, target_type) {
-            // To F32 conversions
-            (DataType::U8, DataType::F32) => {
+            // To Float conversions
+            (DataType::Uint8, DataType::Float) => {
                 let mut result = Vec::with_capacity(self.data.len() * 4);
                 for &byte in self.data.iter() {
                     let f = byte as f32;
@@ -75,7 +79,7 @@ impl DataBatch {
                 }
                 result
             }
-            (DataType::U16, DataType::F32) => {
+            (DataType::Uint16, DataType::Float) => {
                 let mut result = Vec::with_capacity((self.data.len() / 2) * 4);
                 for chunk in self.data.chunks_exact(2) {
                     let u = u16::from_le_bytes([chunk[0], chunk[1]]);
@@ -84,13 +88,10 @@ impl DataBatch {
                 }
                 result
             }
-
-            _ => {
-                panic!(
-                    "Conversion from {:?} to {:?} not implemented",
-                    self.data_type, target_type
-                );
-            }
+            _ => panic!(
+                "Conversion from {:?} to {:?} not implemented",
+                self.data_type, target_type
+            ),
         };
 
         self.data = converted_bytes.into_boxed_slice();

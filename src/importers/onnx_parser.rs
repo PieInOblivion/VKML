@@ -1,11 +1,12 @@
 use crate::{
-    dataloader::{data_type::DataType as VkmlDataType, error::VKMLError},
+    dataloader::error::VKMLError,
     instruction::{factory::Instructions, instruction::Instruction},
     tensor::{compute_tensor::ComputeTensor, tensor_desc::TensorDesc},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use onnx_extractor::{
-    AttributeValue, OnnxModel, OperationInfo as OnnxOperationInfo, TensorInfo as OnnxTensorInfo,
+    AttributeValue, DataType, OnnxModel, OperationInfo as OnnxOperationInfo,
+    TensorInfo as OnnxTensorInfo,
 };
 use std::collections::HashMap;
 
@@ -71,7 +72,7 @@ impl OnnxParser {
     ) -> Result<TensorDesc, VKMLError> {
         // Currently only Float32 tensors are supported end-to-end
         let data_type = match &onnx_tensor.data_type {
-            onnx_extractor::DataType::Float => VkmlDataType::F32,
+            DataType::Float => DataType::Float,
             unsupported => {
                 return Err(VKMLError::OnnxImporterError(format!(
                     "ONNX data type {:?} is not supported (expected Float32)",
@@ -115,7 +116,7 @@ impl OnnxParser {
 
     fn extract_tensor_data_f32(onnx_tensor: &OnnxTensorInfo) -> Result<Vec<f32>, VKMLError> {
         match &onnx_tensor.data_type {
-            onnx_extractor::DataType::Float => onnx_tensor.get_data().map_err(|e| {
+            DataType::Float => onnx_tensor.get_data().map_err(|e| {
                 VKMLError::OnnxImporterError(format!(
                     "Failed to extract f32 data from tensor '{}': {}",
                     onnx_tensor.name, e
