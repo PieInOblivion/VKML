@@ -1,0 +1,31 @@
+Fully lock free graph executor, with a non-growable strict thread pool.
+So no blocking allowed, even for nodes/ops that benefit from cpu task parallelism.
+
+Each node contains its operation, atomic dependency counter, and a list/reference/index to its dependents.
+When a node completes, it fetch_sub AcqRel each atomic dependency counter of its dependents, if = 1, submit its operation/task to the thread pool.
+
+CPU tasks that submit seperate tasks to the threadpool, each task contains the completion logic (decrement dependants counter, submit etc etc.).
+Because of zero-pools fixed thread count, we can create blocking tasks.
+Each cpu operation submits each subtask with this logic:
+    - Do task
+    - decrement atomic counter shared between this sub-task, Relaxed ordering is fine
+    - the sub-task that got fetch_sub = 1, does the completion logic (decrement dependants counter, submit etc etc.)
+
+This can also work with the gpu side, allowing more gpu> cpu has cores work to be going at once.
+Using vkGetSemaphoreCounterValue, we can submit to gpu, then submit a seperate task to the back of the thread pool that checks the semaphore, if VK_NOT_READY, wait x ms, maybe 5ms, then add the task back to the queue.
+
+Dependency counters should include in-place operations/instructions. for every destination tensor that exists in it's source list, increase the counter of its dependants by one extra.
+Because khans will likely see:
+    Layer x, deps y and z.
+With the y being an add_inplace to z, so y should go first. Instead increase z by one more for each?
+Khans should properly work out in place operations though so I don't think this extra thinking is required.
+
+The final dependency in the graph will be the thread waker for the main thread that scheduled the graph execution, forward().
+This however requires the last task to somehow have a copy the taskfuture and have it called.
+
+Three ways to have the graph represented.
+Structs with atomic ptr to the next.
+Structs with usize indexs all in a vec<nodes>
+All individual vecs, vec<atomicusize> for dependency counting, vec<usize> for listing dependants, vec<ops> for the operation.
+
+To signal the graph finishing, main wakup might need to be an actual operation/instruction, taking a reference to taskfutre, and a dependency on all final leaf nodes.
