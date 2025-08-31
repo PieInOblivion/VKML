@@ -560,7 +560,7 @@ impl ComputeManager {
             }
 
             // Get the data as f32 vector for tensor operations
-            let data = batch.to_f32();
+            let data = batch.as_bytes();
 
             self.tensor_graph.tensors[tensor_id].data.update_data(data);
         }

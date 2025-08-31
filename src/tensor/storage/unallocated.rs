@@ -15,11 +15,11 @@ impl TensorStorageOps for UnallocatedTensorStorage {
         panic!("Cannot write to unallocated tensor")
     }
 
-    fn get_data(&self) -> Vec<f32> {
+    fn get_data(&self) -> Vec<u8> {
         panic!("Cannot read from unallocated tensor")
     }
 
-    fn update_data(&self, _data: Vec<f32>) {
+    fn update_data(&self, _data: Vec<u8>) {
         panic!("Cannot update unallocated tensor")
     }
 
@@ -44,7 +44,7 @@ impl TensorStorageOps for UnallocatedTensorStorage {
 pub struct UnallocatedGuard;
 
 impl Deref for UnallocatedGuard {
-    type Target = [f32];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         unreachable!("UnallocatedGuard should never be dereferenced")

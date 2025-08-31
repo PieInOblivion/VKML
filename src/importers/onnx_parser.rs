@@ -23,8 +23,7 @@ impl OnnxParser {
         for (name, onnx_tensor) in &onnx_model.tensors {
             let tensor_desc = Self::convert_onnx_tensor_to_desc_f32(onnx_tensor)?;
             let compute_tensor = if onnx_tensor.has_data() {
-                let data = Self::extract_tensor_data_f32(onnx_tensor)?;
-                ComputeTensor::new_cpu(tensor_desc, data)
+                ComputeTensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
             } else {
                 ComputeTensor::new_unallocated(tensor_desc)
             };
@@ -112,21 +111,6 @@ impl OnnxParser {
         }
 
         Ok(TensorDesc::new_with_type(dims, data_type))
-    }
-
-    fn extract_tensor_data_f32(onnx_tensor: &OnnxTensorInfo) -> Result<Vec<f32>, VKMLError> {
-        match &onnx_tensor.data_type {
-            DataType::Float => onnx_tensor.get_data().map_err(|e| {
-                VKMLError::OnnxImporterError(format!(
-                    "Failed to extract f32 data from tensor '{}': {}",
-                    onnx_tensor.name, e
-                ))
-            }),
-            unsupported => Err(VKMLError::OnnxImporterError(format!(
-                "Tensor data extraction for {:?} not implemented",
-                unsupported
-            ))),
-        }
     }
 
     fn convert_onnx_operation_to_instruction(

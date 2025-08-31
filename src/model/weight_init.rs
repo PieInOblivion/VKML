@@ -18,6 +18,7 @@ pub enum WeightInit {
     LeCun,
     UniformRandom { min: f32, max: f32 },
     Constant(f32),
+    Raw(Box<u8>)
 }
 
 impl WeightInit {

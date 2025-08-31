@@ -35,24 +35,21 @@ impl TensorStorageOps for GpuTensorStorage {
             .memory
             .read_memory()
             .expect_msg("Failed to read GPU memory");
-        GpuWriteGuard {
-            data,
-            memory: &self.memory,
-        }
+        GpuWriteGuard { data, memory: &self.memory }
     }
 
-    fn get_data(&self) -> Vec<f32> {
+    fn get_data(&self) -> Vec<u8> {
         self.memory
             .read_memory()
             .expect_msg("Failed to read GPU memory")
     }
 
-    fn update_data(&self, data: Vec<f32>) {
-        let expected_elements = (self.memory.size as usize) / std::mem::size_of::<f32>();
-        if data.len() != expected_elements {
+    fn update_data(&self, data: Vec<u8>) {
+        let expected_bytes = self.memory.size as usize;
+        if data.len() != expected_bytes {
             panic!(
-                "Input data size mismatch: expected {} elements, got {}",
-                expected_elements,
+                "Input data size mismatch: expected {} bytes, got {}",
+                expected_bytes,
                 data.len()
             );
         }
@@ -78,13 +75,13 @@ impl TensorStorageOps for GpuTensorStorage {
     }
 }
 
-// Read guard for GPU - just holds the copied data
+// Read guard for GPU - holds the copied bytes
 pub struct GpuReadGuard {
-    data: Vec<f32>,
+    data: Vec<u8>,
 }
 
 impl Deref for GpuReadGuard {
-    type Target = [f32];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         &self.data
@@ -93,12 +90,12 @@ impl Deref for GpuReadGuard {
 
 // Write guard for GPU - copies back to GPU on drop
 pub struct GpuWriteGuard<'a> {
-    data: Vec<f32>,
+    data: Vec<u8>,
     memory: &'a GPUMemory,
 }
 
 impl<'a> Deref for GpuWriteGuard<'a> {
-    type Target = [f32];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         &self.data

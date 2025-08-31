@@ -24,9 +24,10 @@ impl TensorDesc {
         self.dims.iter().product()
     }
 
-    // assuming f32 elements
+    // Size in bytes for the tensor given its DataType
     pub fn size_in_bytes(&self) -> usize {
-        self.num_elements() * std::mem::size_of::<f32>()
+        let elem_size = self.data_type.size_in_bytes().unwrap();
+        self.num_elements() * elem_size
     }
 
     // Get dimensions vector

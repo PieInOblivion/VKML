@@ -7,7 +7,7 @@ pub struct ComputeTensor {
 }
 
 impl ComputeTensor {
-    pub fn new_cpu(desc: TensorDesc, data: Vec<f32>) -> Self {
+    pub fn new_cpu(desc: TensorDesc, data: Vec<u8>) -> Self {
         Self {
             desc,
             data: TensorStorage::new_cpu(data),
@@ -18,7 +18,7 @@ impl ComputeTensor {
         let num_elements = desc.num_elements();
         Self {
             desc,
-            data: TensorStorage::new_cpu_zeros(num_elements),
+            data: TensorStorage::new_cpu(vec![0; num_elements * std::mem::size_of::<f32>()]),
         }
     }
 

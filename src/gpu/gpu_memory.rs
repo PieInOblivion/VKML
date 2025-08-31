@@ -27,14 +27,18 @@ impl GPUMemory {
         }
     }
 
-    pub fn copy_into(&self, data: &[f32]) -> Result<(), Box<dyn std::error::Error>> {
-        let data_size = (data.len() * std::mem::size_of::<f32>()) as vk::DeviceSize;
+    /// Copy raw bytes into GPU memory.
+    pub fn copy_into(&self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let data_size = data.len() as vk::DeviceSize;
+
+        if data_size > self.size {
+            return Err(format!("Data size {} exceeds GPU buffer size {}", data_size, self.size).into());
+        }
 
         unsafe {
-            let data_ptr =
-                self.device
-                    .map_memory(self.memory, 0, data_size, vk::MemoryMapFlags::empty())?
-                    as *mut f32;
+            let data_ptr = self
+                .device
+                .map_memory(self.memory, 0, data_size, vk::MemoryMapFlags::empty())? as *mut u8;
 
             std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
 
@@ -44,17 +48,16 @@ impl GPUMemory {
         Ok(())
     }
 
-    pub fn read_memory(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
-        let num_floats = (self.size as usize) / std::mem::size_of::<f32>();
-        let mut output_data = vec![0f32; num_floats];
+    /// Read raw bytes from GPU memory.
+    pub fn read_memory(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut output_data = vec![0u8; self.size as usize];
 
         unsafe {
-            let data_ptr =
-                self.device
-                    .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())?
-                    as *const f32;
+            let data_ptr = self
+                .device
+                .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())? as *const u8;
 
-            std::ptr::copy_nonoverlapping(data_ptr, output_data.as_mut_ptr(), num_floats);
+            std::ptr::copy_nonoverlapping(data_ptr, output_data.as_mut_ptr(), output_data.len());
 
             self.device.unmap_memory(self.memory);
         }

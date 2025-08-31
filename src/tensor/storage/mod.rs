@@ -32,7 +32,7 @@ pub enum WriteGuard<'a> {
 }
 
 impl<'a> Deref for ReadGuard<'a> {
-    type Target = [f32];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         match self {
@@ -44,7 +44,7 @@ impl<'a> Deref for ReadGuard<'a> {
 }
 
 impl<'a> Deref for WriteGuard<'a> {
-    type Target = [f32];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         match self {
@@ -66,12 +66,8 @@ impl<'a> DerefMut for WriteGuard<'a> {
 }
 
 impl TensorStorage {
-    pub fn new_cpu(data: Vec<f32>) -> Self {
-        TensorStorage::CPU(CpuTensorStorage::new(data))
-    }
-
-    pub fn new_cpu_zeros(size: usize) -> Self {
-        TensorStorage::CPU(CpuTensorStorage::with_zeros(size))
+    pub fn new_cpu(bytes: Vec<u8>) -> Self {
+        TensorStorage::CPU(CpuTensorStorage::new(bytes))
     }
 
     pub fn new_gpu(gpu_idx: usize, memory: crate::gpu::gpu_memory::GPUMemory) -> Self {
@@ -100,8 +96,8 @@ impl TensorStorage {
         }
     }
 
-    /// Read all data from storage as f32 vector (full copy)
-    pub fn get_data(&self) -> Vec<f32> {
+    /// Read all data from storage as raw bytes (full copy)
+    pub fn get_data(&self) -> Vec<u8> {
         match self {
             TensorStorage::CPU(storage) => storage.get_data(),
             TensorStorage::GPU(storage) => storage.get_data(),
@@ -109,8 +105,8 @@ impl TensorStorage {
         }
     }
 
-    /// Update storage with new data - panics on size mismatch or failure
-    pub fn update_data(&self, data: Vec<f32>) {
+    /// Update storage with new raw bytes - panics on size mismatch or failure
+    pub fn update_data(&self, data: Vec<u8>) {
         match self {
             TensorStorage::CPU(storage) => storage.update_data(data),
             TensorStorage::GPU(storage) => storage.update_data(data),

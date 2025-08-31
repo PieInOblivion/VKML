@@ -1,5 +1,5 @@
-use onnx_extractor::DataType;
 use crate::dataloader::config::DataLoaderConfig;
+use onnx_extractor::DataType;
 
 pub trait DataLoader {
     // Functions without default implementations
