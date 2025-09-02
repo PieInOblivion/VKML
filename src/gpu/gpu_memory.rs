@@ -32,13 +32,18 @@ impl GPUMemory {
         let data_size = data.len() as vk::DeviceSize;
 
         if data_size > self.size {
-            return Err(format!("Data size {} exceeds GPU buffer size {}", data_size, self.size).into());
+            return Err(format!(
+                "Data size {} exceeds GPU buffer size {}",
+                data_size, self.size
+            )
+            .into());
         }
 
         unsafe {
-            let data_ptr = self
-                .device
-                .map_memory(self.memory, 0, data_size, vk::MemoryMapFlags::empty())? as *mut u8;
+            let data_ptr =
+                self.device
+                    .map_memory(self.memory, 0, data_size, vk::MemoryMapFlags::empty())?
+                    as *mut u8;
 
             std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
 
@@ -53,9 +58,10 @@ impl GPUMemory {
         let mut output_data = vec![0u8; self.size as usize];
 
         unsafe {
-            let data_ptr = self
-                .device
-                .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())? as *const u8;
+            let data_ptr =
+                self.device
+                    .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())?
+                    as *const u8;
 
             std::ptr::copy_nonoverlapping(data_ptr, output_data.as_mut_ptr(), output_data.len());
 

@@ -55,9 +55,9 @@ impl Instruction for TransferToDeviceInstruction {
         let src_tensor = tensor_graph.tensors.get(self.src).unwrap();
         let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
 
-    // Get the raw bytes from the source tensor and write them to destination
-    let data = src_tensor.data.get_data();
-    dst_tensor.data.update_data(data);
+        // Get the raw bytes from the source tensor and write them to destination
+        let data = src_tensor.data.get_data();
+        dst_tensor.data.update_data(data);
 
         // No need for a command buffer for data transfer
         Ok(())
@@ -68,7 +68,7 @@ impl Instruction for TransferToDeviceInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
-    let data = tensor_graph.tensors[self.src].data.get_data();
-    tensor_graph.tensors[self.dst].data.update_data(data);
+        let data = tensor_graph.tensors[self.src].data.get_data();
+        tensor_graph.tensors[self.dst].data.update_data(data);
     }
 }

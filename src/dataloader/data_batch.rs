@@ -5,6 +5,12 @@ pub struct DataBatch {
     data_type: DataType,
 }
 
+impl Clone for DataBatch {
+    fn clone(&self) -> Self {
+        DataBatch::from_bytes(self.data.to_vec(), self.data_type)
+    }
+}
+
 impl DataBatch {
     pub fn new(size: usize, data_type: DataType) -> Self {
         Self {

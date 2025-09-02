@@ -6,6 +6,7 @@ use crate::{
     tensor::storage::TensorStorageOps,
     tensor_graph::tensor_graph::TensorId,
 };
+use onnx_extractor::DataType;
 
 pub fn print_model_stats(cm: &ComputeManager) {
     let mut total_memory = 0u64;
@@ -305,6 +306,58 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         }
     };
 
+    // Helper: convert raw bytes to f32 vector based on DataType
+    fn bytes_to_f32_vec(raw: &[u8], dtype: DataType) -> Option<Vec<f32>> {
+        match dtype {
+            DataType::Uint8 => Some(raw.iter().map(|&b| b as f32).collect()),
+            DataType::Uint16 => {
+                if raw.len() % 2 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32)
+                        .collect(),
+                )
+            }
+            DataType::Int8 => Some(raw.iter().map(|&b| (b as i8) as f32).collect()),
+            DataType::Int16 => {
+                if raw.len() % 2 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(2)
+                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32)
+                        .collect(),
+                )
+            }
+            DataType::Float => {
+                if raw.len() % 4 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect(),
+                )
+            }
+            DataType::Double => {
+                if raw.len() % 8 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(8)
+                        .map(|c| {
+                            f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
+                                as f32
+                        })
+                        .collect(),
+                )
+            }
+            _ => None,
+        }
+    }
+
     // Get all tensors belonging to this layer
     let tensor_ids: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
         .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
@@ -312,8 +365,9 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
 
     for tensor_id in &tensor_ids {
         let tensor = &cm.tensor_graph.tensors[*tensor_id];
-        let data = tensor.data.get_data();
+        let raw = tensor.data.read_data();
         let gpu_idx = tensor.data.gpu_idx();
+        let dtype = tensor.desc.data_type();
 
         println!("\nTensor {}:", tensor_id);
         println!(
@@ -326,11 +380,28 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         println!("  Shape: {:?}", tensor.desc.to_dims());
         println!(
             "  Size in memory: {}",
-            cm.format_memory_mb((data.len() * std::mem::size_of::<f32>()) as u64)
+            cm.format_memory_mb(tensor.desc.size_in_bytes() as u64)
         );
-        println!("  Values: {}", format_array(&data, 10));
 
-        print_tensor_stats(&data);
+        if let Some(values) = bytes_to_f32_vec(&raw, dtype) {
+            println!("  Values: {}", format_array(&values, 10));
+            print_tensor_stats(&values);
+        } else {
+            // Fallback: show raw bytes preview in hex
+            let preview_len = raw.len().min(32);
+            let preview = raw
+                .iter()
+                .take(preview_len)
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!(
+                "  Values: <raw bytes, dtype={:?}, len={}> {}",
+                dtype,
+                raw.len(),
+                preview
+            );
+        }
     }
 
     println!("\nLayer Output Tensors:");

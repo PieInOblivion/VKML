@@ -35,7 +35,10 @@ impl TensorStorageOps for GpuTensorStorage {
             .memory
             .read_memory()
             .expect_msg("Failed to read GPU memory");
-        GpuWriteGuard { data, memory: &self.memory }
+        GpuWriteGuard {
+            data,
+            memory: &self.memory,
+        }
     }
 
     fn get_data(&self) -> Vec<u8> {

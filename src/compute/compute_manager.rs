@@ -5,7 +5,6 @@ use crate::importers::onnx_parser::OnnxParser;
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
 
-use onnx_extractor::DataType;
 use crate::dataloader::data_batch::DataBatch;
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
@@ -19,6 +18,7 @@ use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId, weight_init::WeightInit},
     tensor::{storage::TensorStorage, tensor_desc::TensorDesc},
 };
+use onnx_extractor::DataType;
 use vulkanalia::vk::DeviceV1_0;
 
 use super::cpu_compute::CPUCompute;
@@ -511,13 +511,14 @@ impl ComputeManager {
                 };
 
                 self.cpu.memory_tracking.allocate(size_in_bytes);
-                Ok(TensorStorage::new_cpu(initial_data))
+                Ok(TensorStorage::new_cpu(initial_data.as_bytes().to_vec()))
             }
             DeviceLocation::GPU(idx) => {
                 let gpu = &self.gpus[idx];
                 gpu.allocate_memory(size_in_bytes);
 
                 // TODO: weight init probably shouldn't do the gpu memory allocation itself. it's fine enough for now
+                // TODO: generalise the pattern. Gpu allocates blank memory, then run instruction/shader, rather than both in one
                 let gpu_memory = weight_init
                     .init_gpu(desc, gpu)
                     .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
@@ -562,7 +563,9 @@ impl ComputeManager {
             // Get the data as f32 vector for tensor operations
             let data = batch.as_bytes();
 
-            self.tensor_graph.tensors[tensor_id].data.update_data(data);
+            self.tensor_graph.tensors[tensor_id]
+                .data
+                .update_data(data.to_vec());
         }
 
         // Execute the model

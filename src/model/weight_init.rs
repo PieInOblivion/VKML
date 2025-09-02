@@ -5,11 +5,13 @@ use zero_pool::{ZeroPool, zp_define_task_fn};
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
+use crate::dataloader::data_batch::DataBatch;
 use crate::dataloader::error::VKMLError;
 use crate::gpu::compute_pipelines::GPUMemoryOperation;
 use crate::gpu::gpu_memory::GPUMemory;
 use crate::gpu::vk_gpu::GPU;
 use crate::tensor::tensor_desc::TensorDesc;
+use onnx_extractor::DataType;
 
 #[derive(Clone)]
 pub enum WeightInit {
@@ -18,7 +20,7 @@ pub enum WeightInit {
     LeCun,
     UniformRandom { min: f32, max: f32 },
     Constant(f32),
-    Raw(Box<u8>)
+    Load(DataBatch),
 }
 
 impl WeightInit {
@@ -34,7 +36,7 @@ impl WeightInit {
         mean + std_dev * z
     }
 
-    pub fn init(&self, shape: &TensorDesc, total_elements: usize) -> Vec<f32> {
+    pub fn init(&self, shape: &TensorDesc, total_elements: usize) -> DataBatch {
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
 
         match self {
@@ -42,36 +44,54 @@ impl WeightInit {
                 let limit = (6.0 / (fan_in + fan_out) as f32).sqrt();
                 let dist = Uniform::new(-limit, limit);
                 let mut rng = rand::rng();
-                (0..total_elements)
-                    .map(|_| dist.unwrap().sample(&mut rng))
-                    .collect()
+                let mut out = Vec::with_capacity(total_elements * 4);
+                for _ in 0..total_elements {
+                    let v: f32 = dist.unwrap().sample(&mut rng);
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                DataBatch::from_bytes(out, DataType::Float)
             }
 
             WeightInit::He => {
                 let std_dev = (2.0 / fan_in as f32).sqrt();
-                (0..total_elements)
-                    .map(|_| Self::normal_sample(0.0, std_dev))
-                    .collect()
+                let mut out = Vec::with_capacity(total_elements * 4);
+                for _ in 0..total_elements {
+                    let v = Self::normal_sample(0.0, std_dev);
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                DataBatch::from_bytes(out, DataType::Float)
             }
 
             WeightInit::LeCun => {
                 let std_dev = (1.0 / fan_in as f32).sqrt();
-                (0..total_elements)
-                    .map(|_| Self::normal_sample(0.0, std_dev))
-                    .collect()
+                let mut out = Vec::with_capacity(total_elements * 4);
+                for _ in 0..total_elements {
+                    let v = Self::normal_sample(0.0, std_dev);
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                DataBatch::from_bytes(out, DataType::Float)
             }
 
             WeightInit::UniformRandom { min, max } => {
                 let dist = Uniform::new(*min, *max);
                 let mut rng = rand::rng();
-                (0..total_elements)
-                    .map(|_| dist.unwrap().sample(&mut rng))
-                    .collect()
+                let mut out = Vec::with_capacity(total_elements * 4);
+                for _ in 0..total_elements {
+                    let v: f32 = dist.unwrap().sample(&mut rng);
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                DataBatch::from_bytes(out, DataType::Float)
             }
 
             WeightInit::Constant(value) => {
-                vec![*value; total_elements]
+                let mut out = Vec::with_capacity(total_elements * 4);
+                for _ in 0..total_elements {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                DataBatch::from_bytes(out, DataType::Float)
             }
+            // TODO: Have databatch not need cloning
+            WeightInit::Load(batch) => batch.clone(),
         }
     }
 
@@ -81,10 +101,16 @@ impl WeightInit {
         total_elements: usize,
         chunk_size: usize,
         thread_pool: &ZeroPool,
-    ) -> Vec<f32> {
-        let mut result = vec![0.0; total_elements];
+    ) -> DataBatch {
+        // TODO: Have databatch not need cloning
+        if let WeightInit::Load(batch) = self {
+            return batch.clone();
+        }
+
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
         let num_chunks = (total_elements + chunk_size - 1) / chunk_size;
+
+        let mut batch = DataBatch::new(total_elements * 4, DataType::Float);
 
         let tasks: Vec<_> = (0..num_chunks)
             .map(|chunk_idx| {
@@ -95,7 +121,7 @@ impl WeightInit {
                     init_type: self.clone(),
                     start_idx: start,
                     end_idx: end,
-                    data_ptr: result.as_mut_ptr(),
+                    data_ptr: batch.as_mut_ptr(),
                     fan_in,
                     fan_out,
                 }
@@ -105,12 +131,19 @@ impl WeightInit {
         let future = thread_pool.submit_batch_uniform(weight_init_chunk_task, &tasks);
         future.wait();
 
-        result
+        batch
     }
 
     pub fn init_gpu(&self, shape: &TensorDesc, gpu: &GPU) -> Result<GPUMemory, VKMLError> {
         let total_elements = shape.num_elements();
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
+
+        // TODO: Should be fixed after the generalised gpu weight init pattern changes
+        if let WeightInit::Load(_) = self {
+            return Err(VKMLError::VulkanLoadError(
+                "Load variant cannot be used with init_gpu".to_string(),
+            ));
+        }
 
         // allocate uninitialised GPU memory
         let gpu_buffer = gpu
@@ -142,6 +175,9 @@ impl WeightInit {
             WeightInit::Constant(value) => {
                 push_constants[4] = *value;
             }
+            WeightInit::Load(_) => {
+                // nothing to set for Load
+            }
         }
 
         let gpu_operation = match self {
@@ -150,6 +186,11 @@ impl WeightInit {
             WeightInit::LeCun => GPUMemoryOperation::InitLeCun,
             WeightInit::UniformRandom { .. } => GPUMemoryOperation::InitUniform,
             WeightInit::Constant(_) => GPUMemoryOperation::InitConstant,
+            WeightInit::Load(_) => {
+                return Err(VKMLError::VulkanLoadError(
+                    "Load variant cannot be used with init_gpu".to_string(),
+                ));
+            }
         };
 
         unsafe {
@@ -273,44 +314,70 @@ struct WeightInitChunkParams {
     init_type: WeightInit,
     start_idx: usize,
     end_idx: usize,
-    data_ptr: *mut f32,
+    // pointer to the raw u8 buffer where f32 little-endian bytes will be written
+    data_ptr: *mut u8,
     fan_in: usize,
     fan_out: usize,
 }
 
 zp_define_task_fn!(weight_init_chunk_task, WeightInitChunkParams, |params| {
-    let mut rng = rand::rng();
-
     unsafe {
         match &params.init_type {
             WeightInit::Xavier => {
                 let limit = (6.0 / (params.fan_in + params.fan_out) as f32).sqrt();
                 let dist = Uniform::new(-limit, limit);
+                let mut rng = rand::rng();
                 for i in params.start_idx..params.end_idx {
-                    *params.data_ptr.add(i) = dist.unwrap().sample(&mut rng);
+                    let v: f32 = dist.unwrap().sample(&mut rng);
+                    let bytes = v.to_le_bytes();
+                    let base = i * 4;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
                 }
             }
             WeightInit::He => {
                 let std_dev = (2.0 / params.fan_in as f32).sqrt();
                 for i in params.start_idx..params.end_idx {
-                    *params.data_ptr.add(i) = WeightInit::normal_sample(0.0, std_dev);
+                    let v = WeightInit::normal_sample(0.0, std_dev);
+                    let bytes = v.to_le_bytes();
+                    let base = i * 4;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
                 }
             }
             WeightInit::LeCun => {
                 let std_dev = (1.0 / params.fan_in as f32).sqrt();
                 for i in params.start_idx..params.end_idx {
-                    *params.data_ptr.add(i) = WeightInit::normal_sample(0.0, std_dev);
+                    let v = WeightInit::normal_sample(0.0, std_dev);
+                    let bytes = v.to_le_bytes();
+                    let base = i * 4;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
                 }
             }
             WeightInit::UniformRandom { min, max } => {
                 let dist = Uniform::new(*min, *max);
+                let mut rng = rand::rng();
                 for i in params.start_idx..params.end_idx {
-                    *params.data_ptr.add(i) = dist.unwrap().sample(&mut rng);
+                    let v: f32 = dist.unwrap().sample(&mut rng);
+                    let bytes = v.to_le_bytes();
+                    let base = i * 4;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
                 }
             }
             WeightInit::Constant(value) => {
+                let bytes = value.to_le_bytes();
                 for i in params.start_idx..params.end_idx {
-                    *params.data_ptr.add(i) = *value;
+                    let base = i * 4;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
+                }
+            }
+            WeightInit::Load(batch) => {
+                let start_byte = params.start_idx * 4;
+                let end_byte = params.end_idx * 4;
+                let src_len = batch.len();
+                let copy_end = end_byte.min(src_len);
+                if start_byte < copy_end {
+                    let src = batch.as_ptr().add(start_byte);
+                    let dst = params.data_ptr.add(start_byte);
+                    std::ptr::copy_nonoverlapping(src, dst, copy_end - start_byte);
                 }
             }
         }
