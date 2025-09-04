@@ -1,3 +1,4 @@
-pub mod compute_tensor;
-pub mod storage;
-pub mod tensor_desc;
+pub mod data;
+pub mod desc;
+pub mod device;
+pub mod tensor;

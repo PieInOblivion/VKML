@@ -2,23 +2,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::importers::onnx_parser::OnnxParser;
+use crate::tensor::tensor::{DeviceId, Tensor};
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
 
-use crate::dataloader::data_batch::DataBatch;
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
-use crate::tensor::compute_tensor::ComputeTensor;
-use crate::tensor::storage::TensorStorageOps;
 use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
     dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
     model::{graph_model::GraphModel, layer_connection::LayerId, weight_init::WeightInit},
-    tensor::{storage::TensorStorage, tensor_desc::TensorDesc},
+    tensor::desc::TensorDesc,
 };
-use onnx_extractor::DataType;
 use vulkanalia::vk::DeviceV1_0;
 
 use super::cpu_compute::CPUCompute;
@@ -413,7 +410,7 @@ impl ComputeManager {
             // Add the new tensor
             self.tensor_graph
                 .tensors
-                .push(ComputeTensor::new_unallocated(tensor_desc));
+                .push(Tensor::new_unallocated(tensor_desc));
 
             // Add the same layer ID to maintain the connection
             self.tensor_graph.tensor_to_layer.push(layer_id);
@@ -451,7 +448,7 @@ impl ComputeManager {
             }
 
             if let Some(device_location) = &tensor_locations[tensor_id] {
-                if !self.tensor_graph.tensors[tensor_id].data.is_allocated() {
+                if self.tensor_graph.tensors[tensor_id].device == DeviceId::Unallocated {
                     // Get the tensor description first
                     let tensor_desc = self.tensor_graph.tensors[tensor_id].desc.clone();
 
@@ -463,7 +460,7 @@ impl ComputeManager {
                         self.allocate_tensor(&tensor_desc, device_location, &weight_init)?;
 
                     // Update the tensor with the allocated data
-                    self.tensor_graph.tensors[tensor_id].data = tensor_data;
+                    self.tensor_graph.tensors[tensor_id] = tensor_data;
                 }
             }
         }
@@ -488,7 +485,7 @@ impl ComputeManager {
         desc: &TensorDesc,
         target_device: &DeviceLocation,
         weight_init: &WeightInit,
-    ) -> Result<TensorStorage, VKMLError> {
+    ) -> Result<Tensor, VKMLError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match *target_device {
@@ -497,6 +494,8 @@ impl ComputeManager {
                 let parallel_threshold = 10000;
                 let total_elements = desc.num_elements();
 
+                // NOTE: Make WeightInit a nested enum, like generate/load, then gen has the current types, Xavier etc
+                // I think the cpu and gpu weight inits are not the exact same, some uniform some not
                 let initial_data = {
                     if total_elements < parallel_threshold {
                         weight_init.init(desc, total_elements)
@@ -511,7 +510,7 @@ impl ComputeManager {
                 };
 
                 self.cpu.memory_tracking.allocate(size_in_bytes);
-                Ok(TensorStorage::new_cpu(initial_data.as_bytes().to_vec()))
+                Ok(Tensor::new_cpu(desc.clone(), initial_data.0))
             }
             DeviceLocation::GPU(idx) => {
                 let gpu = &self.gpus[idx];
@@ -519,16 +518,17 @@ impl ComputeManager {
 
                 // TODO: weight init probably shouldn't do the gpu memory allocation itself. it's fine enough for now
                 // TODO: generalise the pattern. Gpu allocates blank memory, then run instruction/shader, rather than both in one
+                // TODO: WeightInit Load needs different parameters
                 let gpu_memory = weight_init
                     .init_gpu(desc, gpu)
                     .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
 
-                Ok(TensorStorage::new_gpu(idx, gpu_memory))
+                Ok(Tensor::new_gpu(desc.clone(), idx, gpu_memory))
             }
         }
     }
 
-    pub fn forward(&mut self, batches: Vec<DataBatch>) -> Result<Vec<DataBatch>, VKMLError> {
+    pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<Tensor>, VKMLError> {
         // Get input tensor indices
         let input_tensor_ids = &self.tensor_graph.input_tensors;
 
@@ -542,30 +542,22 @@ impl ComputeManager {
         }
 
         // Load input data into tensors
-        for (batch_idx, mut batch) in batches.into_iter().enumerate() {
+        for (batch_idx, batch) in batches.into_iter().enumerate() {
             let tensor_id = input_tensor_ids[batch_idx];
             let tensor = &self.tensor_graph.tensors[tensor_id];
 
-            // Convert to tensor's expected type if needed
-            batch.to_data_type(tensor.desc.data_type());
-
             // Validate size after conversion
             let expected_bytes = tensor.desc.size_in_bytes();
-            if batch.len() != expected_bytes {
+            if batch.buffer.len_bytes() != expected_bytes {
                 return Err(VKMLError::VulkanLoadError(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
                     batch_idx,
-                    batch.len(),
+                    batch.buffer.len_bytes(),
                     expected_bytes
                 )));
             }
 
-            // Get the data as f32 vector for tensor operations
-            let data = batch.as_bytes();
-
-            self.tensor_graph.tensors[tensor_id]
-                .data
-                .update_data(data.to_vec());
+            self.tensor_graph.tensors[tensor_id].write(&batch.read());
         }
 
         // Execute the model
@@ -579,7 +571,7 @@ impl ComputeManager {
             let tensor = &self.tensor_graph.tensors[tensor_id];
 
             // Get data from tensor (currently returns f32, but will return native type in future)
-            let output_data = tensor.data.get_data();
+            let output_data = tensor.read();
 
             // For now, get_data() returns f32, so we need to convert to bytes
             // In future, get_data() will return bytes in the tensor's native format
@@ -590,11 +582,7 @@ impl ComputeManager {
 
             // Create DataBatch with tensor's data type
             // No conversion - just packaging the tensor's data with its type
-            let mut batch = DataBatch::from_bytes(bytes, DataType::Float);
-
-            // If tensor has a different type, convert the batch to match
-            // (temporary until get_data() returns native type)
-            batch.to_data_type(tensor.desc.data_type());
+            let batch = Tensor::new_cpu(tensor.desc.clone(), bytes);
 
             output_batches.push(batch);
         }
@@ -696,12 +684,12 @@ impl ComputeManager {
 
         // Check input tensors to determine device
         for &tensor_id in &input_tensor_ids {
-            match &self.tensor_graph.tensors[tensor_id].data {
-                TensorStorage::CPU(_) => return Ok(DeviceLocation::CPU),
-                TensorStorage::GPU(gpu_storage) => {
-                    return Ok(DeviceLocation::GPU(gpu_storage.gpu_idx().unwrap()));
+            match &self.tensor_graph.tensors[tensor_id].device {
+                DeviceId::CPU => return Ok(DeviceLocation::CPU),
+                DeviceId::GPU(gpu_idx) => {
+                    return Ok(DeviceLocation::GPU(*gpu_idx));
                 }
-                TensorStorage::Unallocated(_) => continue,
+                DeviceId::Unallocated => continue,
             }
         }
 
@@ -709,12 +697,12 @@ impl ComputeManager {
         let output_tensor_ids = self.tensor_graph.get_operation_outputs(*op_id);
 
         for &tensor_id in &output_tensor_ids {
-            match &self.tensor_graph.tensors[tensor_id].data {
-                TensorStorage::CPU(_) => return Ok(DeviceLocation::CPU),
-                TensorStorage::GPU(gpu_storage) => {
-                    return Ok(DeviceLocation::GPU(gpu_storage.gpu_idx().unwrap()));
+            match &self.tensor_graph.tensors[tensor_id].device {
+                DeviceId::CPU => return Ok(DeviceLocation::CPU),
+                DeviceId::GPU(gpu_idx) => {
+                    return Ok(DeviceLocation::GPU(*gpu_idx));
                 }
-                TensorStorage::Unallocated(_) => continue,
+                DeviceId::Unallocated => continue,
             }
         }
 

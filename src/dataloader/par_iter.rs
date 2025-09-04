@@ -1,11 +1,16 @@
-use super::{data_batch::DataBatch, dataloader::DataLoader};
+use crate::tensor::desc::TensorDesc;
+use crate::tensor::tensor::Tensor;
+
+use super::dataloader::DataLoader;
+use onnx_extractor::DataType;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use zero_pool::{TaskFuture, zp_define_task_fn};
 
 /// A pending batch with its future and the allocated data
 struct PendingBatch {
-    batch: DataBatch,
+    data: Vec<u8>,
+    data_type: DataType,
     future: TaskFuture,
 }
 
@@ -77,19 +82,19 @@ impl<T: DataLoader> ParallelDataIterator<T> {
         let bytes_per_item = self.dataloader.bytes_per_item();
         let data_type = self.dataloader.batch_data_type();
         let total_bytes = indices.len() * bytes_per_item;
-        let mut batch = DataBatch::new(total_bytes, data_type);
+        // Allocate raw boxed byte buffer for the batch
+        let mut buffer = vec![0u8; total_bytes];
 
-        // Create loading tasks for each item
-        let tasks: Vec<_> = indices
+        // Create loading tasks for each item, copying into the boxed buffer
+        let base_ptr = buffer.as_mut_ptr();
+        let tasks: Vec<LoadItemTask> = indices
             .iter()
             .enumerate()
-            .map(|(i, &index)| {
-                LoadItemTask {
-                    dataloader: Arc::as_ptr(&self.dataloader) as *const dyn DataLoader,
-                    index,
-                    dest_ptr: batch.as_mut_ptr(),
-                    offset: i * bytes_per_item,
-                };
+            .map(|(i, &index)| LoadItemTask {
+                dataloader: Arc::as_ptr(&self.dataloader) as *const dyn DataLoader,
+                index,
+                dest_ptr: base_ptr,
+                offset: i * bytes_per_item,
             })
             .collect();
 
@@ -99,19 +104,30 @@ impl<T: DataLoader> ParallelDataIterator<T> {
             .get_thread_pool()
             .submit_batch_uniform(load_item_task, &tasks);
 
-        PendingBatch { batch, future }
+        PendingBatch {
+            data: buffer,
+            data_type: data_type,
+            future,
+        }
     }
 
     /// Wait for the next batch to complete and return it
-    fn wait_for_next_batch(&mut self) -> Option<DataBatch> {
+    fn wait_for_next_batch(&mut self) -> Option<Tensor> {
         let pending = self.pending_batches.pop_front()?;
         pending.future.wait();
-        Some(pending.batch)
+
+        // Calculate number of elements for the TensorDesc
+        let elem_size = pending.data_type.size_in_bytes().unwrap_or(4); // fallback; matches previous behaviour
+        let num_elems = pending.data.len() / elem_size;
+
+        let desc = TensorDesc::new_with_type(vec![num_elems as i64], pending.data_type);
+
+        Some(Tensor::new_cpu(desc, pending.data))
     }
 }
 
 impl<T: DataLoader> Iterator for ParallelDataIterator<T> {
-    type Item = DataBatch;
+    type Item = Tensor;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_batch >= self.total_batches {

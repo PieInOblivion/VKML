@@ -1,5 +1,4 @@
 pub mod config;
-pub mod data_batch;
 pub mod dataloader;
 pub mod error;
 pub mod info;

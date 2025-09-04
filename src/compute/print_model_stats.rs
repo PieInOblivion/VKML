@@ -2,8 +2,7 @@ use crate::{
     compute::compute_manager::ComputeManager,
     dataloader::error::VKMLError,
     model::layer_connection::{LayerConnection, LayerId},
-    tensor::storage::TensorStorage,
-    tensor::storage::TensorStorageOps,
+    tensor::tensor::DeviceId,
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
@@ -124,12 +123,12 @@ pub fn print_model_stats(cm: &ComputeManager) {
                 .map(|t| t.desc.size_in_bytes() as u64)
                 .sum();
 
-            let device_location = match &cm.tensor_graph.tensors[output_tensor].data {
-                TensorStorage::CPU(_) => "CPU".to_string(),
-                TensorStorage::GPU(gpu_storage) => {
-                    format!("GPU {}", gpu_storage.gpu_idx().unwrap())
+            let device_location = match &cm.tensor_graph.tensors[output_tensor].device {
+                DeviceId::CPU => "CPU".to_string(),
+                DeviceId::GPU(gpu_idx) => {
+                    format!("GPU {}", gpu_idx)
                 }
-                TensorStorage::Unallocated(_) => "Unallocated".to_string(),
+                DeviceId::Unallocated => "Unallocated".to_string(),
             };
 
             let layer_type = layer.layer.name();
@@ -186,7 +185,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
     }
 }
 
-fn format_dimensions(dims: &[usize]) -> String {
+fn format_dimensions(dims: &[i64]) -> String {
     if dims.len() <= 4 {
         dims.iter()
             .map(|&d| d.to_string())
@@ -365,8 +364,11 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
 
     for tensor_id in &tensor_ids {
         let tensor = &cm.tensor_graph.tensors[*tensor_id];
-        let raw = tensor.data.read_data();
-        let gpu_idx = tensor.data.gpu_idx();
+        let raw = tensor.read();
+        let gpu_idx = match &tensor.device {
+            DeviceId::GPU(idx) => Some(*idx),
+            _ => None,
+        };
         let dtype = tensor.desc.data_type();
 
         println!("\nTensor {}:", tensor_id);

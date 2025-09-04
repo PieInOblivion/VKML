@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    instruction::instruction::Instruction, tensor::tensor_desc::TensorDesc,
+    instruction::instruction::Instruction, tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
 

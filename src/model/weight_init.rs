@@ -5,13 +5,15 @@ use zero_pool::{ZeroPool, zp_define_task_fn};
 use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-use crate::dataloader::data_batch::DataBatch;
 use crate::dataloader::error::VKMLError;
 use crate::gpu::compute_pipelines::GPUMemoryOperation;
 use crate::gpu::gpu_memory::GPUMemory;
 use crate::gpu::vk_gpu::GPU;
-use crate::tensor::tensor_desc::TensorDesc;
+use crate::tensor::desc::TensorDesc;
 use onnx_extractor::DataType;
+
+// TODO: Make WeightInit::Load happen before reaching WeightInit compute here
+// Then make these branches !unreachable()
 
 #[derive(Clone)]
 pub enum WeightInit {
@@ -20,7 +22,7 @@ pub enum WeightInit {
     LeCun,
     UniformRandom { min: f32, max: f32 },
     Constant(f32),
-    Load(DataBatch),
+    Load(Vec<u8>, DataType),
 }
 
 impl WeightInit {
@@ -36,7 +38,7 @@ impl WeightInit {
         mean + std_dev * z
     }
 
-    pub fn init(&self, shape: &TensorDesc, total_elements: usize) -> DataBatch {
+    pub fn init(&self, shape: &TensorDesc, total_elements: usize) -> (Vec<u8>, DataType) {
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
 
         match self {
@@ -49,7 +51,7 @@ impl WeightInit {
                     let v: f32 = dist.unwrap().sample(&mut rng);
                     out.extend_from_slice(&v.to_le_bytes());
                 }
-                DataBatch::from_bytes(out, DataType::Float)
+                (out, DataType::Float)
             }
 
             WeightInit::He => {
@@ -59,7 +61,7 @@ impl WeightInit {
                     let v = Self::normal_sample(0.0, std_dev);
                     out.extend_from_slice(&v.to_le_bytes());
                 }
-                DataBatch::from_bytes(out, DataType::Float)
+                (out, DataType::Float)
             }
 
             WeightInit::LeCun => {
@@ -69,7 +71,7 @@ impl WeightInit {
                     let v = Self::normal_sample(0.0, std_dev);
                     out.extend_from_slice(&v.to_le_bytes());
                 }
-                DataBatch::from_bytes(out, DataType::Float)
+                (out, DataType::Float)
             }
 
             WeightInit::UniformRandom { min, max } => {
@@ -80,7 +82,7 @@ impl WeightInit {
                     let v: f32 = dist.unwrap().sample(&mut rng);
                     out.extend_from_slice(&v.to_le_bytes());
                 }
-                DataBatch::from_bytes(out, DataType::Float)
+                (out, DataType::Float)
             }
 
             WeightInit::Constant(value) => {
@@ -88,10 +90,10 @@ impl WeightInit {
                 for _ in 0..total_elements {
                     out.extend_from_slice(&value.to_le_bytes());
                 }
-                DataBatch::from_bytes(out, DataType::Float)
+                (out, DataType::Float)
             }
             // TODO: Have databatch not need cloning
-            WeightInit::Load(batch) => batch.clone(),
+            WeightInit::Load(data, datatype) => (data.to_vec(), *datatype),
         }
     }
 
@@ -101,16 +103,16 @@ impl WeightInit {
         total_elements: usize,
         chunk_size: usize,
         thread_pool: &ZeroPool,
-    ) -> DataBatch {
-        // TODO: Have databatch not need cloning
-        if let WeightInit::Load(batch) = self {
-            return batch.clone();
+    ) -> (Vec<u8>, DataType) {
+        // TODO: Have this not need cloning
+        if let WeightInit::Load(data, datatype) = self {
+            return (data.to_vec(), *datatype);
         }
 
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
         let num_chunks = (total_elements + chunk_size - 1) / chunk_size;
 
-        let mut batch = DataBatch::new(total_elements * 4, DataType::Float);
+        let mut batch = vec![0; total_elements * 4];
 
         let tasks: Vec<_> = (0..num_chunks)
             .map(|chunk_idx| {
@@ -131,7 +133,7 @@ impl WeightInit {
         let future = thread_pool.submit_batch_uniform(weight_init_chunk_task, &tasks);
         future.wait();
 
-        batch
+        (batch, DataType::Float)
     }
 
     pub fn init_gpu(&self, shape: &TensorDesc, gpu: &GPU) -> Result<GPUMemory, VKMLError> {
@@ -139,7 +141,7 @@ impl WeightInit {
         let (fan_in, fan_out) = shape.calculate_fan_in_out();
 
         // TODO: Should be fixed after the generalised gpu weight init pattern changes
-        if let WeightInit::Load(_) = self {
+        if let WeightInit::Load(_, _) = self {
             return Err(VKMLError::VulkanLoadError(
                 "Load variant cannot be used with init_gpu".to_string(),
             ));
@@ -175,7 +177,7 @@ impl WeightInit {
             WeightInit::Constant(value) => {
                 push_constants[4] = *value;
             }
-            WeightInit::Load(_) => {
+            WeightInit::Load(_, _) => {
                 // nothing to set for Load
             }
         }
@@ -186,7 +188,7 @@ impl WeightInit {
             WeightInit::LeCun => GPUMemoryOperation::InitLeCun,
             WeightInit::UniformRandom { .. } => GPUMemoryOperation::InitUniform,
             WeightInit::Constant(_) => GPUMemoryOperation::InitConstant,
-            WeightInit::Load(_) => {
+            WeightInit::Load(_, _) => {
                 return Err(VKMLError::VulkanLoadError(
                     "Load variant cannot be used with init_gpu".to_string(),
                 ));
@@ -369,13 +371,13 @@ zp_define_task_fn!(weight_init_chunk_task, WeightInitChunkParams, |params| {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
                 }
             }
-            WeightInit::Load(batch) => {
+            WeightInit::Load(data, _) => {
                 let start_byte = params.start_idx * 4;
                 let end_byte = params.end_idx * 4;
-                let src_len = batch.len();
+                let src_len = data.len();
                 let copy_end = end_byte.min(src_len);
                 if start_byte < copy_end {
-                    let src = batch.as_ptr().add(start_byte);
+                    let src = data.as_ptr().add(start_byte);
                     let dst = params.data_ptr.add(start_byte);
                     std::ptr::copy_nonoverlapping(src, dst, copy_end - start_byte);
                 }

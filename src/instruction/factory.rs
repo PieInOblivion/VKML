@@ -5,7 +5,7 @@ use crate::{
         min_inplace::MinInplaceInstruction, mul_inplace::MulInplaceInstruction,
         sub_inplace::SubInplaceInstruction,
     },
-    tensor::tensor_desc::TensorDesc,
+    tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
 

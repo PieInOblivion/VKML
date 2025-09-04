@@ -1,7 +1,7 @@
 use crate::{
     dataloader::error::VKMLError,
     instruction::{factory::Instructions, instruction::Instruction},
-    tensor::{compute_tensor::ComputeTensor, tensor_desc::TensorDesc},
+    tensor::{desc::TensorDesc, tensor::Tensor},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use onnx_extractor::{
@@ -23,9 +23,9 @@ impl OnnxParser {
         for (name, onnx_tensor) in &onnx_model.tensors {
             let tensor_desc = Self::convert_onnx_tensor_to_desc_f32(onnx_tensor)?;
             let compute_tensor = if onnx_tensor.has_data() {
-                ComputeTensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
+                Tensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
             } else {
-                ComputeTensor::new_unallocated(tensor_desc)
+                Tensor::new_unallocated(tensor_desc)
             };
 
             let tensor_id = tensors.len();
@@ -81,22 +81,16 @@ impl OnnxParser {
         };
 
         // Convert i64 dimensions to usize, handling dynamic dimensions
-        let dims: Result<Vec<usize>, VKMLError> = onnx_tensor.shape
+        let dims: Result<Vec<i64>, VKMLError> = onnx_tensor.shape
         .iter()
         .map(|&dim| {
-            if dim < 0 {
+            if dim <= 0 {
                 Err(VKMLError::OnnxImporterError(format!(
-                    "Dynamic dimension {} in tensor '{}' is not supported. All dimensions must be concrete positive values.",
+                    "Zero/Dynamic dimension {} in tensor '{}' is not supported. All dimensions must be concrete positive values.",
                     dim, onnx_tensor.name
                 )))
-            } else if dim == 0 {
-                Err(VKMLError::OnnxImporterError(format!(
-                    "Zero dimension in tensor '{}' is not supported.", 
-                    onnx_tensor.name
-                )))
             } else {
-                // Safe conversion from positive i64 to usize
-                Ok(dim as usize)
+                Ok(dim)
             }
         })
         .collect();

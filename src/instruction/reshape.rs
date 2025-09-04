@@ -1,6 +1,6 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    tensor::tensor_desc::TensorDesc,
+    tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};

@@ -1,6 +1,6 @@
 use crate::{
     gpu::{compute_pipelines::GPUMemoryOperation, vk_gpu::GPU},
-    tensor::tensor_desc::TensorDesc,
+    tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -45,8 +45,8 @@ impl Instruction for AddInplaceInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mem_a = tensor_graph.get_gpu_memory_or_panic(self.dst);
-        let mem_b = tensor_graph.get_gpu_memory_or_panic(self.src1);
+        let mem_a = tensor_graph.tensors[self.dst].get_gpu_memory_or_panic();
+        let mem_b = tensor_graph.tensors[self.src1].get_gpu_memory_or_panic();
 
         let desc_a = &tensor_graph.tensors[self.dst].desc;
         let desc_b = &tensor_graph.tensors[self.src1].desc;

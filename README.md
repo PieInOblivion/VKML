@@ -25,12 +25,13 @@ The proof of concept goal for this project will be met when we are able to bench
 * Automatic workgroup decision making
 * JIT like Descriptor Set Layout, Descriptor Sets, Pipeline Layout, Descriptor Pool optimisation implementation
   * The current implementation is still from early basic gpu testing
+  * More likely move fully to VkShaderEXT
 * Vulkan Compute Queue investigations
   * Syncing multiple compute queues on same device vs use one queue, pros, cons, vendor driver implementation differences etc
 * Interface for manual instruction and tensor modification into model and/or tensor graphs
 * Backwards Pass
 * Multiple data formats
-* Investigate lock free execution scheduling. Is it faster than precomputed parrallel stages 
+* Investigate lock free execution scheduling. Should be faster than precomputed parrallel stages 
 
 ### Image Loading
 * Current proof of concept implementation stores all file names in memory
@@ -95,7 +96,8 @@ The proof of concept goal for this project will be met when we are able to bench
 * [Vulkano](https://github.com/KyleMayes/vulkanalia)
 * [Vulkanalia](https://github.com/KyleMayes/vulkanalia)
 * [VkFFT](https://github.com/DTolm/VkFFT)
-* [IEEE Paper](https://ieeexplore.ieee.org/document/10036080)
+* [VkFFT IEEE Paper](https://ieeexplore.ieee.org/document/10036080)
+* [Nvidia Recommended Do's and Don'ts](https://developer.nvidia.com/blog/vulkan-dos-donts)
 
 ### Related Projects
 * [Burn](https://github.com/tracel-ai/burn)

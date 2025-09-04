@@ -2,16 +2,16 @@ use onnx_extractor::DataType;
 
 #[derive(Clone, Debug)]
 pub struct TensorDesc {
-    dims: Vec<usize>,
+    dims: Vec<i64>,
     data_type: DataType,
 }
 
 impl TensorDesc {
-    pub fn new(dims: Vec<usize>) -> Self {
+    pub fn new(dims: Vec<i64>) -> Self {
         Self::new_with_type(dims, DataType::Float)
     }
 
-    pub fn new_with_type(dims: Vec<usize>, data_type: DataType) -> Self {
+    pub fn new_with_type(dims: Vec<i64>, data_type: DataType) -> Self {
         assert!(!dims.is_empty(), "Tensor dimensions cannot be empty");
         Self { dims, data_type }
     }
@@ -21,7 +21,7 @@ impl TensorDesc {
     }
 
     pub fn num_elements(&self) -> usize {
-        self.dims.iter().product()
+        self.dims.iter().map(|d| *d as usize).product()
     }
 
     // Size in bytes for the tensor given its DataType
@@ -31,7 +31,7 @@ impl TensorDesc {
     }
 
     // Get dimensions vector
-    pub fn to_dims(&self) -> Vec<usize> {
+    pub fn to_dims(&self) -> Vec<i64> {
         self.dims.clone()
     }
 
@@ -41,12 +41,12 @@ impl TensorDesc {
     }
 
     // Reshape to new dimensions (preserving total elements)
-    pub fn reshape(&mut self, new_dims: Vec<usize>) -> Result<(), String> {
+    pub fn reshape(&mut self, new_dims: Vec<i64>) -> Result<(), String> {
         if new_dims.is_empty() {
             return Err(format!("New shape must have at least one dimension"));
         }
 
-        let new_elements: usize = new_dims.iter().product();
+        let new_elements: usize = new_dims.iter().map(|d| *d as usize).product();
         if new_elements != self.num_elements() {
             return Err(format!("New shape must have the same number of elements"));
         }
@@ -68,7 +68,7 @@ impl TensorDesc {
     // Flatten to 1D
     pub fn flatten(&self) -> Self {
         Self {
-            dims: vec![self.num_elements()],
+            dims: vec![self.num_elements() as i64],
             data_type: self.data_type,
         }
     }
@@ -76,19 +76,23 @@ impl TensorDesc {
     pub fn calculate_fan_in_out(&self) -> (usize, usize) {
         // For 1D tensors, assume bias vector or similar
         if self.dims.len() == 1 {
-            return (1, self.dims[0]);
+            return (1, self.dims[0] as usize);
         }
 
         // First dimension is typically output features
-        let out_features = self.dims[0];
+        let out_features = self.dims[0] as usize;
 
         // Second dimension is typically input features
-        let in_features = if self.dims.len() > 1 { self.dims[1] } else { 1 };
+        let in_features = if self.dims.len() > 1 {
+            self.dims[1] as usize
+        } else {
+            1
+        };
 
         // Any remaining dimensions represent the kernel/spatial dimensions
         // Calculate their product
         let kernel_size: usize = if self.dims.len() > 2 {
-            self.dims[2..].iter().product()
+            self.dims[2..].iter().map(|d| *d as usize).product()
         } else {
             1
         };
@@ -98,17 +102,17 @@ impl TensorDesc {
         (in_features * kernel_size, out_features * kernel_size)
     }
 
-    pub fn compute_strides(dims: &[usize]) -> Vec<usize> {
+    pub fn compute_strides(dims: &[i64]) -> Vec<usize> {
         let mut s = vec![1; dims.len()];
         for i in (0..dims.len().saturating_sub(1)).rev() {
-            s[i] = s[i + 1] * dims[i + 1];
+            s[i] = s[i + 1] * dims[i + 1] as usize;
         }
         s
     }
 
-    pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+    pub fn broadcast_shape(a: &[i64], b: &[i64]) -> Option<Vec<i64>> {
         let ndim = a.len().max(b.len());
-        let mut out = vec![1; ndim];
+        let mut out = vec![1i64; ndim];
         for i in 0..ndim {
             let ai = *a.get(a.len().wrapping_sub(i + 1)).unwrap_or(&1);
             let bi = *b.get(b.len().wrapping_sub(i + 1)).unwrap_or(&1);
@@ -121,19 +125,19 @@ impl TensorDesc {
         Some(out)
     }
 
-    pub fn broadcast_strides(src: &[usize], dst: &[usize]) -> Vec<usize> {
+    pub fn broadcast_strides(src: &[i64], dst: &[i64]) -> Vec<usize> {
         let src_strides = Self::compute_strides(src);
         let mut bs = vec![0; dst.len()];
         let offset = dst.len().saturating_sub(src.len());
         for i in 0..dst.len() {
-            let dim = *src.get(i.wrapping_sub(offset)).unwrap_or(&1);
+            let dim = *src.get(i.wrapping_sub(offset)).unwrap_or(&1) as usize;
             let stride = *src_strides.get(i.wrapping_sub(offset)).unwrap_or(&0);
             bs[i] = if dim == 1 { 0 } else { stride };
         }
         bs
     }
 
-    pub fn unravel(idx: usize, dims: &[usize]) -> Vec<usize> {
+    pub fn unravel(idx: usize, dims: &[i64]) -> Vec<usize> {
         let mut rem = idx;
         let strides = Self::compute_strides(dims);
         dims.iter()

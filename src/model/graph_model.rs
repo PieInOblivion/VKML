@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{dataloader::error::VKMLError, layer::layer::Layer, tensor::tensor_desc::TensorDesc};
+use crate::{dataloader::error::VKMLError, layer::layer::Layer, tensor::desc::TensorDesc};
 
 use super::{
     layer_connection::{LayerConnection, LayerId},

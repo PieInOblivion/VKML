@@ -1,10 +1,9 @@
 use crate::{
     dataloader::error::VKMLError,
-    gpu::gpu_memory::GPUMemory,
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::{compute_tensor::ComputeTensor, storage::TensorStorage, tensor_desc::TensorDesc},
+    tensor::{desc::TensorDesc, tensor::Tensor},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -23,7 +22,7 @@ pub type OperationId = usize;
 pub type TensorId = usize;
 
 pub struct TensorGraph {
-    pub tensors: Vec<ComputeTensor>, // Indexed by global TensorId
+    pub tensors: Vec<Tensor>,                  // Indexed by global TensorId
     pub operations: Vec<Box<dyn Instruction>>, // Using global TensorIds
 
     // Graph entry and exit points
@@ -96,7 +95,7 @@ impl TensorGraph {
                     // Only if not an input reference
                     let global_tensor_id = tensors.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
-                    tensors.push(ComputeTensor::new_unallocated(local_tensor_desc.clone()));
+                    tensors.push(Tensor::new_unallocated(local_tensor_desc.clone()));
                     tensor_to_layer_map.push(Some(layer_id));
                     // Ensure latest_producer_op_for_tensor is large enough
                     if global_tensor_id >= latest_producer_op_for_tensor.len() {
@@ -248,18 +247,6 @@ impl TensorGraph {
             );
         }
         plan
-    }
-
-    pub fn get_gpu_memory_or_panic(&self, tensor_id: usize) -> &GPUMemory {
-        match &self.tensors[tensor_id].data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            TensorStorage::CPU(_) => {
-                panic!("Tensor {} is in CPU memory, expected GPU memory", tensor_id)
-            }
-            TensorStorage::Unallocated(_) => {
-                panic!("Tensor {} is unallocated, expected GPU memory", tensor_id)
-            }
-        }
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {

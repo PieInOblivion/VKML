@@ -1,6 +1,5 @@
 use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions,
-    tensor::tensor_desc::TensorDesc,
+    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
 };
 
 use super::{execution::LayerExecution, layer::Layer};

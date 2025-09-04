@@ -1,4 +1,4 @@
-use crate::tensor::tensor_desc::TensorDesc;
+use crate::tensor::desc::TensorDesc;
 
 use super::{
     activations::{ActivationLayer, ActivationType},

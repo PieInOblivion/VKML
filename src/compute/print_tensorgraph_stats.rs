@@ -1,6 +1,5 @@
 use crate::{
-    compute::compute_manager::ComputeManager,
-    tensor::storage::{TensorStorage, TensorStorageOps},
+    compute::compute_manager::ComputeManager, tensor::tensor::DeviceId,
     tensor_graph::tensor_graph::TensorId,
 };
 use std::collections::HashSet;
@@ -56,12 +55,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let tensor = &cm.tensor_graph.tensors[input];
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
-                let location = match &tensor.data {
-                    TensorStorage::CPU(_) => "CPU".to_string(),
-                    TensorStorage::GPU(gpu_storage) => {
-                        format!("GPU {}", gpu_storage.gpu_idx().unwrap())
+                let location = match &tensor.device {
+                    DeviceId::CPU => "CPU".to_string(),
+                    DeviceId::GPU(gpu_idx) => {
+                        format!("GPU {}", gpu_idx)
                     }
-                    TensorStorage::Unallocated(_) => "Unallocated".to_string(),
+                    DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
                 let producers: String = cm
@@ -91,12 +90,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let tensor = &cm.tensor_graph.tensors[output];
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
-                let location = match &tensor.data {
-                    TensorStorage::CPU(_) => "CPU".to_string(),
-                    TensorStorage::GPU(gpu_storage) => {
-                        format!("GPU {}", gpu_storage.gpu_idx().unwrap())
+                let location = match &tensor.device {
+                    DeviceId::CPU => "CPU".to_string(),
+                    DeviceId::GPU(gpu_idx) => {
+                        format!("GPU {}", gpu_idx)
                     }
-                    TensorStorage::Unallocated(_) => "Unallocated".to_string(),
+                    DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
                 let consumers: Vec<String> = cm
