@@ -31,7 +31,7 @@ impl ReshapeLayer {
 impl Layer for ReshapeLayer {
     fn output_shapes(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
@@ -42,7 +42,7 @@ impl Layer for ReshapeLayer {
         }
 
         let input_shape = input_shapes[0];
-        let input_elements = input_shape.num_elements();
+        let input_elements: i64 = input_shape.num_elements() as i64;
 
         // Handle flatten specially
         if self.is_flatten() {
@@ -67,7 +67,7 @@ impl Layer for ReshapeLayer {
 
         if zeros == 0 {
             // No inference needed, just check total elements
-            let total_new = target_dims.iter().product::<usize>();
+            let total_new = target_dims.iter().copied().product::<i64>();
             if total_new != input_elements {
                 return Err(VKMLError::VulkanLoadError(format!(
                     "Cannot reshape {} elements into shape with {} elements",
@@ -82,7 +82,7 @@ impl Layer for ReshapeLayer {
 
             // One dimension to infer
             if zeros == 1 {
-                let known_product: usize = new_dims.iter().filter(|&&d| d != 0).product();
+                let known_product: i64 = new_dims.iter().copied().filter(|d| *d != 0).product();
 
                 if input_elements % known_product != 0 {
                     return Err(VKMLError::VulkanLoadError(format!(
@@ -110,10 +110,6 @@ impl Layer for ReshapeLayer {
         }
     }
 
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        output_shape.size_in_bytes() as u64
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (1, Some(1))
     }
@@ -138,17 +134,17 @@ impl Layer for ReshapeLayer {
         }
     }
 
-    fn out_features(&self) -> usize {
+    fn out_features(&self) -> i64 {
         if self.is_flatten() {
             0 // Unknown until we have input shape
         } else {
-            self.target_shape.num_elements()
+            self.target_shape.num_elements() as i64
         }
     }
 
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {

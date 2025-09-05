@@ -6,19 +6,19 @@ use super::{execution::LayerExecution, layer::Layer};
 
 #[derive(Clone)]
 pub struct InputLayer {
-    pub out_features: usize,
+    pub out_features: i64,
     pub track_gradients: bool,
 }
 
 impl InputLayer {
-    pub fn new(out_features: usize) -> Self {
+    pub fn new(out_features: i64) -> Self {
         Self {
             out_features,
             track_gradients: false,
         }
     }
 
-    pub fn new_with(out_features: usize, track_gradients: bool) -> Self {
+    pub fn new_with(out_features: i64, track_gradients: bool) -> Self {
         Self {
             out_features,
             track_gradients,
@@ -29,7 +29,7 @@ impl InputLayer {
 impl Layer for InputLayer {
     fn output_shapes(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         // Input layers ignore input_shapes since they're entry points
@@ -41,19 +41,6 @@ impl Layer for InputLayer {
         }
 
         Ok(vec![TensorDesc::new(vec![batch_size, self.out_features])])
-    }
-
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Only need memory for activations
-        let activation_memory = output_shape.size_in_bytes() as u64;
-
-        let gradient_memory = if self.track_gradients {
-            output_shape.size_in_bytes() as u64
-        } else {
-            0
-        };
-
-        activation_memory + gradient_memory
     }
 
     fn input_requirements(&self) -> (usize, Option<usize>) {
@@ -72,13 +59,13 @@ impl Layer for InputLayer {
         }
     }
 
-    fn out_features(&self) -> usize {
+    fn out_features(&self) -> i64 {
         self.out_features
     }
 
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         _input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         // Input layers don't need input_shapes - they create their own shapes

@@ -27,18 +27,6 @@ impl Layer for ConcatLayer {
         false
     }
 
-    fn parameter_count(&self, _batch_size: usize, _input_shapes: &[&TensorDesc]) -> usize {
-        0 // No parameters
-    }
-
-    fn in_features(&self) -> usize {
-        0 // Dynamic based on inputs
-    }
-
-    fn out_features(&self) -> usize {
-        0 // Dynamic based on inputs
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (2, None) // At least 2 inputs, no maximum
     }
@@ -47,16 +35,9 @@ impl Layer for ConcatLayer {
         None // No parameters
     }
 
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Concat has no parameters, just activations
-        let activation_bytes = output_shape.size_in_bytes() as u64;
-
-        activation_bytes + activation_bytes
-    }
-
     fn output_shapes(
         &self,
-        _batch_size: usize,
+        _batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
@@ -118,7 +99,7 @@ impl Layer for ConcatLayer {
 
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {

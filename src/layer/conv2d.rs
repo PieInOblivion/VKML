@@ -6,19 +6,19 @@ use super::{execution::LayerExecution, layer::Layer};
 
 #[derive(Clone)]
 pub struct Conv2DLayer {
-    pub in_features: usize,  // Input channels
-    pub out_features: usize, // Output channels
-    pub kernel_h: usize,
-    pub kernel_w: usize,
-    pub stride_h: usize,
-    pub stride_w: usize,
-    pub padding_h: usize,
-    pub padding_w: usize,
+    pub in_features: i64,  // Input channels
+    pub out_features: i64, // Output channels
+    pub kernel_h: i64,
+    pub kernel_w: i64,
+    pub stride_h: i64,
+    pub stride_w: i64,
+    pub padding_h: i64,
+    pub padding_w: i64,
     pub bias: bool,
 }
 
 impl Conv2DLayer {
-    pub fn new(in_features: usize, out_features: usize) -> Self {
+    pub fn new(in_features: i64, out_features: i64) -> Self {
         Self {
             in_features,
             out_features,
@@ -33,14 +33,14 @@ impl Conv2DLayer {
     }
 
     pub fn new_with(
-        in_features: usize,
-        out_features: usize,
-        kernel_h: usize,
-        kernel_w: usize,
-        stride_h: usize,
-        stride_w: usize,
-        padding_h: usize,
-        padding_w: usize,
+        in_features: i64,
+        out_features: i64,
+        kernel_h: i64,
+        kernel_w: i64,
+        stride_h: i64,
+        stride_w: i64,
+        padding_h: i64,
+        padding_w: i64,
         bias: bool,
     ) -> Self {
         Self {
@@ -60,7 +60,7 @@ impl Conv2DLayer {
 impl Layer for Conv2DLayer {
     fn output_shapes(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
@@ -92,8 +92,24 @@ impl Layer for Conv2DLayer {
         let h_in = input_shape.to_dims()[2];
         let w_in = input_shape.to_dims()[3];
 
-        let h_out = ((h_in + 2 * self.padding_h - self.kernel_h) / self.stride_h) + 1;
-        let w_out = ((w_in + 2 * self.padding_w - self.kernel_w) / self.stride_w) + 1;
+        // Ensure kernel/stride/padding are sensible; default negatives to 1
+        let k_h = if self.kernel_h <= 0 { 1 } else { self.kernel_h };
+        let k_w = if self.kernel_w <= 0 { 1 } else { self.kernel_w };
+        let s_h = if self.stride_h <= 0 { 1 } else { self.stride_h };
+        let s_w = if self.stride_w <= 0 { 1 } else { self.stride_w };
+        let p_h = if self.padding_h <= 0 {
+            1
+        } else {
+            self.padding_h
+        };
+        let p_w = if self.padding_w <= 0 {
+            1
+        } else {
+            self.padding_w
+        };
+
+        let h_out = ((h_in + 2 * p_h - k_h) / s_h) + 1;
+        let w_out = ((w_in + 2 * p_w - k_w) / s_w) + 1;
 
         Ok(vec![TensorDesc::new(vec![
             batch_size,
@@ -101,28 +117,6 @@ impl Layer for Conv2DLayer {
             h_out,
             w_out,
         ])])
-    }
-
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Calculate weights size (out_channels * in_channels * kernel_h * kernel_w)
-        let weights_size = (self.out_features
-            * self.in_features
-            * self.kernel_h
-            * self.kernel_w
-            * std::mem::size_of::<f32>()) as u64;
-
-        // Calculate bias size (out_channels)
-        let bias_size = if self.bias {
-            (self.out_features * std::mem::size_of::<f32>()) as u64
-        } else {
-            0
-        };
-
-        let activation_size = output_shape.size_in_bytes() as u64;
-
-        let gradient_size = weights_size + bias_size + activation_size;
-
-        weights_size + bias_size + activation_size + gradient_size
     }
 
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
@@ -138,7 +132,7 @@ impl Layer for Conv2DLayer {
         Some((weights, biases))
     }
 
-    fn parameter_count(&self, _batch_size: usize, _input_shapes: &[&TensorDesc]) -> usize {
+    fn parameter_count(&self, _batch_size: i64, _input_shapes: &[&TensorDesc]) -> i64 {
         let weight_params = self.out_features * self.in_features * self.kernel_h * self.kernel_w;
         let bias_params = if self.bias { self.out_features } else { 0 };
 
@@ -166,17 +160,17 @@ impl Layer for Conv2DLayer {
         ))
     }
 
-    fn in_features(&self) -> usize {
+    fn in_features(&self) -> i64 {
         self.in_features
     }
 
-    fn out_features(&self) -> usize {
+    fn out_features(&self) -> i64 {
         self.out_features
     }
 
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
@@ -236,14 +230,21 @@ impl Layer for Conv2DLayer {
         }
 
         // Create Conv2D instruction
-        let instruction = Instructions::conv2d(
-            0,
-            1,
-            bias_idx,
-            2,
-            (self.stride_h, self.stride_w),
-            (self.padding_h, self.padding_w),
-        );
+        // Prepare stride/padding for the instruction (must be usize)
+        let s_h = if self.stride_h <= 0 { 1 } else { self.stride_h } as usize;
+        let s_w = if self.stride_w <= 0 { 1 } else { self.stride_w } as usize;
+        let p_h = if self.padding_h <= 0 {
+            1
+        } else {
+            self.padding_h
+        } as usize;
+        let p_w = if self.padding_w <= 0 {
+            1
+        } else {
+            self.padding_w
+        } as usize;
+
+        let instruction = Instructions::conv2d(0, 1, bias_idx, 2, (s_h, s_w), (p_h, p_w));
 
         // Get input mappings using the trait method
         let input_mappings = self.map_input_tensors(input_shapes.len());

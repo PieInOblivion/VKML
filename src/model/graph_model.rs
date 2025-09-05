@@ -8,7 +8,7 @@ use super::{
 };
 
 pub struct GraphModel {
-    pub batch_size: usize,
+    pub batch_size: i64,
     pub weight_init: WeightInit,
     pub layers: HashMap<LayerId, GraphModelLayer>,
     pub verified: Option<GraphVerifiedData>,
@@ -30,7 +30,7 @@ pub struct GraphVerifiedData {
 }
 
 impl GraphModel {
-    pub fn new(batch_size: usize) -> Self {
+    pub fn new(batch_size: i64) -> Self {
         Self {
             batch_size,
             weight_init: WeightInit::He,
@@ -39,7 +39,7 @@ impl GraphModel {
         }
     }
 
-    pub fn new_with(batch_size: usize, weight_init: WeightInit) -> Self {
+    pub fn new_with(batch_size: i64, weight_init: WeightInit) -> Self {
         Self {
             batch_size,
             weight_init,

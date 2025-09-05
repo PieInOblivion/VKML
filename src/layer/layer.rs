@@ -10,12 +10,9 @@ pub trait Layer {
     // Calculate the output shapes for all outputs of this layer
     fn output_shapes(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError>;
-
-    // Get memory requirements for this layer
-    fn memory_requirements(&self, input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64;
 
     // Whether this layer requires trainable parameters
     fn requires_parameters(&self) -> bool {
@@ -28,7 +25,7 @@ pub trait Layer {
     }
 
     // Return the total number of parameters in this layer
-    fn parameter_count(&self, _batch_size: usize, _input_shapes: &[&TensorDesc]) -> usize {
+    fn parameter_count(&self, _batch_size: i64, _input_shapes: &[&TensorDesc]) -> i64 {
         0
     }
 
@@ -44,12 +41,12 @@ pub trait Layer {
     }
 
     // Get input features
-    fn in_features(&self) -> usize {
+    fn in_features(&self) -> i64 {
         0
     }
 
     // Get output features
-    fn out_features(&self) -> usize {
+    fn out_features(&self) -> i64 {
         0
     }
 
@@ -65,7 +62,7 @@ pub trait Layer {
     // Generate tensor descriptions, instructions, and outputs for this layer
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError>;
 }

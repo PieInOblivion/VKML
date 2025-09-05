@@ -61,7 +61,7 @@ impl ActivationLayer {
 impl Layer for ActivationLayer {
     fn output_shapes(
         &self,
-        _batch_size: usize,
+        _batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
@@ -73,12 +73,6 @@ impl Layer for ActivationLayer {
 
         // Activation functions preserve input shape - return as a single-element vector
         Ok(vec![input_shapes[0].clone()])
-    }
-
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Activation layers only need memory for activations and gradients
-        let activation_size = output_shape.size_in_bytes() as u64;
-        activation_size * 2
     }
 
     fn input_requirements(&self) -> (usize, Option<usize>) {
@@ -99,7 +93,7 @@ impl Layer for ActivationLayer {
 
     fn build_layer_exec(
         &self,
-        _batch_size: usize,
+        _batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {

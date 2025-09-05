@@ -41,7 +41,7 @@ impl ElementWiseLayer {
 impl Layer for ElementWiseLayer {
     fn output_shapes(
         &self,
-        _batch_size: usize,
+        _batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
@@ -67,12 +67,6 @@ impl Layer for ElementWiseLayer {
         Ok(vec![first_shape.clone()])
     }
 
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Element-wise operations only need memory for output activations and gradients
-        let activation_size = output_shape.size_in_bytes() as u64;
-        activation_size * 2 // For activations and gradients
-    }
-
     fn input_requirements(&self) -> (usize, Option<usize>) {
         (2, None) // At least 2 inputs, no upper limit
     }
@@ -83,7 +77,7 @@ impl Layer for ElementWiseLayer {
 
     fn build_layer_exec(
         &self,
-        _batch_size: usize,
+        _batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {

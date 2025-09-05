@@ -5,13 +5,13 @@ use crate::{
 use super::{execution::LayerExecution, layer::Layer};
 
 pub struct LinearLayer {
-    pub in_features: usize,
-    pub out_features: usize,
+    pub in_features: i64,
+    pub out_features: i64,
     pub bias: bool,
 }
 
 impl LinearLayer {
-    pub fn new(in_features: usize, out_features: usize) -> Self {
+    pub fn new(in_features: i64, out_features: i64) -> Self {
         Self {
             in_features,
             out_features,
@@ -19,7 +19,7 @@ impl LinearLayer {
         }
     }
 
-    pub fn new_with(in_features: usize, out_features: usize, bias: bool) -> Self {
+    pub fn new_with(in_features: i64, out_features: i64, bias: bool) -> Self {
         Self {
             in_features,
             out_features,
@@ -31,7 +31,7 @@ impl LinearLayer {
 impl Layer for LinearLayer {
     fn output_shapes(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
@@ -63,24 +63,6 @@ impl Layer for LinearLayer {
         Ok(vec![TensorDesc::new(vec![batch_size, self.out_features])])
     }
 
-    fn memory_requirements(&self, _input_shapes: &[&TensorDesc], output_shape: &TensorDesc) -> u64 {
-        // Memory for weights: in_features * out_features
-        let weights_size =
-            (self.in_features * self.out_features * std::mem::size_of::<f32>()) as u64;
-
-        let bias_size = if self.bias {
-            (self.out_features * std::mem::size_of::<f32>()) as u64
-        } else {
-            0
-        };
-
-        let activation_size = output_shape.size_in_bytes() as u64;
-
-        let gradient_size = weights_size + bias_size + activation_size;
-
-        weights_size + bias_size + activation_size + gradient_size
-    }
-
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
         let weights = TensorDesc::new(vec![self.out_features, self.in_features]);
         let biases = TensorDesc::new(vec![self.out_features]);
@@ -88,7 +70,7 @@ impl Layer for LinearLayer {
         Some((weights, biases))
     }
 
-    fn parameter_count(&self, _batch_size: usize, _input_shapes: &[&TensorDesc]) -> usize {
+    fn parameter_count(&self, _batch_size: i64, _input_shapes: &[&TensorDesc]) -> i64 {
         let weight_params = self.in_features * self.out_features;
         let bias_params = if self.bias { self.out_features } else { 0 };
 
@@ -111,17 +93,17 @@ impl Layer for LinearLayer {
         }
     }
 
-    fn in_features(&self) -> usize {
+    fn in_features(&self) -> i64 {
         self.in_features
     }
 
-    fn out_features(&self) -> usize {
+    fn out_features(&self) -> i64 {
         self.out_features
     }
 
     fn build_layer_exec(
         &self,
-        batch_size: usize,
+        batch_size: i64,
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {

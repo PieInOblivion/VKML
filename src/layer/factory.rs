@@ -14,35 +14,35 @@ use super::{
 pub struct Layers;
 
 impl Layers {
-    pub fn input_buffer(out_features: usize) -> Box<dyn Layer> {
+    pub fn input_buffer(out_features: i64) -> Box<dyn Layer> {
         Box::new(InputLayer::new(out_features))
     }
 
-    pub fn input_buffer_with(out_features: usize, track_gradients: bool) -> Box<dyn Layer> {
+    pub fn input_buffer_with(out_features: i64, track_gradients: bool) -> Box<dyn Layer> {
         Box::new(InputLayer::new_with(out_features, track_gradients))
     }
 
-    pub fn linear(in_features: usize, out_features: usize) -> Box<dyn Layer> {
+    pub fn linear(in_features: i64, out_features: i64) -> Box<dyn Layer> {
         Box::new(LinearLayer::new(in_features, out_features))
     }
 
-    pub fn linear_with(in_features: usize, out_features: usize, bias: bool) -> Box<dyn Layer> {
+    pub fn linear_with(in_features: i64, out_features: i64, bias: bool) -> Box<dyn Layer> {
         Box::new(LinearLayer::new_with(in_features, out_features, bias))
     }
 
-    pub fn conv2d(in_channels: usize, out_channels: usize) -> Box<dyn Layer> {
+    pub fn conv2d(in_channels: i64, out_channels: i64) -> Box<dyn Layer> {
         Box::new(Conv2DLayer::new(in_channels, out_channels))
     }
 
     pub fn conv2d_with(
-        in_features: usize,
-        out_features: usize,
-        kernel_h: usize,
-        kernel_w: usize,
-        stride_h: usize,
-        stride_w: usize,
-        padding_h: usize,
-        padding_w: usize,
+        in_features: i64,
+        out_features: i64,
+        kernel_h: i64,
+        kernel_w: i64,
+        stride_h: i64,
+        stride_w: i64,
+        padding_h: i64,
+        padding_w: i64,
         bias: bool,
     ) -> Box<dyn Layer> {
         Box::new(Conv2DLayer::new_with(
