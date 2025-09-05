@@ -14,4 +14,7 @@ pub trait TensorData: Send + Sync {
 
     /// Allow runtime downcast from trait object to concrete type
     fn as_any(&self) -> &dyn Any;
+
+    /// Allow mutable runtime downcast from trait object to concrete type
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }

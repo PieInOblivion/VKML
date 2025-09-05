@@ -6,7 +6,6 @@ use crate::{
         device::{cpu::CpuData, gpu::GpuData, unallocated::UnallocatedData},
     },
 };
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceId {
@@ -18,7 +17,7 @@ pub enum DeviceId {
 pub struct Tensor {
     pub desc: TensorDesc,
     pub device: DeviceId,
-    pub buffer: Arc<dyn TensorData>,
+    pub buffer: Box<dyn TensorData>,
 }
 
 impl Tensor {
@@ -28,7 +27,7 @@ impl Tensor {
         Self {
             desc,
             device: DeviceId::CPU,
-            buffer: Arc::new(buf),
+            buffer: Box::new(buf),
         }
     }
 
@@ -38,7 +37,7 @@ impl Tensor {
         Self {
             desc,
             device: DeviceId::GPU(gpu_idx),
-            buffer: Arc::new(buf),
+            buffer: Box::new(buf),
         }
     }
 
@@ -49,7 +48,7 @@ impl Tensor {
         Self {
             desc,
             device: DeviceId::CPU,
-            buffer: Arc::new(buf),
+            buffer: Box::new(buf),
         }
     }
 
@@ -66,9 +65,7 @@ impl Tensor {
     }
 
     pub fn write(&mut self, data: &[u8]) {
-        let mut_ref =
-            Arc::get_mut(&mut self.buffer).expect("Tensor buffer not uniquely owned for write");
-        mut_ref.write(data);
+        self.buffer.write(data);
     }
 
     // The not super general functions below
@@ -79,5 +76,14 @@ impl Tensor {
             .downcast_ref::<GpuData>()
             .expect("Tensor is not backed by GPU storage");
         &gpu.memory
+    }
+
+    pub fn get_cpu_memory_mut_slice_or_panic(&mut self) -> &mut [u8] {
+        let any_mut = self.buffer.as_any_mut();
+        let cpu = any_mut
+            .downcast_mut::<CpuData>()
+            .expect("Tensor is not backed by CPU storage");
+
+        cpu.data.as_mut_slice()
     }
 }

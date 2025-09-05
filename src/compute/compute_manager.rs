@@ -8,7 +8,6 @@ use zero_pool::{ZeroPool, zp_define_task_fn};
 
 use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
-use crate::tensor_graph::shared_tensor_graph::{SharedGPU, SharedTensorGraph};
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
     dataloader::error::VKMLError,
@@ -27,12 +26,12 @@ pub enum DeviceLocation {
 }
 
 pub struct ComputeManager {
-    gpus: Vec<GPU>,
+    gpus: Arc<Vec<GPU>>,
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 
     pub model: GraphModel,
-    pub tensor_graph: TensorGraph,
+    pub tensor_graph: Arc<TensorGraph>,
 }
 
 impl ComputeManager {
@@ -56,11 +55,11 @@ impl ComputeManager {
         let tensor_graph = TensorGraph::from_graph_model(&model)?;
 
         let mut manager = Self {
-            gpus,
+            gpus: Arc::new(gpus),
             cpu,
             thread_pool,
             model,
-            tensor_graph,
+            tensor_graph: Arc::new(tensor_graph),
         };
 
         let total_memory = manager.tensor_graph.calculate_memory_requirements();
@@ -129,11 +128,11 @@ impl ComputeManager {
         let model = GraphModel::new(1);
 
         let mut manager = Self {
-            gpus,
+            gpus: Arc::new(gpus),
             cpu,
             thread_pool,
             model,
-            tensor_graph,
+            tensor_graph: Arc::new(tensor_graph),
         };
 
         let total_memory = manager.tensor_graph.calculate_memory_requirements();
@@ -408,12 +407,16 @@ impl ComputeManager {
         // 1. Create all new tensors for transfers
         for (tensor_desc, device_location, _weight_init, layer_id) in new_tensors {
             // Add the new tensor
-            self.tensor_graph
+            Arc::get_mut(&mut self.tensor_graph)
+                .unwrap()
                 .tensors
                 .push(Tensor::new_unallocated(tensor_desc));
 
             // Add the same layer ID to maintain the connection
-            self.tensor_graph.tensor_to_layer.push(layer_id);
+            Arc::get_mut(&mut self.tensor_graph)
+                .unwrap()
+                .tensor_to_layer
+                .push(layer_id);
 
             tensor_locations.push(Some(device_location));
         }
@@ -424,10 +427,12 @@ impl ComputeManager {
             let adjusted_pos = insert_before_op + op_id_shift;
             // Preserve layer mapping for the new transfer op by copying the layer of the original op
             let layer_id = self.tensor_graph.operation_to_layer[insert_before_op];
-            self.tensor_graph
+            Arc::get_mut(&mut self.tensor_graph)
+                .unwrap()
                 .operations
                 .insert(adjusted_pos, transfer_instr);
-            self.tensor_graph
+            Arc::get_mut(&mut self.tensor_graph)
+                .unwrap()
                 .operation_to_layer
                 .insert(adjusted_pos, layer_id);
             op_id_shift += 1;
@@ -437,8 +442,9 @@ impl ComputeManager {
         for (&op_id, (new_inputs, new_outputs)) in &operation_remappings {
             // Adjust for inserted transfer operations
             let adjusted_op_id = op_id + op_id_shift;
-            let instruction = &mut self.tensor_graph.operations[adjusted_op_id];
-            instruction.remap_tensor_ids(&new_inputs, &new_outputs);
+            Arc::get_mut(&mut self.tensor_graph).unwrap().operations
+                [adjusted_op_id]
+                .remap_tensor_ids(&new_inputs, &new_outputs);
         }
 
         // 4. Now that planning is complete, actually allocate the tensors
@@ -460,7 +466,7 @@ impl ComputeManager {
                         self.allocate_tensor(&tensor_desc, device_location, &weight_init)?;
 
                     // Update the tensor with the allocated data
-                    self.tensor_graph.tensors[tensor_id] = tensor_data;
+                    Arc::get_mut(&mut self.tensor_graph).unwrap().tensors[tensor_id] = tensor_data;
                 }
             }
         }
@@ -530,7 +536,7 @@ impl ComputeManager {
 
     pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<Tensor>, VKMLError> {
         // Get input tensor indices
-        let input_tensor_ids = &self.tensor_graph.input_tensors;
+        let input_tensor_ids = self.tensor_graph.input_tensors.clone();
 
         // Validate input batch count
         if batches.len() != input_tensor_ids.len() {
@@ -557,7 +563,7 @@ impl ComputeManager {
                 )));
             }
 
-            self.tensor_graph.tensors[tensor_id].write(&batch.read());
+            Arc::get_mut(&mut self.tensor_graph).unwrap().tensors[tensor_id].write(&batch.read());
         }
 
         // Execute the model
@@ -594,11 +600,6 @@ impl ComputeManager {
         let execution_plan = self.tensor_graph.create_execution_plan();
         let device_grouped_plan = self.group_operations_by_device(&execution_plan)?;
 
-        // Create shared tensor graph pointer for worker threads
-        let shared_tensor_graph = SharedTensorGraph {
-            tensor_graph: &self.tensor_graph as *const _,
-        };
-
         // Execute each stage sequentially, but operations within a stage in parallel
         for stage in device_grouped_plan {
             let mut futures = Vec::new();
@@ -613,20 +614,15 @@ impl ComputeManager {
 
                 match device {
                     DeviceLocation::GPU(idx) => {
-                        let gpu_ref = &self.gpus[idx];
-
-                        let shared_gpu = SharedGPU {
-                            gpu: Some(gpu_ref as *const _),
-                        };
-
                         let instruction_indices: Vec<usize> =
                             per_device_ops.iter().map(|op_id| *op_id).collect();
 
                         let task = GpuBatchOperationsParams {
                             operations: per_device_ops,
                             instruction_indices,
-                            shared_gpu: Arc::new(shared_gpu),
-                            shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
+                            gpus: self.gpus.clone(),
+                            gpu_idx: idx,
+                            tensor_graph: self.tensor_graph.clone(),
                         };
 
                         futures.push(
@@ -638,7 +634,7 @@ impl ComputeManager {
                         for &operation_id in &per_device_ops {
                             let task = SingleCpuOperationParams {
                                 operation_id,
-                                shared_tensor_graph: Arc::new(shared_tensor_graph.clone()),
+                                tensor_graph: self.tensor_graph.clone(),
                             };
                             futures.push(
                                 self.thread_pool
@@ -749,40 +745,24 @@ impl ComputeManager {
     }
 }
 
-impl Drop for ComputeManager {
-    fn drop(&mut self) {
-        // Used to transmute a reference to tensorgraph and gpu for worker threads
-        // so manual drop was required because of 'static lifetime.
-        // This will remain despite the change for now just incase.
-        // Will remove in future when code changes are less breaking and possibly safer.
-        {
-            self.tensor_graph.tensors = Vec::new();
-        }
-        {
-            self.gpus = Vec::new();
-        }
-    }
-}
-
 struct GpuBatchOperationsParams {
     operations: Vec<OperationId>,
     instruction_indices: Vec<usize>,
-    shared_gpu: Arc<SharedGPU>,
-    shared_tensor_graph: Arc<SharedTensorGraph>,
+    gpus: Arc<Vec<GPU>>,
+    gpu_idx: usize,
+    tensor_graph: Arc<TensorGraph>,
 }
 
 struct SingleCpuOperationParams {
     operation_id: OperationId,
-    shared_tensor_graph: Arc<SharedTensorGraph>,
+    tensor_graph: Arc<TensorGraph>,
 }
 
 zp_define_task_fn!(
     gpu_batch_operations_task,
     GpuBatchOperationsParams,
     |params| {
-        let Some(gpu) = params.shared_gpu.gpu.map(|gpu_ptr| unsafe { &*gpu_ptr }) else {
-            return;
-        };
+        let gpu = &params.gpus[params.gpu_idx];
 
         if params.operations.is_empty() {
             return;
@@ -810,14 +790,13 @@ zp_define_task_fn!(
             }
 
             let mut valid_buffers = Vec::new();
-            let tensor_graph = &*params.shared_tensor_graph.tensor_graph;
 
             for i in 0..params.operations.len() {
                 let instruction =
-                    tensor_graph.get_instruction_or_panic(params.instruction_indices[i]);
+                    params.tensor_graph.get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
-                    .create_command_buffer(gpu, command_buffers[i], tensor_graph)
+                    .create_command_buffer(&gpu, command_buffers[i], &params.tensor_graph)
                     .is_ok()
                 {
                     valid_buffers.push(command_buffers[i]);
@@ -845,18 +824,16 @@ zp_define_task_fn!(
     single_cpu_operation_task,
     SingleCpuOperationParams,
     |params| {
-        unsafe {
-            let tensor_graph_ptr = params.shared_tensor_graph.tensor_graph as *mut TensorGraph;
 
-            if params.operation_id >= (*tensor_graph_ptr).operations.len() {
-                eprintln!("Invalid instruction index: {}", params.operation_id);
-                return;
-            }
+        let tensor_graph = &params.tensor_graph;
 
-            let instruction_ptr = &(&(*tensor_graph_ptr).operations)[params.operation_id]
-                as *const Box<dyn Instruction>;
-
-            (*instruction_ptr).execute_cpu(&mut *tensor_graph_ptr);
+        if params.operation_id >= tensor_graph.operations.len() {
+            eprintln!("Invalid instruction index: {}", params.operation_id);
+            return;
         }
+
+        // Obtain the instruction via the graph helper and execute it.
+        let instruction = tensor_graph.get_instruction_or_panic(params.operation_id);
+        instruction.execute_cpu(tensor_graph.clone());
     }
 );

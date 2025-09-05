@@ -3,7 +3,7 @@ use crate::{
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
 use vulkanalia::vk;
 
 use super::instruction::Instruction;
@@ -51,15 +51,11 @@ impl Instruction for TransferToDeviceInstruction {
         _command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Get the tensors from the tensor graph
-        let src_tensor = tensor_graph.tensors.get(self.src).unwrap();
-        let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
+        let data = tensor_graph.tensors.get(self.src).unwrap().read();
 
-        // Get the raw bytes from the source tensor and write them to destination
-        let data = src_tensor.data.get_data();
-        dst_tensor.data.update_data(data);
+        // Then get a mutable reference to the destination and write the data
+        tensor_graph.tensors[self.dst].write(&data);
 
-        // No need for a command buffer for data transfer
         Ok(())
     }
 
@@ -67,8 +63,8 @@ impl Instruction for TransferToDeviceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
-        let data = tensor_graph.tensors[self.src].data.get_data();
-        tensor_graph.tensors[self.dst].data.update_data(data);
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
+        let data = tensor_graph.tensors[self.src].read();
+        tensor_graph.tensors[self.dst].write(&data);
     }
 }

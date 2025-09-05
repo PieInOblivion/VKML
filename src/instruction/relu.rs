@@ -4,7 +4,7 @@ use crate::{
 };
 use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
-    ptr,
+    ptr, sync::Arc,
 };
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -156,7 +156,7 @@ impl Instruction for ReLUInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
         let src_data = tensor_graph.tensors[self.src].data.read_data();
         let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 

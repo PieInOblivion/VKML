@@ -2,7 +2,7 @@ use crate::{
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
 use vulkanalia::vk;
 
 use super::instruction::Instruction;
@@ -47,7 +47,7 @@ impl Instruction for ConcatInstruction {
         &self,
         _gpu: &GPU,
         _command_buffer: vk::CommandBuffer,
-        _tensor_graph: &TensorGraph,
+        _tensor_graph: &mut TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Complex operation that would require custom shaders
         Err("GPU implementation of Concat not yet supported".into())
@@ -57,7 +57,7 @@ impl Instruction for ConcatInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
         let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
         assert_eq!(

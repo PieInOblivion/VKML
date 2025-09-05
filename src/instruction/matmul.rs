@@ -3,7 +3,7 @@ use crate::{
     tensor::{compute_tensor::ComputeTensor, device::TensorStorage},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
@@ -84,7 +84,7 @@ impl Instruction for MatMulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
         assert!(
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use MatMul for in-place operation"

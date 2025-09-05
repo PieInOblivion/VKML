@@ -3,7 +3,7 @@ use crate::{
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
@@ -49,11 +49,11 @@ impl Instruction for AddInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        tensor_graph: &mut TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_mem = tensor_graph.get_gpu_memory_or_panic(self.src1);
-        let src2_mem = tensor_graph.get_gpu_memory_or_panic(self.src2);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
+        let src1_mem = tensor_graph.tensors[self.src1].get_gpu_memory_or_panic();
+        let src2_mem = tensor_graph.tensors[self.src2].get_gpu_memory_or_panic();
+        let dst_mem = tensor_graph.tensors[self.dst].get_gpu_memory_or_panic();
 
         // Get tensor descriptions for calculating broadcast shapes and strides
         let src1_desc = &tensor_graph.tensors[self.src1].desc;
@@ -280,37 +280,37 @@ impl Instruction for AddInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
         assert!(
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use Add for in-place operation"
         );
 
-        let src1 = &tensor_graph.tensors[self.src1];
-        let src2 = &tensor_graph.tensors[self.src2];
-        let dst = &tensor_graph.tensors[self.dst];
+        // Do all immutable work first so no immutable borrow overlaps the mutable borrow below.
+        let src1_bytes = tensor_graph.tensors[self.src1].read();
+        let src2_bytes = tensor_graph.tensors[self.src2].read();
 
-        let a = src1.desc.to_dims();
-        let b = src2.desc.to_dims();
-        let c = dst.desc.to_dims();
+        let a = tensor_graph.tensors[self.src1].desc.to_dims();
+        let b = tensor_graph.tensors[self.src2].desc.to_dims();
+        let c = tensor_graph.tensors[self.dst].desc.to_dims();
 
         let bc = TensorDesc::broadcast_shape(&a, &b)
             .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
-
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        let mut dd = dst.data.write_data();
-        let d1 = src1.data.read_data();
-        let d2 = src2.data.read_data();
+        // Now take the mutable borrow of dst (no overlapping immutable borrows remain).
+        let dst = &mut tensor_graph.tensors[self.dst];
+        let dd = dst.get_cpu_memory_mut_slice_or_panic();
 
+        // Existing element loop (leave semantics unchanged)
         for i in 0..dd.len() {
             let idxs = TensorDesc::unravel(i, &c);
             let off1 = TensorDesc::offset(&idxs, &sa);
             let off2 = TensorDesc::offset(&idxs, &sb);
-            dd[i] = d1[off1] + d2[off2];
+            dd[i] = src1_bytes[off1] + src2_bytes[off2];
         }
     }
 }

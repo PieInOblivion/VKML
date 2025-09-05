@@ -3,7 +3,7 @@ use crate::{
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
@@ -92,7 +92,7 @@ impl Instruction for ReshapeInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &mut TensorGraph) {
+    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
         let src_data = tensor_graph.tensors[self.src].data.read_data();
         let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
 
