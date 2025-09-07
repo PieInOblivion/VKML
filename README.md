@@ -31,7 +31,8 @@ The proof of concept goal for this project will be met when we are able to bench
 * Interface for manual instruction and tensor modification into model and/or tensor graphs
 * Backwards Pass
 * Multiple data formats
-* Investigate lock free execution scheduling. Should be faster than precomputed parrallel stages 
+* Investigate lock free execution scheduling. Should be faster than precomputed parrallel stages
+* Dynamic graph support
 
 ### Image Loading
 * Current proof of concept implementation stores all file names in memory

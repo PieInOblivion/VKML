@@ -19,9 +19,12 @@ impl OnnxParser {
         let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
         let mut tensor_name_to_id: HashMap<String, TensorId> = HashMap::new();
 
+        let mut memory_requirements = 0;
+
         // Create tensors from ONNX model
         for (name, onnx_tensor) in &onnx_model.tensors {
             let tensor_desc = Self::convert_onnx_tensor_to_desc_f32(onnx_tensor)?;
+            memory_requirements += tensor_desc.size_in_bytes();
             let compute_tensor = if onnx_tensor.has_data() {
                 Tensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
             } else {
@@ -63,6 +66,7 @@ impl OnnxParser {
             output_tensors,
             tensor_to_layer,
             operation_to_layer,
+            memory_requirements,
         })
     }
 

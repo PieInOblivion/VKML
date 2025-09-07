@@ -217,9 +217,9 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
     println!("Output Tensors: {}", cm.tensor_graph.output_tensors.len());
     println!("Execution Stages: {}", execution_plan.len());
 
-    let total_memory = cm.tensor_graph.calculate_memory_requirements();
+    let total_memory = cm.tensor_graph.memory_requirements;
     println!(
         "\nMemory Requirements: {}",
-        cm.format_memory_mb(total_memory)
+        cm.format_memory_mb(total_memory as u64)
     );
 }

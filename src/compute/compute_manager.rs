@@ -62,7 +62,7 @@ impl ComputeManager {
             tensor_graph: Arc::new(tensor_graph),
         };
 
-        let total_memory = manager.tensor_graph.calculate_memory_requirements();
+        let total_memory = manager.tensor_graph.memory_requirements as u64;
         let total_available: u64 = manager
             .gpus
             .iter()
@@ -135,7 +135,7 @@ impl ComputeManager {
             tensor_graph: Arc::new(tensor_graph),
         };
 
-        let total_memory = manager.tensor_graph.calculate_memory_requirements();
+        let total_memory = manager.tensor_graph.memory_requirements as u64;
         let total_available: u64 = manager
             .gpus
             .iter()
@@ -442,8 +442,7 @@ impl ComputeManager {
         for (&op_id, (new_inputs, new_outputs)) in &operation_remappings {
             // Adjust for inserted transfer operations
             let adjusted_op_id = op_id + op_id_shift;
-            Arc::get_mut(&mut self.tensor_graph).unwrap().operations
-                [adjusted_op_id]
+            Arc::get_mut(&mut self.tensor_graph).unwrap().operations[adjusted_op_id]
                 .remap_tensor_ids(&new_inputs, &new_outputs);
         }
 
@@ -792,8 +791,9 @@ zp_define_task_fn!(
             let mut valid_buffers = Vec::new();
 
             for i in 0..params.operations.len() {
-                let instruction =
-                    params.tensor_graph.get_instruction_or_panic(params.instruction_indices[i]);
+                let instruction = params
+                    .tensor_graph
+                    .get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
                     .create_command_buffer(&gpu, command_buffers[i], &params.tensor_graph)
@@ -824,7 +824,6 @@ zp_define_task_fn!(
     single_cpu_operation_task,
     SingleCpuOperationParams,
     |params| {
-
         let tensor_graph = &params.tensor_graph;
 
         if params.operation_id >= tensor_graph.operations.len() {

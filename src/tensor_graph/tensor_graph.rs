@@ -32,6 +32,8 @@ pub struct TensorGraph {
     // Vector mapping from tensor indices to layer IDs
     pub tensor_to_layer: Vec<Option<LayerId>>,
     pub operation_to_layer: Vec<LayerId>,
+
+    pub memory_requirements: usize,
 }
 
 impl TensorGraph {
@@ -48,6 +50,8 @@ impl TensorGraph {
 
         let mut global_tensor_map: HashMap<(LayerId, usize), TensorId> = HashMap::new();
         let mut layer_executions: HashMap<LayerId, LayerExecution> = HashMap::new();
+
+        let mut memory_requirements = 0;
 
         // --- Pass 1: Build LayerExecutions (determines local tensor descs and ops for each layer) ---
         for &layer_id in execution_order {
@@ -95,6 +99,7 @@ impl TensorGraph {
                     // Only if not an input reference
                     let global_tensor_id = tensors.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
+                    memory_requirements += local_tensor_desc.size_in_bytes();
                     tensors.push(Tensor::new_unallocated(local_tensor_desc.clone()));
                     tensor_to_layer_map.push(Some(layer_id));
                     // Ensure latest_producer_op_for_tensor is large enough
@@ -186,6 +191,7 @@ impl TensorGraph {
             output_tensors: output_tensors_model,
             tensor_to_layer: tensor_to_layer_map,
             operation_to_layer: operation_to_layer_map,
+            memory_requirements,
         })
     }
 
@@ -302,13 +308,6 @@ impl TensorGraph {
         } else {
             Vec::new()
         }
-    }
-
-    pub fn calculate_memory_requirements(&self) -> u64 {
-        self.tensors
-            .iter()
-            .map(|tensor| tensor.desc.size_in_bytes() as u64)
-            .sum()
     }
 
     pub fn get_dag_input_tensor_ids(&self) -> &[TensorId] {
