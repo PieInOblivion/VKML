@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::importers::onnx_parser::OnnxParser;
 use crate::tensor::tensor::{DeviceId, Tensor};
@@ -31,7 +31,7 @@ pub struct ComputeManager {
     thread_pool: Arc<ZeroPool>,
 
     pub model: GraphModel,
-    pub tensor_graph: Arc<TensorGraph>,
+    pub tensor_graph: TensorGraph,
 }
 
 impl ComputeManager {
@@ -59,7 +59,7 @@ impl ComputeManager {
             cpu,
             thread_pool,
             model,
-            tensor_graph: Arc::new(tensor_graph),
+            tensor_graph: tensor_graph,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -132,7 +132,7 @@ impl ComputeManager {
             cpu,
             thread_pool,
             model,
-            tensor_graph: Arc::new(tensor_graph),
+            tensor_graph: tensor_graph,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -245,8 +245,11 @@ impl ComputeManager {
             let mut memory_needed = 0;
             for &tensor_id in input_tensors.iter().chain(output_tensors.iter()) {
                 if tensor_locations[tensor_id].is_none() {
-                    memory_needed +=
-                        self.tensor_graph.tensors[tensor_id].desc.size_in_bytes() as u64;
+                    memory_needed += self
+                        .tensor_graph
+                        .tensor_read(tensor_id)
+                        .desc
+                        .size_in_bytes() as u64;
                 }
             }
 
@@ -272,8 +275,11 @@ impl ComputeManager {
                 // Check if tensor is unallocated
                 if tensor_locations[tensor_id].is_none() {
                     // Plan to allocate the tensor on current device
-                    let tensor_size =
-                        self.tensor_graph.tensors[tensor_id].desc.size_in_bytes() as u64;
+                    let tensor_size = self
+                        .tensor_graph
+                        .tensor_read(tensor_id)
+                        .desc
+                        .size_in_bytes() as u64;
                     tensor_locations[tensor_id] = Some(current_device.clone());
                     available_memory[current_device_idx].1 -= tensor_size;
 
@@ -289,7 +295,7 @@ impl ComputeManager {
                     } else {
                         // Create a new tensor on current device
                         let new_tensor_id = self.tensor_graph.tensors.len() + new_tensors.len();
-                        let original_tensor = &self.tensor_graph.tensors[tensor_id];
+                        let original_tensor = self.tensor_graph.tensor_read(tensor_id);
 
                         // Preserve the layer association
                         let original_layer_id = self.tensor_graph.tensor_to_layer[tensor_id];
@@ -342,8 +348,11 @@ impl ComputeManager {
                 // Check if tensor is unallocated
                 if tensor_locations[tensor_id].is_none() {
                     // Plan to allocate the tensor on current device
-                    let tensor_size =
-                        self.tensor_graph.tensors[tensor_id].desc.size_in_bytes() as u64;
+                    let tensor_size = self
+                        .tensor_graph
+                        .tensor_read(tensor_id)
+                        .desc
+                        .size_in_bytes() as u64;
                     tensor_locations[tensor_id] = Some(current_device.clone());
                     available_memory[current_device_idx].1 -= tensor_size;
 
@@ -359,7 +368,7 @@ impl ComputeManager {
                     } else {
                         // Create a new tensor on current device
                         let new_tensor_id = self.tensor_graph.tensors.len() + new_tensors.len();
-                        let original_tensor = &self.tensor_graph.tensors[tensor_id];
+                        let original_tensor = self.tensor_graph.tensor_read(tensor_id);
 
                         // Preserve the layer association
                         let original_layer_id = self.tensor_graph.tensor_to_layer[tensor_id];
@@ -407,16 +416,12 @@ impl ComputeManager {
         // 1. Create all new tensors for transfers
         for (tensor_desc, device_location, _weight_init, layer_id) in new_tensors {
             // Add the new tensor
-            Arc::get_mut(&mut self.tensor_graph)
-                .unwrap()
+            self.tensor_graph
                 .tensors
-                .push(Tensor::new_unallocated(tensor_desc));
+                .push(RwLock::new(Tensor::new_unallocated(tensor_desc)));
 
             // Add the same layer ID to maintain the connection
-            Arc::get_mut(&mut self.tensor_graph)
-                .unwrap()
-                .tensor_to_layer
-                .push(layer_id);
+            self.tensor_graph.tensor_to_layer.push(layer_id);
 
             tensor_locations.push(Some(device_location));
         }
@@ -427,12 +432,10 @@ impl ComputeManager {
             let adjusted_pos = insert_before_op + op_id_shift;
             // Preserve layer mapping for the new transfer op by copying the layer of the original op
             let layer_id = self.tensor_graph.operation_to_layer[insert_before_op];
-            Arc::get_mut(&mut self.tensor_graph)
-                .unwrap()
+            self.tensor_graph
                 .operations
                 .insert(adjusted_pos, transfer_instr);
-            Arc::get_mut(&mut self.tensor_graph)
-                .unwrap()
+            self.tensor_graph
                 .operation_to_layer
                 .insert(adjusted_pos, layer_id);
             op_id_shift += 1;
@@ -442,7 +445,7 @@ impl ComputeManager {
         for (&op_id, (new_inputs, new_outputs)) in &operation_remappings {
             // Adjust for inserted transfer operations
             let adjusted_op_id = op_id + op_id_shift;
-            Arc::get_mut(&mut self.tensor_graph).unwrap().operations[adjusted_op_id]
+            self.tensor_graph.operations[adjusted_op_id]
                 .remap_tensor_ids(&new_inputs, &new_outputs);
         }
 
@@ -453,9 +456,11 @@ impl ComputeManager {
             }
 
             if let Some(device_location) = &tensor_locations[tensor_id] {
-                if self.tensor_graph.tensors[tensor_id].device == DeviceId::Unallocated {
+                let tensor = self.tensor_graph.tensor_read(tensor_id);
+                if tensor.device == DeviceId::Unallocated {
                     // Get the tensor description first
-                    let tensor_desc = self.tensor_graph.tensors[tensor_id].desc.clone();
+                    let tensor_desc = tensor.desc.clone();
+                    drop(tensor);
 
                     // Get the appropriate weight initialization
                     let weight_init = self.get_weight_init_for_tensor(tensor_id);
@@ -465,7 +470,7 @@ impl ComputeManager {
                         self.allocate_tensor(&tensor_desc, device_location, &weight_init)?;
 
                     // Update the tensor with the allocated data
-                    Arc::get_mut(&mut self.tensor_graph).unwrap().tensors[tensor_id] = tensor_data;
+                    self.tensor_graph.tensors[tensor_id] = RwLock::new(tensor_data);
                 }
             }
         }
@@ -549,7 +554,7 @@ impl ComputeManager {
         // Load input data into tensors
         for (batch_idx, batch) in batches.into_iter().enumerate() {
             let tensor_id = input_tensor_ids[batch_idx];
-            let tensor = &self.tensor_graph.tensors[tensor_id];
+            let tensor = self.tensor_graph.tensor_read(tensor_id);
 
             // Validate size after conversion
             let expected_bytes = tensor.desc.size_in_bytes();
@@ -562,7 +567,9 @@ impl ComputeManager {
                 )));
             }
 
-            Arc::get_mut(&mut self.tensor_graph).unwrap().tensors[tensor_id].write(&batch.read());
+            self.tensor_graph
+                .tensor_write(tensor_id)
+                .write(&batch.read());
         }
 
         // Execute the model
@@ -573,7 +580,7 @@ impl ComputeManager {
         let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
 
         for &tensor_id in output_tensor_ids.iter() {
-            let tensor = &self.tensor_graph.tensors[tensor_id];
+            let tensor = self.tensor_graph.tensor_read(tensor_id);
 
             // Get data from tensor (currently returns f32, but will return native type in future)
             let output_data = tensor.read();
@@ -621,7 +628,7 @@ impl ComputeManager {
                             instruction_indices,
                             gpus: self.gpus.clone(),
                             gpu_idx: idx,
-                            tensor_graph: self.tensor_graph.clone(),
+                            tensor_graph: &self.tensor_graph,
                         };
 
                         futures.push(
@@ -633,7 +640,7 @@ impl ComputeManager {
                         for &operation_id in &per_device_ops {
                             let task = SingleCpuOperationParams {
                                 operation_id,
-                                tensor_graph: self.tensor_graph.clone(),
+                                tensor_graph: &self.tensor_graph,
                             };
                             futures.push(
                                 self.thread_pool
@@ -679,10 +686,10 @@ impl ComputeManager {
 
         // Check input tensors to determine device
         for &tensor_id in &input_tensor_ids {
-            match &self.tensor_graph.tensors[tensor_id].device {
+            match self.tensor_graph.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
-                    return Ok(DeviceLocation::GPU(*gpu_idx));
+                    return Ok(DeviceLocation::GPU(gpu_idx));
                 }
                 DeviceId::Unallocated => continue,
             }
@@ -692,10 +699,10 @@ impl ComputeManager {
         let output_tensor_ids = self.tensor_graph.get_operation_outputs(*op_id);
 
         for &tensor_id in &output_tensor_ids {
-            match &self.tensor_graph.tensors[tensor_id].device {
+            match self.tensor_graph.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
-                    return Ok(DeviceLocation::GPU(*gpu_idx));
+                    return Ok(DeviceLocation::GPU(gpu_idx));
                 }
                 DeviceId::Unallocated => continue,
             }
@@ -744,17 +751,17 @@ impl ComputeManager {
     }
 }
 
-struct GpuBatchOperationsParams {
+struct GpuBatchOperationsParams<'a> {
     operations: Vec<OperationId>,
     instruction_indices: Vec<usize>,
     gpus: Arc<Vec<GPU>>,
     gpu_idx: usize,
-    tensor_graph: Arc<TensorGraph>,
+    tensor_graph: &'a TensorGraph,
 }
 
-struct SingleCpuOperationParams {
+struct SingleCpuOperationParams<'a> {
     operation_id: OperationId,
-    tensor_graph: Arc<TensorGraph>,
+    tensor_graph: &'a TensorGraph,
 }
 
 zp_define_task_fn!(
@@ -833,6 +840,6 @@ zp_define_task_fn!(
 
         // Obtain the instruction via the graph helper and execute it.
         let instruction = tensor_graph.get_instruction_or_panic(params.operation_id);
-        instruction.execute_cpu(tensor_graph.clone());
+        instruction.execute_cpu(tensor_graph);
     }
 );

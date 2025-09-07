@@ -52,14 +52,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             let inputs = cm.tensor_graph.get_operation_inputs(*op_id);
             println!("  Inputs:");
             for input in inputs {
-                let tensor = &cm.tensor_graph.tensors[input];
+                let tensor = cm.tensor_graph.tensor_read(input);
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
-                    DeviceId::GPU(gpu_idx) => {
-                        format!("GPU {}", gpu_idx)
-                    }
+                    DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
                     DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
@@ -87,14 +85,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             let outputs = cm.tensor_graph.get_operation_outputs(*op_id);
             println!("  Outputs:");
             for output in outputs {
-                let tensor = &cm.tensor_graph.tensors[output];
+                let tensor = cm.tensor_graph.tensor_read(output);
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
-                    DeviceId::GPU(gpu_idx) => {
-                        format!("GPU {}", gpu_idx)
-                    }
+                    DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
                     DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
@@ -196,7 +192,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 .collect();
 
             for tensor_id in layer_tensors {
-                let tensor = &cm.tensor_graph.tensors[tensor_id];
+                let tensor = cm.tensor_graph.tensor_read(tensor_id);
 
                 println!(
                     "    Tensor {}: Shape {:?}, Size: {}",

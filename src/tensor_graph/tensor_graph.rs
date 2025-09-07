@@ -5,7 +5,10 @@ use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::{desc::TensorDesc, tensor::Tensor},
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
 
 // TODO:
 // This representation of tensor dag needs changing.
@@ -22,8 +25,8 @@ pub type OperationId = usize;
 pub type TensorId = usize;
 
 pub struct TensorGraph {
-    pub tensors: Vec<Tensor>,                  // Indexed by global TensorId
-    pub operations: Vec<Box<dyn Instruction>>, // Using global TensorIds
+    pub tensors: Vec<RwLock<Tensor>>,
+    pub operations: Vec<Box<dyn Instruction>>,
 
     // Graph entry and exit points
     pub input_tensors: Vec<TensorId>,
@@ -100,7 +103,9 @@ impl TensorGraph {
                     let global_tensor_id = tensors.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
                     memory_requirements += local_tensor_desc.size_in_bytes();
-                    tensors.push(Tensor::new_unallocated(local_tensor_desc.clone()));
+                    tensors.push(RwLock::new(Tensor::new_unallocated(
+                        local_tensor_desc.clone(),
+                    )));
                     tensor_to_layer_map.push(Some(layer_id));
                     // Ensure latest_producer_op_for_tensor is large enough
                     if global_tensor_id >= latest_producer_op_for_tensor.len() {
@@ -316,5 +321,13 @@ impl TensorGraph {
 
     pub fn get_dag_output_tensor_ids(&self) -> &[TensorId] {
         &self.output_tensors
+    }
+
+    pub fn tensor_read(&self, tensor_id: usize) -> RwLockReadGuard<'_, Tensor> {
+        self.tensors[tensor_id].read().unwrap()
+    }
+
+    pub fn tensor_write(&self, tensor_id: usize) -> RwLockWriteGuard<'_, Tensor> {
+        self.tensors[tensor_id].write().unwrap()
     }
 }

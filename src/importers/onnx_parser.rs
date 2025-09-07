@@ -8,7 +8,7 @@ use onnx_extractor::{
     AttributeValue, DataType, OnnxModel, OperationInfo as OnnxOperationInfo,
     TensorInfo as OnnxTensorInfo,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::RwLock};
 
 pub struct OnnxParser;
 
@@ -32,7 +32,7 @@ impl OnnxParser {
             };
 
             let tensor_id = tensors.len();
-            tensors.push(compute_tensor);
+            tensors.push(RwLock::new(compute_tensor));
             tensor_name_to_id.insert(name.clone(), tensor_id);
         }
 

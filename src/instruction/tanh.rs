@@ -4,7 +4,8 @@ use crate::{
 };
 use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
-    ptr, sync::Arc,
+    ptr,
+    sync::Arc,
 };
 use vulkanalia::{vk, vk::DeviceV1_0};
 

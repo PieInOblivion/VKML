@@ -3,7 +3,7 @@ use crate::{
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;
@@ -207,7 +207,7 @@ impl Instruction for AddInplaceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: Arc<TensorGraph>) {
+    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
         let a = &tensor_graph.tensors[self.dst];
         let b = &tensor_graph.tensors[self.src1];
         let da = a.desc.to_dims();

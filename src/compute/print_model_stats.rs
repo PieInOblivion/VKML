@@ -96,7 +96,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
                         if output_idx < connected_layer_outputs.len() {
                             let output_tensor_id = connected_layer_outputs[output_idx];
-                            if let Some(tensor) = cm.tensor_graph.tensors.get(output_tensor_id) {
+                            if output_tensor_id < cm.tensor_graph.tensors.len() {
+                                let tensor = cm.tensor_graph.tensor_read(output_tensor_id);
                                 let dims = tensor.desc.to_dims();
                                 return Some(format_dimensions(&dims));
                             }
@@ -107,8 +108,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
                     .join(", ")
             };
 
-            let output_shapes_str = if let Some(tensor) = cm.tensor_graph.tensors.get(output_tensor)
-            {
+            let output_shapes_str = if output_tensor < cm.tensor_graph.tensors.len() {
+                let tensor = cm.tensor_graph.tensor_read(output_tensor);
                 format_dimensions(&tensor.desc.to_dims())
             } else {
                 "Unknown".to_string()
@@ -119,15 +120,12 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let memory_bytes = layer_tensor_ids
                 .iter()
-                .filter_map(|&id| cm.tensor_graph.tensors.get(id))
-                .map(|t| t.desc.size_in_bytes() as u64)
+                .map(|&id| cm.tensor_graph.tensor_read(id).desc.size_in_bytes() as u64)
                 .sum();
 
-            let device_location = match &cm.tensor_graph.tensors[output_tensor].device {
+            let device_location = match &cm.tensor_graph.tensor_read(output_tensor).device {
                 DeviceId::CPU => "CPU".to_string(),
-                DeviceId::GPU(gpu_idx) => {
-                    format!("GPU {}", gpu_idx)
-                }
+                DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
                 DeviceId::Unallocated => "Unallocated".to_string(),
             };
 
@@ -309,6 +307,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     fn bytes_to_f32_vec(raw: &[u8], dtype: DataType) -> Option<Vec<f32>> {
         match dtype {
             DataType::Uint8 => Some(raw.iter().map(|&b| b as f32).collect()),
+            DataType::Int8 => Some(raw.iter().map(|&b| (b as i8) as f32).collect()),
             DataType::Uint16 => {
                 if raw.len() % 2 != 0 {
                     return None;
@@ -319,7 +318,6 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                         .collect(),
                 )
             }
-            DataType::Int8 => Some(raw.iter().map(|&b| (b as i8) as f32).collect()),
             DataType::Int16 => {
                 if raw.len() % 2 != 0 {
                     return None;
@@ -327,6 +325,52 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 Some(
                     raw.chunks_exact(2)
                         .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32)
+                        .collect(),
+                )
+            }
+            DataType::Uint32 => {
+                if raw.len() % 4 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(4)
+                        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32)
+                        .collect(),
+                )
+            }
+            DataType::Int32 => {
+                if raw.len() % 4 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(4)
+                        .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32)
+                        .collect(),
+                )
+            }
+            DataType::Uint64 => {
+                if raw.len() % 8 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(8)
+                        .map(|c| {
+                            u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
+                                as f32
+                        })
+                        .collect(),
+                )
+            }
+            DataType::Int64 => {
+                if raw.len() % 8 != 0 {
+                    return None;
+                }
+                Some(
+                    raw.chunks_exact(8)
+                        .map(|c| {
+                            i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
+                                as f32
+                        })
                         .collect(),
                 )
             }
@@ -362,8 +406,8 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
         .collect();
 
-    for tensor_id in &tensor_ids {
-        let tensor = &cm.tensor_graph.tensors[*tensor_id];
+    for &tensor_id in &tensor_ids {
+        let tensor = cm.tensor_graph.tensor_read(tensor_id);
         let raw = tensor.read();
         let gpu_idx = match &tensor.device {
             DeviceId::GPU(idx) => Some(*idx),
@@ -411,24 +455,28 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     let output_tensors: Vec<_> = tensor_ids
         .iter()
         .filter(|&&id| {
-            // Output tensor is either:
-            // 1. Explicitly marked as model output
-            cm.tensor_graph.output_tensors.contains(&id) ||
-            // 2. Used as input by operations in other layers
-            cm.tensor_graph.get_tensor_consumers(id).iter().any(|&op_id| {
-                let op_inputs = cm.tensor_graph.get_operation_inputs(op_id);
-                let first_input = op_inputs.first().cloned();
-                let op_layer = first_input.and_then(|id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten());
-                op_layer.is_some() && op_layer != Some(layer_id)
-            })
+            cm.tensor_graph.output_tensors.contains(&id)
+                || cm
+                    .tensor_graph
+                    .get_tensor_consumers(id)
+                    .iter()
+                    .any(|&op_id| {
+                        let op_inputs = cm.tensor_graph.get_operation_inputs(op_id);
+                        let first_input = op_inputs.first().cloned();
+                        let op_layer = first_input.and_then(|id| {
+                            cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten()
+                        });
+                        op_layer.is_some() && op_layer != Some(layer_id)
+                    })
         })
+        .cloned()
         .collect();
 
     if output_tensors.is_empty() {
         println!("  No explicit output tensors found");
     } else {
-        for &tensor_id in output_tensors {
-            let tensor = &cm.tensor_graph.tensors[tensor_id];
+        for &tensor_id in &output_tensors {
+            let tensor = cm.tensor_graph.tensor_read(tensor_id);
             println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.to_dims());
         }
     }

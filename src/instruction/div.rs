@@ -3,7 +3,10 @@ use crate::{
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::{fmt::{Debug, Formatter, Result as FmtResult}, sync::Arc};
+use std::{
+    fmt::{Debug, Formatter, Result as FmtResult},
+    sync::Arc,
+};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use super::instruction::Instruction;

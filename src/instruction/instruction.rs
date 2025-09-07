@@ -3,7 +3,7 @@ use crate::{
     gpu::vk_gpu::GPU,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 use vulkanalia::vk;
 
 pub trait Instruction: Debug {
@@ -30,7 +30,7 @@ pub trait Instruction: Debug {
     }
 
     // Execute on CPU (default implementation returns error)
-    fn execute_cpu(&self, _tensor_graph: Arc<TensorGraph>) {
+    fn execute_cpu(&self, _tensor_graph: &TensorGraph) {
         panic!("CPU execution not implemented for {:?}", self)
     }
 
