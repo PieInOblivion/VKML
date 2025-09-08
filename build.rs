@@ -1,54 +1,61 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    // Tell cargo to rerun this script if shaders change
-    println!("cargo:rerun-if-changed=src/shaders/src");
+    // rerun if anything under src/instruction changes
+    println!("cargo:rerun-if-changed=src/instruction");
 
-    // Set up shader directories
-    let shader_src_dir = PathBuf::from("src/shaders/src");
-    let shader_out_dir = PathBuf::from("src/shaders");
+    // write compiled shaders to OUT_DIR/shaders
+    // this requires every shader name be unique, which should be fine
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set")).join("shaders");
+    fs::create_dir_all(&out_dir).expect("failed to create OUT_DIR/shaders");
 
-    // Compile all compute shaders in the source directory
-    compile_shaders(&shader_src_dir, &shader_out_dir);
-}
+    // iteratively walk src/instruction and compile any .comp files found
+    let mut stack = vec![PathBuf::from("src/instruction")];
 
-fn compile_shaders(src_dir: &Path, out_dir: &Path) {
-    // Read all files in the source directory
-    let entries = fs::read_dir(src_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "comp")
-                .unwrap_or(false)
-        });
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
 
-    for entry in entries {
-        let src_path = entry.path();
-        let file_name = src_path.file_name().unwrap().to_str().unwrap();
-        let out_path = out_dir.join(file_name.replace(".comp", ".spv"));
+                if path.extension().and_then(|s| s.to_str()) == Some("comp") {
+                    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap();
+                    let out_path = out_dir.join(file_name.replace(".comp", ".spv"));
 
-        // Compile the shader using glslc
-        let output = Command::new("glslc")
-            .arg("--target-env=vulkan1.0")
-            .arg("-fshader-stage=compute")
-            .arg("-o")
-            .arg(&out_path)
-            .arg(&src_path)
-            .output()
-            .expect("Failed to execute glslc");
+                    let result = Command::new("glslc")
+                        .arg("--target-env=vulkan1.0")
+                        .arg("-fshader-stage=compute")
+                        .arg("-o")
+                        .arg(&out_path)
+                        .arg(&path)
+                        .output();
 
-        if !output.status.success() {
-            panic!(
-                "Failed to compile shader {}:\n{}",
-                file_name,
-                String::from_utf8_lossy(&output.stderr)
-            );
+                    match result {
+                        Ok(o) if o.status.success() => {
+                            println!(
+                                "Compiled shader: {} -> {}",
+                                path.display(),
+                                out_path.display()
+                            );
+                        }
+                        Ok(o) => panic!(
+                            "glslc failed for {}: {}",
+                            path.display(),
+                            String::from_utf8_lossy(&o.stderr)
+                        ),
+                        Err(e) => panic!(
+                            "failed to run glslc for {}: {}. Install glslc or the Vulkan SDK.",
+                            path.display(),
+                            e
+                        ),
+                    }
+                }
+            }
         }
-
-        println!("Successfully compiled: {}", file_name);
     }
 }

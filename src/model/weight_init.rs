@@ -6,11 +6,17 @@ use std::ptr;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 use crate::dataloader::error::VKMLError;
-use crate::gpu::compute_pipelines::GPUMemoryOperation;
 use crate::gpu::gpu_memory::GPUMemory;
 use crate::gpu::vk_gpu::GPU;
+use crate::instruction::gpu_operations::GPUMemoryOperation;
 use crate::tensor::desc::TensorDesc;
 use onnx_extractor::DataType;
+
+const F32_INIT_XAVIER_SHADER: &[u8] = include_shader!("f32_init_xavier.spv");
+const F32_INIT_HE_SHADER: &[u8] = include_shader!("f32_init_he.spv");
+const F32_INIT_UNIFORM_SHADER: &[u8] = include_shader!("f32_init_uniform.spv");
+const F32_INIT_NORMAL_SHADER: &[u8] = include_shader!("f32_init_normal.spv");
+const F32_INIT_CONSTANT_SHADER: &[u8] = include_shader!("f32_init_constant.spv");
 
 // TODO: Make WeightInit::Load happen before reaching WeightInit compute here
 // Then make these branches !unreachable()
@@ -19,7 +25,6 @@ use onnx_extractor::DataType;
 pub enum WeightInit {
     Xavier,
     He,
-    LeCun,
     UniformRandom { min: f32, max: f32 },
     Constant(f32),
     Load(Vec<u8>, DataType),
@@ -56,16 +61,6 @@ impl WeightInit {
 
             WeightInit::He => {
                 let std_dev = (2.0 / fan_in as f32).sqrt();
-                let mut out = Vec::with_capacity(total_elements * 4);
-                for _ in 0..total_elements {
-                    let v = Self::normal_sample(0.0, std_dev);
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
-                (out, DataType::Float)
-            }
-
-            WeightInit::LeCun => {
-                let std_dev = (1.0 / fan_in as f32).sqrt();
                 let mut out = Vec::with_capacity(total_elements * 4);
                 for _ in 0..total_elements {
                     let v = Self::normal_sample(0.0, std_dev);
@@ -167,9 +162,6 @@ impl WeightInit {
             WeightInit::He => {
                 push_constants[4] = 2.0_f32.sqrt(); // default gain for ReLU
             }
-            WeightInit::LeCun => {
-                push_constants[4] = 1.0; // default gain
-            }
             WeightInit::UniformRandom { min, max } => {
                 push_constants[4] = *min;
                 push_constants[5] = *max;
@@ -185,7 +177,6 @@ impl WeightInit {
         let gpu_operation = match self {
             WeightInit::Xavier => GPUMemoryOperation::InitXavier,
             WeightInit::He => GPUMemoryOperation::InitHe,
-            WeightInit::LeCun => GPUMemoryOperation::InitLeCun,
             WeightInit::UniformRandom { .. } => GPUMemoryOperation::InitUniform,
             WeightInit::Constant(_) => GPUMemoryOperation::InitConstant,
             WeightInit::Load(_, _) => {
@@ -338,15 +329,6 @@ zp_define_task_fn!(weight_init_chunk_task, WeightInitChunkParams, |params| {
             }
             WeightInit::He => {
                 let std_dev = (2.0 / params.fan_in as f32).sqrt();
-                for i in params.start_idx..params.end_idx {
-                    let v = WeightInit::normal_sample(0.0, std_dev);
-                    let bytes = v.to_le_bytes();
-                    let base = i * 4;
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), params.data_ptr.add(base), 4);
-                }
-            }
-            WeightInit::LeCun => {
-                let std_dev = (1.0 / params.fan_in as f32).sqrt();
                 for i in params.start_idx..params.end_idx {
                     let v = WeightInit::normal_sample(0.0, std_dev);
                     let bytes = v.to_le_bytes();

@@ -1,6 +1,6 @@
 use crate::{
     dataloader::error::VKMLError,
-    instruction::{factory::Instructions, instruction::Instruction},
+    instruction::instruction::Instruction,
     tensor::{desc::TensorDesc, tensor::Tensor},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };

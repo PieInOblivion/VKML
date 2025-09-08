@@ -3,6 +3,9 @@
 //! This library provides universal compute utilisation across different hardware vendors
 //! with a focus on performance and ease of use.
 
+#[macro_use]
+mod utils;
+
 mod gpu;
 
 mod compute;
@@ -18,8 +21,6 @@ mod tensor;
 mod instruction;
 
 mod tensor_graph;
-
-mod utils;
 
 mod importers;
 

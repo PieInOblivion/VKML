@@ -78,6 +78,15 @@ impl Tensor {
         &gpu.memory
     }
 
+    pub fn get_cpu_memory_slice_or_panic(&self) -> &[u8] {
+        let any_mut = self.buffer.as_any();
+        let cpu = any_mut
+            .downcast_ref::<CpuData>()
+            .expect("Tensor is not backed by CPU storage");
+
+        cpu.data.as_slice()
+    }
+
     pub fn get_cpu_memory_mut_slice_or_panic(&mut self) -> &mut [u8] {
         let any_mut = self.buffer.as_any_mut();
         let cpu = any_mut

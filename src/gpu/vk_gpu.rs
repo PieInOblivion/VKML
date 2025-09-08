@@ -1,13 +1,21 @@
-use std::{ffi::CString, ptr, sync::Arc};
+use std::{
+    collections::HashMap,
+    ffi::CString,
+    ptr,
+    sync::{Arc, RwLock},
+};
 use vulkanalia::{
     Device, Entry, Instance,
     loader::{LIBRARY, LibloadingLoader},
-    vk::{self, DeviceV1_0, InstanceV1_0},
+    vk::{self, DeviceV1_0, Handle, InstanceV1_0},
 };
 
-use crate::{compute::memory_tracker::MemoryTracker, utils::expect_msg::ExpectMsg};
+use crate::{
+    compute::memory_tracker::MemoryTracker, instruction::gpu_operations::GPUMemoryOperation,
+    utils::expect_msg::ExpectMsg,
+};
 
-use super::{compute_pipelines::ComputePipelines, gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
+use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
 // TODO: Performance gains when needing to multiple tasks in sequence
 // TODO: Generalise the usage a little bit more
@@ -25,7 +33,8 @@ pub struct GPU {
     queue_family_index: u32,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    compute_pipelines: ComputePipelines,
+    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
+    pipeline_layout: vk::PipelineLayout,
     memory_tracker: MemoryTracker,
 }
 
@@ -196,8 +205,25 @@ impl GPU {
                 .create_descriptor_pool(&descriptor_pool_info, None)
                 .expect_msg("Failed to create descriptor pool");
 
-            let compute_pipelines = ComputePipelines::new(&device, descriptor_set_layout)
-                .expect_msg("Failed to create compute pipelines");
+            let push_constant_range = vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::COMPUTE,
+                offset: 0,
+                size: 128, // TODO: For now, have 128 bytes of push constant space
+            };
+
+            let pipeline_layout = {
+                let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
+                    s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
+                    next: std::ptr::null(),
+                    flags: vk::PipelineLayoutCreateFlags::empty(),
+                    set_layout_count: 1,
+                    set_layouts: &descriptor_set_layout,
+                    push_constant_range_count: 1,
+                    push_constant_ranges: &push_constant_range,
+                };
+
+                device.create_pipeline_layout(&pipeline_layout_info, None)?
+            };
 
             let memory_properties = instance.get_physical_device_memory_properties(physical_device);
             let total_memory = {
@@ -227,7 +253,8 @@ impl GPU {
                 queue_family_index,
                 descriptor_pool,
                 descriptor_set_layout,
-                compute_pipelines,
+                pipelines: RwLock::new(HashMap::new()),
+                pipeline_layout,
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, Kept for for testing at the moment
             })
         }
@@ -594,12 +621,105 @@ impl GPU {
         }
     }
 
-    pub fn get_device(&self) -> &Device {
-        &self.device
+    fn create_pipeline(
+        &self,
+        shader_code: &[u8],
+    ) -> Result<vk::Pipeline, Box<dyn std::error::Error>> {
+        unsafe {
+            let aligned_code: Vec<u32>;
+            if shader_code.as_ptr().align_offset(4) != 0 {
+                let mut padded = Vec::with_capacity((shader_code.len() + 3) / 4 * 4);
+                padded.extend_from_slice(shader_code);
+                while padded.len() % 4 != 0 {
+                    padded.push(0);
+                }
+                aligned_code = padded
+                    .chunks_exact(4)
+                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+            } else {
+                aligned_code = std::slice::from_raw_parts(
+                    shader_code.as_ptr() as *const u32,
+                    shader_code.len() / 4,
+                )
+                .to_vec();
+            }
+
+            let shader_info = vk::ShaderModuleCreateInfo {
+                s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
+                next: std::ptr::null(),
+                flags: vk::ShaderModuleCreateFlags::empty(),
+                code_size: aligned_code.len() * 4,
+                code: aligned_code.as_ptr(),
+            };
+
+            let shader_module = self.device.create_shader_module(&shader_info, None)?;
+
+            let entry_point = std::ffi::CString::new("main")?;
+            let pipeline_info = vk::ComputePipelineCreateInfo {
+                s_type: vk::StructureType::COMPUTE_PIPELINE_CREATE_INFO,
+                next: std::ptr::null(),
+                flags: vk::PipelineCreateFlags::empty(),
+                stage: vk::PipelineShaderStageCreateInfo {
+                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    next: std::ptr::null(),
+                    flags: vk::PipelineShaderStageCreateFlags::empty(),
+                    stage: vk::ShaderStageFlags::COMPUTE,
+                    module: shader_module,
+                    name: entry_point.as_ptr(),
+                    specialization_info: std::ptr::null(),
+                },
+                layout: self.pipeline_layout,
+                base_pipeline_handle: vk::Pipeline::null(),
+                base_pipeline_index: -1,
+            };
+
+            let pipeline = self
+                .device
+                .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                .map_err(|e| format!("Failed to create compute pipeline: {:?}", e))?
+                .0[0];
+
+            self.device.destroy_shader_module(shader_module, None);
+
+            Ok(pipeline)
+        }
     }
 
-    pub fn get_compute_pipelines(&self) -> &ComputePipelines {
-        &self.compute_pipelines
+    fn create_and_get_pipeline(&self, op: GPUMemoryOperation, shader_code: &[u8]) -> vk::Pipeline {
+        let mut compute_pipeline_write = self.pipelines.write().unwrap();
+
+        let new_pipeline = self
+            .create_pipeline(shader_code)
+            .expect_msg(&format!("Pipeline creation failed {:?}", op));
+
+        compute_pipeline_write.insert(op, new_pipeline);
+
+        new_pipeline
+    }
+
+    fn get_pipeline_for_op(&self, op: GPUMemoryOperation) -> Option<vk::Pipeline> {
+        self.pipelines.read().unwrap().get(&op).copied()
+    }
+
+    pub fn get_or_create_pipeline(
+        &self,
+        op: GPUMemoryOperation,
+        shader_code: &[u8],
+    ) -> vk::Pipeline {
+        if let Some(pipeline) = self.get_pipeline_for_op(op) {
+            return pipeline;
+        } else {
+            return self.create_and_get_pipeline(op, shader_code);
+        }
+    }
+
+    pub fn get_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
+    }
+
+    pub fn get_device(&self) -> &Device {
+        &self.device
     }
 
     pub fn get_descriptor_pool(&self) -> &vk::DescriptorPool {
@@ -618,7 +738,12 @@ impl GPU {
 impl Drop for GPU {
     fn drop(&mut self) {
         unsafe {
-            self.compute_pipelines.cleanup(&self.device);
+            let pipelines = self.pipelines.write().unwrap();
+            for pipeline in pipelines.values() {
+                self.device.destroy_pipeline(*pipeline, None);
+            }
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.device

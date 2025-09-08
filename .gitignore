@@ -1,5 +1,5 @@
-/src/shaders/*.spv
 /src/bin
 /target
 Cargo.lock
 out.txt
+notes.txt

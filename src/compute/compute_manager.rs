@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::importers::onnx_parser::OnnxParser;
+use crate::instruction::transfer::transfer::TransferToDeviceInstruction;
 use crate::tensor::tensor::{DeviceId, Tensor};
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
 
-use crate::instruction::factory::Instructions;
 use crate::instruction::instruction::Instruction;
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
@@ -318,12 +318,12 @@ impl ComputeManager {
 
                         // Create transfer instruction
                         let src_device = tensor_locations[tensor_id].clone().unwrap();
-                        let transfer_instr = Instructions::transfer_to_device(
-                            tensor_id,
-                            new_tensor_id,
-                            src_device,
-                            current_device.clone(),
-                        );
+                        let transfer_instr = Box::new(TransferToDeviceInstruction {
+                            src: tensor_id,
+                            dst: new_tensor_id,
+                            source_device: src_device,
+                            target_device: current_device.clone(),
+                        });
 
                         // Record the planned transfer
                         transfer_operations.push((op_id, transfer_instr));
