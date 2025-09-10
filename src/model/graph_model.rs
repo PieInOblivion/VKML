@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{dataloader::error::VKMLError, instruction::{self, instruction::Instruction}, layer::layer::Layer, tensor::desc::TensorDesc};
-
-use super::{
-    layer_connection::{LayerConnection, LayerId},
+use crate::{
+    dataloader::error::VKMLError,
+    instruction::{self, instruction::Instruction},
+    layer::layer::Layer,
+    tensor::desc::TensorDesc,
 };
+
+use super::layer_connection::{LayerConnection, LayerId};
 
 pub struct GraphModel {
     pub batch_size: i64,

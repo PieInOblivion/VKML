@@ -342,11 +342,11 @@ impl GPU {
         }
     }
 
-    pub fn move_to_gpu_as_f32(&self, data: &[f32]) -> GPUMemory {
-        let size_in_bytes = (data.len() * std::mem::size_of::<f32>()) as vk::DeviceSize;
+    pub fn move_to_gpu(&self, bytes: &[u8]) -> GPUMemory {
+        let size_in_bytes = bytes.len() as vk::DeviceSize;
 
         unsafe {
-            // Create buffer for f32 data
+            // Create buffer for raw bytes
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
                 next: ptr::null(),
@@ -384,14 +384,14 @@ impl GPU {
                 .bind_buffer_memory(buffer, memory, 0)
                 .expect_msg("Failed to bind buffer memory");
 
-            // Map memory and write data
+            // Map memory and write raw bytes
             let data_ptr = self
                 .device
                 .map_memory(memory, 0, size_in_bytes, vk::MemoryMapFlags::empty())
-                .expect_msg("Failed to map buffer memory") as *mut f32;
+                .expect_msg("Failed to map buffer memory") as *mut u8;
 
             // Copy the data
-            std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len());
 
             self.device.unmap_memory(memory);
 

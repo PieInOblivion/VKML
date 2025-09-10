@@ -211,8 +211,12 @@ impl ComputeManager {
             HashMap::new();
 
         // New tensors created for transfers - including layer info
-        let mut new_tensors: Vec<(TensorDesc, DeviceLocation, Box<dyn Instruction>, Option<LayerId>)> =
-            Vec::new();
+        let mut new_tensors: Vec<(
+            TensorDesc,
+            DeviceLocation,
+            Box<dyn Instruction>,
+            Option<LayerId>,
+        )> = Vec::new();
 
         // Transfer operations to add
         let mut transfer_operations: Vec<(OperationId, Box<dyn Instruction>)> = Vec::new();
@@ -303,7 +307,7 @@ impl ComputeManager {
                         // Plan the new tensor
                         let tensor_desc = original_tensor.desc.clone();
                         let tensor_size = tensor_desc.size_in_bytes() as u64;
-                        let weight_init = instruction::init_constant(0, vec![0, 0, 0, 0,]); // Will be filled by transfer
+                        let weight_init = instruction::init_constant(0, vec![0, 0, 0, 0]); // Will be filled by transfer
 
                         // Reserve memory on current device
                         available_memory[current_device_idx].1 -= tensor_size;
@@ -483,37 +487,59 @@ impl ComputeManager {
 
                             unsafe {
                                 let alloc_info = vulkanalia::vk::CommandBufferAllocateInfo {
-                                    s_type: vulkanalia::vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                                    s_type:
+                                        vulkanalia::vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
                                     next: std::ptr::null(),
                                     command_pool: gpu.get_command_pool(),
                                     level: vulkanalia::vk::CommandBufferLevel::PRIMARY,
                                     command_buffer_count: 1,
                                 };
 
-                                let command_buffers = match gpu.device.allocate_command_buffers(&alloc_info) {
+                                let command_buffers = match gpu
+                                    .device
+                                    .allocate_command_buffers(&alloc_info)
+                                {
                                     Ok(cbs) => cbs,
                                     Err(e) => {
                                         // rollback memory tracking and fail
                                         gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                        return Err(VKMLError::VulkanLoadError(format!("Failed to allocate command buffer: {:?}", e)));
+                                        return Err(VKMLError::VulkanLoadError(format!(
+                                            "Failed to allocate command buffer: {:?}",
+                                            e
+                                        )));
                                     }
                                 };
 
                                 let cmd = command_buffers[0];
 
-                                if let Err(e) = weight_init.create_command_buffer(gpu, cmd, &self.tensor_graph) {
-                                    gpu.device.free_command_buffers(gpu.get_command_pool(), &command_buffers);
+                                if let Err(e) =
+                                    weight_init.create_command_buffer(gpu, cmd, &self.tensor_graph)
+                                {
+                                    gpu.device.free_command_buffers(
+                                        gpu.get_command_pool(),
+                                        &command_buffers,
+                                    );
                                     gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                    return Err(VKMLError::VulkanLoadError(format!("GPU init create_command_buffer failed: {}", e)));
+                                    return Err(VKMLError::VulkanLoadError(format!(
+                                        "GPU init create_command_buffer failed: {}",
+                                        e
+                                    )));
                                 }
 
                                 if let Err(e) = gpu.submit_command_buffers_and_wait(&[cmd]) {
-                                    gpu.device.free_command_buffers(gpu.get_command_pool(), &command_buffers);
+                                    gpu.device.free_command_buffers(
+                                        gpu.get_command_pool(),
+                                        &command_buffers,
+                                    );
                                     gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                    return Err(VKMLError::VulkanLoadError(format!("Failed to submit init command buffer: {}", e)));
+                                    return Err(VKMLError::VulkanLoadError(format!(
+                                        "Failed to submit init command buffer: {}",
+                                        e
+                                    )));
                                 }
 
-                                gpu.device.free_command_buffers(gpu.get_command_pool(), &command_buffers);
+                                gpu.device
+                                    .free_command_buffers(gpu.get_command_pool(), &command_buffers);
                             }
                         }
                     }

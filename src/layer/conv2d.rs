@@ -1,6 +1,4 @@
-use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -244,7 +242,7 @@ impl Layer for Conv2DLayer {
             self.padding_w
         } as usize;
 
-        let instruction = Instructions::conv2d(0, 1, bias_idx, 2, (s_h, s_w), (p_h, p_w));
+        let instruction = instruction::conv2d(0, 1, bias_idx, 2, (s_h, s_w), (p_h, p_w));
 
         // Get input mappings using the trait method
         let input_mappings = self.map_input_tensors(input_shapes.len());

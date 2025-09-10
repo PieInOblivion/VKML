@@ -1,6 +1,4 @@
-use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -12,36 +10,24 @@ pub trait ActivationFunction: Clone {
 #[derive(Clone)]
 pub enum ActivationType {
     ReLU,
-    LeakyReLU(f32),
     Sigmoid,
     Softmax(usize),
-    Tanh,
-    GELU,
-    SiLU,
 }
 
 impl ActivationFunction for ActivationType {
     fn name(&self) -> String {
         match self {
             ActivationType::ReLU => "ReLU".to_string(),
-            ActivationType::LeakyReLU(_) => "LeakyReLU".to_string(),
             ActivationType::Sigmoid => "Sigmoid".to_string(),
             ActivationType::Softmax(_) => "Softmax".to_string(),
-            ActivationType::Tanh => "Tanh".to_string(),
-            ActivationType::GELU => "GELU".to_string(),
-            ActivationType::SiLU => "SiLU".to_string(),
         }
     }
 
     fn to_string(&self) -> String {
         match self {
             ActivationType::ReLU => "ReLU".to_string(),
-            ActivationType::LeakyReLU(alpha) => format!("LeakyReLU(α={})", alpha),
             ActivationType::Sigmoid => "Sigmoid".to_string(),
             ActivationType::Softmax(dim) => format!("Softmax(dim={})", dim),
-            ActivationType::Tanh => "Tanh".to_string(),
-            ActivationType::GELU => "GELU".to_string(),
-            ActivationType::SiLU => "SiLU".to_string(),
         }
     }
 }
@@ -85,7 +71,6 @@ impl Layer for ActivationLayer {
 
     fn config_string(&self) -> Option<String> {
         match &self.activation_type {
-            ActivationType::LeakyReLU(alpha) => Some(format!("alpha={}", alpha)),
             ActivationType::Softmax(dim) => Some(format!("dim={}", dim)),
             _ => None,
         }
@@ -112,13 +97,9 @@ impl Layer for ActivationLayer {
         tensors.push(input_shape.clone());
 
         let activation_instruction = match &self.activation_type {
-            ActivationType::ReLU => Instructions::relu(0, 1),
-            ActivationType::LeakyReLU(alpha) => Instructions::leaky_relu(0, 1, *alpha),
-            ActivationType::Sigmoid => Instructions::sigmoid(0, 1),
-            ActivationType::Softmax(dim) => Instructions::softmax(0, 1, *dim),
-            ActivationType::Tanh => Instructions::tanh(0, 1),
-            ActivationType::GELU => Instructions::gelu(0, 1),
-            ActivationType::SiLU => Instructions::silu(0, 1),
+            ActivationType::ReLU => instruction::relu(0, 1),
+            ActivationType::Sigmoid => instruction::sigmoid(0, 1),
+            ActivationType::Softmax(dim) => instruction::softmax(0, 1, *dim),
         };
 
         // Get input mappings using the trait method

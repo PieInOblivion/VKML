@@ -1,6 +1,4 @@
-use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -128,7 +126,7 @@ impl Layer for ConcatLayer {
         tensors.push(output_shape);
 
         // Create Concat instruction
-        let instruction = Instructions::concat(input_tensor_indices, output_idx, self.dim);
+        let instruction = instruction::concat(input_tensor_indices, output_idx, self.dim);
 
         // Get input mappings using the trait method
         let input_mappings = self.map_input_tensors(input_shapes.len());

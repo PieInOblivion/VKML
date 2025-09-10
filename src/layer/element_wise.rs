@@ -1,6 +1,4 @@
-use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -112,12 +110,12 @@ impl Layer for ElementWiseLayer {
 
         // Create element-wise instruction
         let element_wise_instruction = match self.operation {
-            ElementWiseOperation::Add => Instructions::add(0, 1, 2),
-            ElementWiseOperation::Subtract => Instructions::sub(0, 1, 2),
-            ElementWiseOperation::Multiply => Instructions::mul(0, 1, 2),
-            ElementWiseOperation::Divide => Instructions::div(0, 1, 2),
-            ElementWiseOperation::Maximum => Instructions::max(0, 1, 2),
-            ElementWiseOperation::Minimum => Instructions::min(0, 1, 2),
+            ElementWiseOperation::Add => instruction::add(0, 1, 2),
+            ElementWiseOperation::Subtract => instruction::sub(0, 1, 2),
+            ElementWiseOperation::Multiply => instruction::mul(0, 1, 2),
+            ElementWiseOperation::Divide => instruction::div(0, 1, 2),
+            ElementWiseOperation::Maximum => instruction::max(0, 1, 2),
+            ElementWiseOperation::Minimum => instruction::min(0, 1, 2),
         };
 
         // Get input mappings using the trait method

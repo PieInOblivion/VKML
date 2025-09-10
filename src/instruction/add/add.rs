@@ -6,6 +6,7 @@ use crate::{
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -73,6 +74,7 @@ impl Instruction for AddInstruction {
         struct PushConstants {
             rank: u32,
             pad: u32, // Matches "uint pad;" in shader
+            total: u32,
             dims: [u32; 8],
             strides_a: [u32; 8],
             strides_b: [u32; 8],
@@ -132,9 +134,12 @@ impl Instruction for AddInstruction {
         // However, dst_mem.size would be 0 if a dim is 0, leading to num_elements = 0.
         // The current num_elements calculation is fine.
 
+        let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+
         let push_const_values = PushConstants {
             rank,
             pad: 0, // Padding value, 0 is fine
+            total: total_elements as u32,
             dims: dims_arr,
             strides_a: strides_a_arr,
             strides_b: strides_b_arr,
@@ -235,7 +240,18 @@ impl Instruction for AddInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Addition_F32);
+            // Choose operation and element size based on tensor DataType
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::Addition_F32,
+                _ => {
+                    return Err(
+                        format!("GPU Add unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -262,7 +278,8 @@ impl Instruction for AddInstruction {
             );
 
             let workgroup_size = 256;
-            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+            // Minimal check: use tensor shape as the source of truth for element count
+            let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
             let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
 
             gpu.get_device()

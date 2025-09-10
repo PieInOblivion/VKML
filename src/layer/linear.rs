@@ -1,6 +1,4 @@
-use crate::{
-    dataloader::error::VKMLError, instruction::factory::Instructions, tensor::desc::TensorDesc,
-};
+use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -141,14 +139,15 @@ impl Layer for LinearLayer {
         tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
 
         // Create MatMul instruction
-        instructions.push(Instructions::matmul(0, 1, 2));
+        instructions.push(instruction::matmul(0, 1, 2));
 
         // If using bias, add it
         if self.bias {
             // bias = 3
             tensors.push(TensorDesc::new(vec![self.out_features]));
 
-            instructions.push(Instructions::add_inplace(2, 3));
+            // TODO: Add back add_inplace instruction
+            //instructions.push(instruction::add_inplace(2, 3));
         }
 
         // Get input mappings using the trait method

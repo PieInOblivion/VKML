@@ -98,27 +98,11 @@ impl Layers {
         Box::new(ActivationLayer::new(ActivationType::ReLU))
     }
 
-    pub fn leakyrelu(alpha: f32) -> Box<dyn Layer> {
-        Box::new(ActivationLayer::new(ActivationType::LeakyReLU(alpha)))
-    }
-
     pub fn sigmoid() -> Box<dyn Layer> {
         Box::new(ActivationLayer::new(ActivationType::Sigmoid))
     }
 
     pub fn softmax(dim: usize) -> Box<dyn Layer> {
         Box::new(ActivationLayer::new(ActivationType::Softmax(dim)))
-    }
-
-    pub fn tanh() -> Box<dyn Layer> {
-        Box::new(ActivationLayer::new(ActivationType::Tanh))
-    }
-
-    pub fn gelu() -> Box<dyn Layer> {
-        Box::new(ActivationLayer::new(ActivationType::GELU))
-    }
-
-    pub fn silu() -> Box<dyn Layer> {
-        Box::new(ActivationLayer::new(ActivationType::SiLU))
     }
 }
