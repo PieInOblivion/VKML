@@ -7,8 +7,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_MUL_SHADER: &[u8] = include_shader!("f32_mul.spv");
-
 #[derive(Clone)]
 pub struct MulInstruction {
     pub src1: TensorId,

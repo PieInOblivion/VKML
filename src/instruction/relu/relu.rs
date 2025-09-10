@@ -9,8 +9,6 @@ use std::{
 };
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_RELU_SHADER: &[u8] = include_shader!("f32_relu.spv");
-
 #[derive(Clone)]
 pub struct ReLUInstruction {
     pub src: TensorId,

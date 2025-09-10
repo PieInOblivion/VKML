@@ -9,8 +9,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_ADD_SHADER: &[u8] = include_shader!("f32_add.spv");
-
 #[derive(Clone)]
 pub struct AddInstruction {
     pub src1: TensorId,
@@ -237,7 +235,7 @@ impl Instruction for AddInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Addition, F32_ADD_SHADER);
+            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Addition_F32);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,

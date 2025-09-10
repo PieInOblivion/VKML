@@ -8,8 +8,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_MIN_SHADER: &[u8] = include_shader!("f32_min.spv");
-
 #[derive(Clone)]
 pub struct MinInstruction {
     pub src1: TensorId,

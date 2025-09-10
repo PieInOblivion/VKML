@@ -7,8 +7,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_MAX_SHADER: &[u8] = include_shader!("f32_max.spv");
-
 #[derive(Clone)]
 pub struct MaxInstruction {
     pub src1: TensorId,

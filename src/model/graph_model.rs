@@ -1,15 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{dataloader::error::VKMLError, layer::layer::Layer, tensor::desc::TensorDesc};
+use crate::{dataloader::error::VKMLError, instruction::{self, instruction::Instruction}, layer::layer::Layer, tensor::desc::TensorDesc};
 
 use super::{
     layer_connection::{LayerConnection, LayerId},
-    weight_init::WeightInit,
 };
 
 pub struct GraphModel {
     pub batch_size: i64,
-    pub weight_init: WeightInit,
+    pub weight_init: Box<dyn Instruction>,
     pub layers: HashMap<LayerId, GraphModelLayer>,
     pub verified: Option<GraphVerifiedData>,
 }
@@ -17,7 +16,7 @@ pub struct GraphModel {
 pub struct GraphModelLayer {
     pub id: LayerId,
     pub layer: Box<dyn Layer>,
-    pub weight_init: Option<WeightInit>,
+    pub weight_init: Option<Box<dyn Instruction>>,
 
     pub input_connections: Vec<LayerConnection>,
     pub output_connections: Vec<LayerConnection>,
@@ -33,13 +32,13 @@ impl GraphModel {
     pub fn new(batch_size: i64) -> Self {
         Self {
             batch_size,
-            weight_init: WeightInit::He,
+            weight_init: instruction::init_he(0),
             layers: HashMap::new(),
             verified: None,
         }
     }
 
-    pub fn new_with(batch_size: i64, weight_init: WeightInit) -> Self {
+    pub fn new_with(batch_size: i64, weight_init: Box<dyn Instruction>) -> Self {
         Self {
             batch_size,
             weight_init,
@@ -83,7 +82,7 @@ impl GraphModel {
         id: LayerId,
         layer: Box<dyn Layer>,
         input_connections: Vec<LayerConnection>,
-        weight_init: Option<WeightInit>,
+        weight_init: Option<Box<dyn Instruction>>,
     ) -> LayerId {
         // Update connections in the related layers
         for connection in &input_connections {

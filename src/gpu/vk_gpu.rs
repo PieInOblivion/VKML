@@ -441,11 +441,11 @@ impl GPU {
         }
     }
 
-    pub fn allocate_uninitialised_gpu_memory_f32(
+    pub fn allocate_uninitialised_gpu_memory(
         &self,
-        num_elements: usize,
+        bytes: usize,
     ) -> Result<GPUMemory, Box<dyn std::error::Error>> {
-        let size_in_bytes = (num_elements * std::mem::size_of::<f32>()) as vk::DeviceSize;
+        let size_in_bytes = bytes as vk::DeviceSize;
 
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
@@ -702,15 +702,11 @@ impl GPU {
         self.pipelines.read().unwrap().get(&op).copied()
     }
 
-    pub fn get_or_create_pipeline(
-        &self,
-        op: GPUMemoryOperation,
-        shader_code: &[u8],
-    ) -> vk::Pipeline {
+    pub fn get_or_create_pipeline(&self, op: GPUMemoryOperation) -> vk::Pipeline {
         if let Some(pipeline) = self.get_pipeline_for_op(op) {
             return pipeline;
         } else {
-            return self.create_and_get_pipeline(op, shader_code);
+            return self.create_and_get_pipeline(op, op.get_shader_bytes());
         }
     }
 

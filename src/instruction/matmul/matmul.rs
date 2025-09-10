@@ -6,16 +6,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_MATMUL_SHADER: &[u8] = include_shader!("f32_matmul.spv");
-const F32_MATMUL_1D_2D_SHADER: &[u8] = include_shader!("f32_matmul_1d_2d.spv");
-const F32_MATMUL_2D_1D_SHADER: &[u8] = include_shader!("f32_matmul_2d_1d.spv");
-const F32_MATMUL_2D_2D_SHADER: &[u8] = include_shader!("f32_matmul_2d_2d.spv");
-const F32_MATMUL_2D_3D_SHADER: &[u8] = include_shader!("f32_matmul_2d_3d.spv");
-const F32_MATMUL_3D_2D_SHADER: &[u8] = include_shader!("f32_matmul_3d_2d.spv");
-const F32_MATMUL_3D_3D_SHADER: &[u8] = include_shader!("f32_matmul_3d_3d.spv");
-const F32_MATMUL_3D_1D_SHADER: &[u8] = include_shader!("f32_matmul_3d_1d.spv");
-const F32_MATMUL_1D_3D_SHADER: &[u8] = include_shader!("f32_matmul_1d_3d.spv");
-
 #[derive(Clone)]
 pub struct MatMulInstruction {
     pub src1: TensorId,

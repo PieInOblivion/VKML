@@ -1,5 +1,6 @@
 use crate::{
     dataloader::error::VKMLError,
+    instruction,
     instruction::instruction::Instruction,
     tensor::{desc::TensorDesc, tensor::Tensor},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
@@ -167,7 +168,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::matmul(
+                Ok(instruction::matmul(
                     input_ids[0],
                     input_ids[1],
                     output_ids[0],
@@ -181,7 +182,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::add(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::add(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Sub" => {
                 if input_ids.len() != 2 || output_ids.len() != 1 {
@@ -191,7 +192,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::sub(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::sub(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Mul" => {
                 if input_ids.len() != 2 || output_ids.len() != 1 {
@@ -201,7 +202,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::mul(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::mul(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Div" => {
                 if input_ids.len() != 2 || output_ids.len() != 1 {
@@ -211,7 +212,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::div(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::div(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Max" => {
                 if input_ids.len() != 2 || output_ids.len() != 1 {
@@ -221,7 +222,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::max(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::max(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Min" => {
                 if input_ids.len() != 2 || output_ids.len() != 1 {
@@ -231,7 +232,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::min(input_ids[0], input_ids[1], output_ids[0]))
+                Ok(instruction::min(input_ids[0], input_ids[1], output_ids[0]))
             }
             "Relu" => {
                 if input_ids.len() != 1 || output_ids.len() != 1 {
@@ -241,7 +242,7 @@ impl OnnxParser {
                         output_ids.len()
                     )));
                 }
-                Ok(Instructions::relu(input_ids[0], output_ids[0]))
+                Ok(instruction::relu(input_ids[0], output_ids[0]))
             }
             unsupported => Err(VKMLError::OnnxImporterError(format!(
                 "Operation '{}' is not implemented",

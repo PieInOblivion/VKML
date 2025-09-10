@@ -7,8 +7,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_SUB_SHADER: &[u8] = include_shader!("f32_sub.spv");
-
 #[derive(Clone)]
 pub struct SubInstruction {
     pub src1: TensorId,

@@ -6,8 +6,6 @@ use crate::{
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_CONV2D_SHADER: &[u8] = include_shader!("f32_conv2d.spv");
-
 #[derive(Clone)]
 pub struct Conv2DInstruction {
     pub src: TensorId,

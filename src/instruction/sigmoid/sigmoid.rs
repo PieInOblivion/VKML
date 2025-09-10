@@ -9,8 +9,6 @@ use std::{
 };
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-const F32_SIGMOID_SHADER: &[u8] = include_shader!("f32_sigmoid.spv");
-
 #[derive(Clone)]
 pub struct SigmoidInstruction {
     pub src: TensorId,
