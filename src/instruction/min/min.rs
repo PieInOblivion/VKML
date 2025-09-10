@@ -146,13 +146,7 @@ impl Instruction for MinInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu
-                .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::Minimum)
-                .ok_or(format!(
-                    "{:?} pipeline not found",
-                    GPUMemoryOperation::Minimum
-                ))?;
+            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Minimum_F32);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -163,7 +157,7 @@ impl Instruction for MinInstruction {
             gpu.get_device().cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 0,
                 &[descriptor_set],
                 &[],
