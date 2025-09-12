@@ -1,9 +1,12 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{
+        conv2d::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
+    },
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use onnx_extractor::DataType;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -63,18 +66,25 @@ impl Instruction for Conv2DInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_mem = tensor_graph.get_gpu_memory_or_panic(self.src);
-        let weights_mem = tensor_graph.get_gpu_memory_or_panic(self.weights);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
+        // Acquire read guards for tensors so we can access descriptors and GPU memory
+        let src_tensor = tensor_graph.tensor_read(self.src);
+        let weights_tensor = tensor_graph.tensor_read(self.weights);
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
 
-        let src_tensor = tensor_graph.tensors.get(self.src).unwrap();
-        let weights_tensor = tensor_graph.tensors.get(self.weights).unwrap();
-        let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
+        let src_mem = src_tensor.get_gpu_memory_or_panic();
+        let weights_mem = weights_tensor.get_gpu_memory_or_panic();
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let bias_mem = self
-            .bias
+        // Optional bias read guard (kept in scope)
+        let bias_tensor_opt = if let Some(bid) = self.bias {
+            Some(tensor_graph.tensor_read(bid))
+        } else {
+            None
+        };
+
+        let bias_mem = bias_tensor_opt
             .as_ref()
-            .map(|bias_id| tensor_graph.get_gpu_memory_or_panic(*bias_id));
+            .map(|t| t.get_gpu_memory_or_panic());
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -155,9 +165,9 @@ impl Instruction for Conv2DInstruction {
 
             // Verify output dimensions match expected conv2d output size
             let expected_out_height =
-                (in_height + 2 * self.padding.0 - filter_height) / self.stride.0 + 1;
+                (in_height + 2 * self.padding.0 as i64 - filter_height) / self.stride.0 as i64 + 1;
             let expected_out_width =
-                (in_width + 2 * self.padding.1 - filter_width) / self.stride.1 + 1;
+                (in_width + 2 * self.padding.1 as i64 - filter_width) / self.stride.1 as i64 + 1;
 
             if out_height != expected_out_height || out_width != expected_out_width {
                 return Err(format!(
@@ -253,10 +263,18 @@ impl Instruction for Conv2DInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu
-                .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::Conv2D)
-                .ok_or("Conv2D pipeline not found")?;
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::Conv2D_F32,
+                _ => {
+                    return Err(
+                        format!("GPU Conv2D unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            // Use GPU pipeline from GPU helper
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -267,7 +285,7 @@ impl Instruction for Conv2DInstruction {
             gpu.get_device().cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 0,
                 &[descriptor_set],
                 &[],
@@ -356,7 +374,7 @@ impl Instruction for Conv2DInstruction {
             // Push constants to the shader
             gpu.get_device().cmd_push_constants(
                 command_buffer,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
                 std::slice::from_raw_parts(
@@ -367,8 +385,11 @@ impl Instruction for Conv2DInstruction {
 
             // Calculate dispatch size based on output dimensions
             // Each thread computes one output element
-            let total_output_elements = batch_size * out_channels * out_height * out_width;
-            let workgroup_size = 256; // Match local_size_x from shader
+            let total_output_elements: usize = (batch_size as usize)
+                * (out_channels as usize)
+                * (out_height as usize)
+                * (out_width as usize);
+            let workgroup_size = 256usize; // Match local_size_x from shader
             let num_workgroups: usize =
                 (total_output_elements + workgroup_size - 1) / workgroup_size;
 
@@ -382,106 +403,56 @@ impl Instruction for Conv2DInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let src_data = tensor_graph.tensors[self.src].data.read_data();
-        let weights_data = tensor_graph.tensors[self.weights].data.read_data();
-        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
+        let src_guard = tensor_graph.tensor_read(self.src);
+        let weights_guard = tensor_graph.tensor_read(self.weights);
+        let src_bytes = src_guard.get_cpu_memory_slice_or_panic().to_vec();
+        let weight_bytes = weights_guard.get_cpu_memory_slice_or_panic().to_vec();
+        let src_dims_i64 = src_guard.desc.to_dims();
+        let weight_dims_i64 = weights_guard.desc.to_dims();
 
-        // Check optional bias tensor
-        let bias_data = if let Some(bias_id) = self.bias {
-            Some(tensor_graph.tensors[bias_id].data.read_data())
-        } else {
-            None
-        };
+        let bias_bytes_vec_opt: Option<Vec<u8>> = self.bias.map(|b| {
+            tensor_graph
+                .tensor_read(b)
+                .get_cpu_memory_slice_or_panic()
+                .to_vec()
+        });
 
-        let src_tensor = &tensor_graph.tensors[self.src];
-        let weights_tensor = &tensor_graph.tensors[self.weights];
-        let dst_tensor = &tensor_graph.tensors[self.dst];
+    drop(src_guard);
+    drop(weights_guard);
 
-        let src_dims = src_tensor.desc.to_dims();
-        let weight_dims = weights_tensor.desc.to_dims();
-        let dst_dims = dst_tensor.desc.to_dims();
+    // Read dst descriptor info before taking mutable write guard to avoid borrow conflicts
+    let dst_read = tensor_graph.tensor_read(self.dst);
+    let dst_data_type = dst_read.desc.data_type();
+    let dst_dims_i64 = dst_read.desc.to_dims();
+    drop(dst_read);
 
-        assert_eq!(src_dims.len(), 4, "Conv2D requires 4D input tensor");
-        assert_eq!(weight_dims.len(), 4, "Conv2D requires 4D weight tensor");
-        assert_eq!(dst_dims.len(), 4, "Conv2D requires 4D output tensor");
+    let mut dst_guard = tensor_graph.tensor_write(self.dst);
+    let dst_bytes = dst_guard.get_cpu_memory_mut_slice_or_panic();
 
-        let batch_size = src_dims[0];
-        let in_channels = src_dims[1];
-        let in_height = src_dims[2];
-        let in_width = src_dims[3];
+        let src_dims = src_dims_i64.iter().map(|d| *d as usize).collect();
+        let weight_dims = weight_dims_i64.iter().map(|d| *d as usize).collect();
+        let dst_dims = dst_dims_i64.iter().map(|d| *d as usize).collect();
 
-        let out_channels = weight_dims[0];
-        let filter_in_channels = weight_dims[1];
-        let kernel_h = weight_dims[2];
-        let kernel_w = weight_dims[3];
+        let bias_bytes_ref_opt = bias_bytes_vec_opt.as_ref().map(|v| v.as_slice());
 
-        let out_height = dst_dims[2];
-        let out_width = dst_dims[3];
-
-        // Verify output dimensions
-        assert_eq!(
-            batch_size, dst_dims[0],
-            "Batch size mismatch: input={}, output={}",
-            batch_size, dst_dims[0]
-        );
-        assert_eq!(
-            out_channels, dst_dims[1],
-            "Output channel mismatch: filter={}, output={}",
-            out_channels, dst_dims[1]
-        );
-        assert_eq!(
-            in_channels, filter_in_channels,
-            "Input channel mismatch: input={}, filter={}",
-            in_channels, filter_in_channels
-        );
-
-        // Zero initialize result
-        for val in dst_data.iter_mut() {
-            *val = 0.0;
-        }
-
-        // Perform convolution
-        for b in 0..batch_size {
-            for oc in 0..out_channels {
-                for oh in 0..out_height {
-                    for ow in 0..out_width {
-                        let mut sum = 0.0;
-
-                        // Apply kernel
-                        for ic in 0..in_channels {
-                            for kh in 0..kernel_h {
-                                for kw in 0..kernel_w {
-                                    // Handle padding correctly
-                                    let ih = (oh * self.stride.0 + kh).checked_sub(self.padding.0);
-                                    let iw = (ow * self.stride.1 + kw).checked_sub(self.padding.1);
-
-                                    // Only process valid input positions
-                                    if let (Some(ih), Some(iw)) = (ih, iw) {
-                                        if ih < in_height && iw < in_width {
-                                            let in_idx = ((b * in_channels + ic) * in_height + ih)
-                                                * in_width
-                                                + iw;
-                                            let w_idx = ((oc * in_channels + ic) * kernel_h + kh)
-                                                * kernel_w
-                                                + kw;
-
-                                            sum += src_data[in_idx] * weights_data[w_idx];
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Add bias if present
-                        if let Some(bias) = &bias_data {
-                            sum += bias[oc];
-                        }
-
-                        let out_idx = ((b * out_channels + oc) * out_height + oh) * out_width + ow;
-                        dst_data[out_idx] = sum;
-                    }
-                }
+        match dst_data_type {
+            onnx_extractor::DataType::Float => {
+                f32_cpu(
+                    src_dims,
+                    weight_dims,
+                    dst_dims,
+                    src_bytes.as_slice(),
+                    weight_bytes.as_slice(),
+                    bias_bytes_ref_opt,
+                    dst_bytes,
+                    self.stride,
+                    self.padding,
+                );
             }
+            other => panic!(
+                "conv2d.rs execute_cpu: unimplemented CPU Conv2D for DataType {:?}",
+                other
+            ),
         }
     }
 
