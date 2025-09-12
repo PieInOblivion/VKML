@@ -1,8 +1,12 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{
+        gpu_operations::GPUMemoryOperation, instruction::Instruction, relu::f32_cpu::f32_cpu,
+    },
+    tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use onnx_extractor::DataType;
 use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
     ptr,
@@ -46,8 +50,10 @@ impl Instruction for ReLUInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_mem = tensor_graph.get_gpu_memory_or_panic(self.src);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
+        let src_tensor = tensor_graph.tensor_read(self.src);
+        let src_mem = src_tensor.get_gpu_memory_or_panic();
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -118,10 +124,18 @@ impl Instruction for ReLUInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu
-                .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::ReLU)
-                .ok_or(format!("{:?} pipeline not found", GPUMemoryOperation::ReLU))?;
+            // Choose operation based on DataType (only Float supported currently)
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::ReLU_F32,
+                _ => {
+                    return Err(
+                        format!("GPU ReLU unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -132,7 +146,7 @@ impl Instruction for ReLUInstruction {
             gpu.get_device().cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 0,
                 &[descriptor_set],
                 &[],
@@ -156,20 +170,37 @@ impl Instruction for ReLUInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let src_data = tensor_graph.tensors[self.src].data.read_data();
-        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
-
-        assert_eq!(
-            dst_data.len(),
-            src_data.len(),
-            "Destination tensor size {} doesn't match source tensor size {}",
-            dst_data.len(),
-            src_data.len()
+        // Follow add.rs style: compute broadcast shapes/strides and dispatch to typed helpers
+        assert!(
+            self.src != self.dst,
+            "Cannot use ReLU for in-place operation"
         );
 
-        // Update in-place
-        for i in 0..src_data.len() {
-            dst_data[i] = src_data[i].max(0.0);
+        let src_tensor = tensor_graph.tensor_read(self.src);
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+
+        let a = src_tensor.desc.to_dims();
+        let c = dst_tensor.desc.to_dims();
+
+        let bc = TensorDesc::broadcast_shape(&a, &c)
+            .expect(&format!("Can't broadcast {:?} vs {:?}", a, c));
+        assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
+
+        let sa = TensorDesc::broadcast_strides(&a, &c);
+
+        let op_datatype = dst_tensor.desc.data_type();
+
+        let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
+        let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+
+        match op_datatype {
+            DataType::Float => {
+                f32_cpu(sa, c, src_bytes, dst_ptr);
+            }
+            _ => unimplemented!(
+                "relu.rs unimplemented cpu instruction for DataType {:?}",
+                dst_tensor.desc.data_type()
+            ),
         }
     }
 }

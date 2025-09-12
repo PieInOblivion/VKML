@@ -1,9 +1,12 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
+    instruction::{
+        gpu_operations::GPUMemoryOperation, instruction::Instruction, max::f32_cpu::f32_cpu,
+    },
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -50,9 +53,89 @@ impl Instruction for MaxInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_mem = tensor_graph.get_gpu_memory_or_panic(self.src1);
-        let src2_mem = tensor_graph.get_gpu_memory_or_panic(self.src2);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src1_mem = src1_tensor.get_gpu_memory_or_panic();
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let src2_mem = src2_tensor.get_gpu_memory_or_panic();
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
+
+        let src1_desc = &src1_tensor.desc;
+        let src2_desc = &src2_tensor.desc;
+        let dst_desc = &dst_tensor.desc;
+
+        let src1_dims_usize = src1_desc.to_dims();
+        let src2_dims_usize = src2_desc.to_dims();
+        let dst_dims_usize = dst_desc.to_dims();
+
+        #[repr(C)]
+        struct PushConstants {
+            rank: u32,
+            pad: u32,
+            total: u32,
+            dims: [u32; 8],
+            strides_a: [u32; 8],
+            strides_b: [u32; 8],
+        }
+
+        let rank = dst_dims_usize.len() as u32;
+        assert!(
+            rank <= 8,
+            "Max: tensor rank {} exceeds maximum supported rank of 8",
+            rank
+        );
+
+        let mut dims_arr = [0u32; 8];
+        for i in 0..dst_dims_usize.len() {
+            dims_arr[i] = dst_dims_usize[i] as u32;
+        }
+
+        let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
+            .expect(&format!(
+                "GPU Max: Can't broadcast {:?} vs {:?}",
+                src1_dims_usize, src2_dims_usize
+            ));
+
+        assert_eq!(
+            broadcast_dims, dst_dims_usize,
+            "GPU Max: Broadcast shape {:?} != dst shape {:?}",
+            broadcast_dims, dst_dims_usize
+        );
+
+        let strides_a_usize = TensorDesc::broadcast_strides(&src1_dims_usize, &dst_dims_usize);
+        let strides_b_usize = TensorDesc::broadcast_strides(&src2_dims_usize, &dst_dims_usize);
+
+        let mut strides_a_arr = [0u32; 8];
+        for i in 0..strides_a_usize.len() {
+            if i < 8 {
+                strides_a_arr[i] = strides_a_usize[i] as u32;
+            }
+        }
+
+        let mut strides_b_arr = [0u32; 8];
+        for i in 0..strides_b_usize.len() {
+            if i < 8 {
+                strides_b_arr[i] = strides_b_usize[i] as u32;
+            }
+        }
+
+        let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+
+        let push_const_values = PushConstants {
+            rank,
+            pad: 0,
+            total: total_elements as u32,
+            dims: dims_arr,
+            strides_a: strides_a_arr,
+            strides_b: strides_b_arr,
+        };
+
+        let push_constant_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &push_const_values as *const _ as *const u8,
+                std::mem::size_of::<PushConstants>(),
+            )
+        };
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -77,19 +160,16 @@ impl Instruction for MaxInstruction {
             let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
             let buffer_infos = [
-                // src1 buffer (binding 0)
                 vk::DescriptorBufferInfo {
                     buffer: src1_mem.buffer,
                     offset: 0,
                     range: src1_mem.size,
                 },
-                // src2 buffer (binding 1)
                 vk::DescriptorBufferInfo {
                     buffer: src2_mem.buffer,
                     offset: 0,
                     range: src2_mem.size,
                 },
-                // dst buffer (binding 2)
                 vk::DescriptorBufferInfo {
                     buffer: dst_mem.buffer,
                     offset: 0,
@@ -98,7 +178,6 @@ impl Instruction for MaxInstruction {
             ];
 
             let write_descriptor_sets = [
-                // src1 buffer descriptor
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
@@ -111,7 +190,6 @@ impl Instruction for MaxInstruction {
                     image_info: std::ptr::null(),
                     texel_buffer_view: std::ptr::null(),
                 },
-                // src2 buffer descriptor
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
@@ -124,7 +202,6 @@ impl Instruction for MaxInstruction {
                     image_info: std::ptr::null(),
                     texel_buffer_view: std::ptr::null(),
                 },
-                // dst buffer descriptor
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
@@ -142,13 +219,18 @@ impl Instruction for MaxInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu
-                .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::Maximum)
-                .ok_or(format!(
-                    "{:?} pipeline not found",
-                    GPUMemoryOperation::Maximum
-                ))?;
+            // Choose operation and element size based on tensor DataType
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::Maximum_F32,
+                _ => {
+                    return Err(
+                        format!("GPU Max unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -159,14 +241,23 @@ impl Instruction for MaxInstruction {
             gpu.get_device().cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 0,
                 &[descriptor_set],
                 &[],
             );
 
+            // Push constants to the shader
+            gpu.get_device().cmd_push_constants(
+                command_buffer,
+                gpu.get_layout(),
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                push_constant_bytes,
+            );
+
             let workgroup_size = 256;
-            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+            let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
             let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
 
             gpu.get_device()
@@ -187,14 +278,13 @@ impl Instruction for MaxInstruction {
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use Max for in-place operation. Use MaxInplace instead."
         );
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
 
-        let src1 = &tensor_graph.tensors[self.src1];
-        let src2 = &tensor_graph.tensors[self.src2];
-        let dst = &tensor_graph.tensors[self.dst];
-
-        let a = src1.desc.to_dims();
-        let b = src2.desc.to_dims();
-        let c = dst.desc.to_dims();
+        let a = src1_tensor.desc.to_dims();
+        let b = src2_tensor.desc.to_dims();
+        let c = dst_tensor.desc.to_dims();
 
         let bc = TensorDesc::broadcast_shape(&a, &b)
             .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
@@ -203,15 +293,18 @@ impl Instruction for MaxInstruction {
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        let mut dd = dst.data.write_data();
-        let d1 = src1.data.read_data();
-        let d2 = src2.data.read_data();
+        let op_datatype = dst_tensor.desc.data_type();
 
-        for i in 0..dd.len() {
-            let idxs = TensorDesc::unravel(i, &c);
-            let off1 = TensorDesc::offset(&idxs, &sa);
-            let off2 = TensorDesc::offset(&idxs, &sb);
-            dd[i] = d1[off1].max(d2[off2]);
+        let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
+        let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
+        let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+
+        match op_datatype {
+            DataType::Float => f32_cpu(sa, sb, c, src1_bytes, src2_bytes, dst_ptr),
+            _ => unimplemented!(
+                "max.rs unimplemented cpu instruction for DataType {:?}",
+                dst_tensor.desc.data_type()
+            ),
         }
     }
 }

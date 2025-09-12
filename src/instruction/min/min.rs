@@ -1,6 +1,8 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{
+        gpu_operations::GPUMemoryOperation, instruction::Instruction, min::f32_cpu::f32_cpu,
+    },
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
@@ -51,12 +53,94 @@ impl Instruction for MinInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_read = tensor_graph.tensor_read(self.src1);
-        let src1_mem = src1_read.get_gpu_memory_or_panic();
-        let src2_read = tensor_graph.tensor_read(self.src2);
-        let src2_mem = src2_read.get_gpu_memory_or_panic();
-        let dst_read = tensor_graph.tensor_read(self.dst);
-        let dst_mem = dst_read.get_gpu_memory_or_panic();
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src1_mem = src1_tensor.get_gpu_memory_or_panic();
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let src2_mem = src2_tensor.get_gpu_memory_or_panic();
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
+
+        // Get tensor descriptions for calculating broadcast shapes and strides
+        let src1_desc = &src1_tensor.desc;
+        let src2_desc = &src2_tensor.desc;
+        let dst_desc = &dst_tensor.desc;
+
+        let src1_dims_usize = src1_desc.to_dims();
+        let src2_dims_usize = src2_desc.to_dims();
+        let dst_dims_usize = dst_desc.to_dims();
+
+        // Prepare push constant data
+        #[repr(C)]
+        struct PushConstants {
+            rank: u32,
+            pad: u32, // Matches "uint pad;" in shader
+            total: u32,
+            dims: [u32; 8],
+            strides_a: [u32; 8],
+            strides_b: [u32; 8],
+        }
+
+        let rank = dst_dims_usize.len() as u32;
+        assert!(
+            rank <= 8,
+            "Min: tensor rank {} exceeds maximum supported rank of 8",
+            rank
+        );
+
+        let mut dims_arr = [0u32; 8];
+        for i in 0..dst_dims_usize.len() {
+            dims_arr[i] = dst_dims_usize[i] as u32;
+        }
+
+        // Calculate broadcast shape and strides (similar to execute_cpu)
+        let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
+            .expect(&format!(
+                "GPU Min: Can't broadcast {:?} vs {:?}",
+                src1_dims_usize, src2_dims_usize
+            ));
+
+        assert_eq!(
+            broadcast_dims, dst_dims_usize,
+            "GPU Min: Broadcast shape {:?} != dst shape {:?}",
+            broadcast_dims, dst_dims_usize
+        );
+
+        let strides_a_usize = TensorDesc::broadcast_strides(&src1_dims_usize, &dst_dims_usize);
+        let strides_b_usize = TensorDesc::broadcast_strides(&src2_dims_usize, &dst_dims_usize);
+
+        let mut strides_a_arr = [0u32; 8];
+        for i in 0..strides_a_usize.len() {
+            if i < 8 {
+                // Defensive check, should match rank
+                strides_a_arr[i] = strides_a_usize[i] as u32;
+            }
+        }
+
+        let mut strides_b_arr = [0u32; 8];
+        for i in 0..strides_b_usize.len() {
+            if i < 8 {
+                // Defensive check
+                strides_b_arr[i] = strides_b_usize[i] as u32;
+            }
+        }
+
+        let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+
+        let push_const_values = PushConstants {
+            rank,
+            pad: 0, // Padding value, 0 is fine
+            total: total_elements as u32,
+            dims: dims_arr,
+            strides_a: strides_a_arr,
+            strides_b: strides_b_arr,
+        };
+
+        let push_constant_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &push_const_values as *const _ as *const u8,
+                std::mem::size_of::<PushConstants>(),
+            )
+        };
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -146,7 +230,18 @@ impl Instruction for MinInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Minimum_F32);
+            // Choose operation and element size based on tensor DataType
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::Minimum_F32,
+                _ => {
+                    return Err(
+                        format!("GPU Min unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -163,8 +258,18 @@ impl Instruction for MinInstruction {
                 &[],
             );
 
+            // Push constants to the shader
+            gpu.get_device().cmd_push_constants(
+                command_buffer,
+                gpu.get_layout(),              // Pipeline layout
+                vk::ShaderStageFlags::COMPUTE, // Shader stage
+                0,                             // Offset
+                push_constant_bytes,           // Data
+            );
+
             let workgroup_size = 256;
-            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+            // Minimal check: use tensor shape as the source of truth for element count
+            let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
             let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
 
             gpu.get_device()
@@ -186,19 +291,13 @@ impl Instruction for MinInstruction {
             "Cannot use Min for in-place operation. Use MinInplace instead."
         );
 
-        // Read shapes using short-lived read locks so we can later acquire a write lock on dst.
-        let a = {
-            let g = tensor_graph.tensor_read(self.src1);
-            g.desc.to_dims()
-        };
-        let b = {
-            let g = tensor_graph.tensor_read(self.src2);
-            g.desc.to_dims()
-        };
-        let c = {
-            let g = tensor_graph.tensor_read(self.dst);
-            g.desc.to_dims()
-        };
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+
+        let a = src1_tensor.desc.to_dims();
+        let b = src2_tensor.desc.to_dims();
+        let c = dst_tensor.desc.to_dims();
 
         let bc = TensorDesc::broadcast_shape(&a, &b)
             .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
@@ -207,272 +306,18 @@ impl Instruction for MinInstruction {
         let sa = TensorDesc::broadcast_strides(&a, &c);
         let sb = TensorDesc::broadcast_strides(&b, &c);
 
-        // Acquire read locks for inputs and write lock for output
-        let src1_guard = tensor_graph.tensor_read(self.src1);
-        let src2_guard = tensor_graph.tensor_read(self.src2);
-        let mut dst_guard = tensor_graph.tensor_write(self.dst);
+        let op_datatype = dst_tensor.desc.data_type();
 
-        // Element count (number of elements, not bytes)
-        let elem_count = dst_guard.desc.num_elements();
+        let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
+        let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
+        let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        let a_bytes = src1_guard.read();
-        let b_bytes = src2_guard.read();
-
-        // Helper to ensure buffer lengths
-        let expect_len = |buf_len: usize, elem_size: usize| {
-            let expected = elem_count * elem_size;
-            assert_eq!(
-                buf_len, expected,
-                "Tensor byte length mismatch: {} != {}",
-                buf_len, expected
-            );
-        };
-
-        match dst_guard.desc.data_type() {
-            DataType::Uint8 => {
-                expect_len(a_bytes.len(), 1);
-                expect_len(b_bytes.len(), 1);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa);
-                    let off2 = TensorDesc::offset(&idxs, &sb);
-                    out_buf[i] = a_bytes[off1].min(b_bytes[off2]);
-                }
-            }
-            DataType::Int8 => {
-                expect_len(a_bytes.len(), 1);
-                expect_len(b_bytes.len(), 1);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa);
-                    let off2 = TensorDesc::offset(&idxs, &sb);
-                    let v1 = a_bytes[off1] as i8;
-                    let v2 = b_bytes[off2] as i8;
-                    out_buf[i] = v1.min(v2) as u8;
-                }
-            }
-            DataType::Uint16 => {
-                expect_len(a_bytes.len(), 2);
-                expect_len(b_bytes.len(), 2);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 2;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 2;
-                    let a_v = u16::from_le_bytes([a_bytes[off1], a_bytes[off1 + 1]]);
-                    let b_v = u16::from_le_bytes([b_bytes[off2], b_bytes[off2 + 1]]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    out_buf[2 * i] = r[0];
-                    out_buf[2 * i + 1] = r[1];
-                }
-            }
-            DataType::Int16 => {
-                expect_len(a_bytes.len(), 2);
-                expect_len(b_bytes.len(), 2);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 2;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 2;
-                    let a_v = i16::from_le_bytes([a_bytes[off1], a_bytes[off1 + 1]]);
-                    let b_v = i16::from_le_bytes([b_bytes[off2], b_bytes[off2 + 1]]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    out_buf[2 * i] = r[0];
-                    out_buf[2 * i + 1] = r[1];
-                }
-            }
-            DataType::Uint32 => {
-                expect_len(a_bytes.len(), 4);
-                expect_len(b_bytes.len(), 4);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 4;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 4;
-                    let a_v = u32::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                    ]);
-                    let b_v = u32::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 4 * i;
-                    out_buf[base] = r[0];
-                    out_buf[base + 1] = r[1];
-                    out_buf[base + 2] = r[2];
-                    out_buf[base + 3] = r[3];
-                }
-            }
-            DataType::Int32 => {
-                expect_len(a_bytes.len(), 4);
-                expect_len(b_bytes.len(), 4);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 4;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 4;
-                    let a_v = i32::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                    ]);
-                    let b_v = i32::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 4 * i;
-                    out_buf[base] = r[0];
-                    out_buf[base + 1] = r[1];
-                    out_buf[base + 2] = r[2];
-                    out_buf[base + 3] = r[3];
-                }
-            }
-            DataType::Uint64 => {
-                expect_len(a_bytes.len(), 8);
-                expect_len(b_bytes.len(), 8);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 8;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 8;
-                    let a_v = u64::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                        a_bytes[off1 + 4],
-                        a_bytes[off1 + 5],
-                        a_bytes[off1 + 6],
-                        a_bytes[off1 + 7],
-                    ]);
-                    let b_v = u64::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                        b_bytes[off2 + 4],
-                        b_bytes[off2 + 5],
-                        b_bytes[off2 + 6],
-                        b_bytes[off2 + 7],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 8 * i;
-                    for j in 0..8 {
-                        out_buf[base + j] = r[j];
-                    }
-                }
-            }
-            DataType::Int64 => {
-                expect_len(a_bytes.len(), 8);
-                expect_len(b_bytes.len(), 8);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 8;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 8;
-                    let a_v = i64::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                        a_bytes[off1 + 4],
-                        a_bytes[off1 + 5],
-                        a_bytes[off1 + 6],
-                        a_bytes[off1 + 7],
-                    ]);
-                    let b_v = i64::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                        b_bytes[off2 + 4],
-                        b_bytes[off2 + 5],
-                        b_bytes[off2 + 6],
-                        b_bytes[off2 + 7],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 8 * i;
-                    for j in 0..8 {
-                        out_buf[base + j] = r[j];
-                    }
-                }
-            }
-            DataType::Float => {
-                expect_len(a_bytes.len(), 4);
-                expect_len(b_bytes.len(), 4);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 4;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 4;
-                    let a_v = f32::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                    ]);
-                    let b_v = f32::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 4 * i;
-                    out_buf[base] = r[0];
-                    out_buf[base + 1] = r[1];
-                    out_buf[base + 2] = r[2];
-                    out_buf[base + 3] = r[3];
-                }
-            }
-            DataType::Double => {
-                expect_len(a_bytes.len(), 8);
-                expect_len(b_bytes.len(), 8);
-                let out_buf = dst_guard.get_cpu_memory_mut_slice_or_panic();
-                for i in 0..elem_count {
-                    let idxs = TensorDesc::unravel(i, &c);
-                    let off1 = TensorDesc::offset(&idxs, &sa) * 8;
-                    let off2 = TensorDesc::offset(&idxs, &sb) * 8;
-                    let a_v = f64::from_le_bytes([
-                        a_bytes[off1],
-                        a_bytes[off1 + 1],
-                        a_bytes[off1 + 2],
-                        a_bytes[off1 + 3],
-                        a_bytes[off1 + 4],
-                        a_bytes[off1 + 5],
-                        a_bytes[off1 + 6],
-                        a_bytes[off1 + 7],
-                    ]);
-                    let b_v = f64::from_le_bytes([
-                        b_bytes[off2],
-                        b_bytes[off2 + 1],
-                        b_bytes[off2 + 2],
-                        b_bytes[off2 + 3],
-                        b_bytes[off2 + 4],
-                        b_bytes[off2 + 5],
-                        b_bytes[off2 + 6],
-                        b_bytes[off2 + 7],
-                    ]);
-                    let r = a_v.min(b_v).to_le_bytes();
-                    let base = 8 * i;
-                    for j in 0..8 {
-                        out_buf[base + j] = r[j];
-                    }
-                }
-            }
-            other => panic!("Min: unsupported DataType {:?}", other),
+        match op_datatype {
+            DataType::Float => f32_cpu(sa, sb, c, src1_bytes, src2_bytes, dst_ptr),
+            other => unimplemented!(
+                "min.rs unimplemented cpu instruction for DataType {:?}",
+                other
+            ),
         }
     }
 }

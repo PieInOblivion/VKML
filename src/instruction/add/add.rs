@@ -61,9 +61,9 @@ impl Instruction for AddInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Get tensor descriptions for calculating broadcast shapes and strides
-        let src1_desc = &tensor_graph.tensor_read(self.src1).desc;
-        let src2_desc = &tensor_graph.tensor_read(self.src2).desc;
-        let dst_desc = &tensor_graph.tensor_read(self.dst).desc;
+        let src1_desc = &src1_tensor.desc;
+        let src2_desc = &src2_tensor.desc;
+        let dst_desc = &dst_tensor.desc;
 
         let src1_dims_usize = src1_desc.to_dims();
         let src2_dims_usize = src2_desc.to_dims();
