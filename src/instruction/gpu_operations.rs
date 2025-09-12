@@ -1,3 +1,9 @@
+macro_rules! include_shader {
+    ($name:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $name))
+    };
+}
+
 // shader byte constants centralised here so operations can map directly to their SPIR-V
 // The actual .spv files are generated into OUT_DIR by the build script and resolved
 // via the include_shader! macro
@@ -27,7 +33,7 @@ const MATMUL_1D_3D_SHADER_F32: &[u8] = include_shader!("f32_matmul_1d_3d.spv");
 const INIT_XAVIER_SHADER_F32: &[u8] = include_shader!("f32_init_xavier.spv");
 const INIT_HE_SHADER_F32: &[u8] = include_shader!("f32_init_he.spv");
 const INIT_UNIFORM_SHADER_F32: &[u8] = include_shader!("f32_init_uniform.spv");
-const INIT_CONSTANT_SHADER_F32: &[u8] = include_shader!("f32_init_constant.spv");
+const INIT_CONSTANT_SHADER: &[u8] = include_shader!("init_constant.spv");
 
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -54,7 +60,7 @@ pub enum GPUMemoryOperation {
     InitXavier_F32,
     InitHe_F32,
     InitUniform_F32,
-    InitConstant_F32,
+    InitConstant,
 }
 
 impl GPUMemoryOperation {
@@ -82,7 +88,7 @@ impl GPUMemoryOperation {
             GPUMemoryOperation::InitXavier_F32 => INIT_XAVIER_SHADER_F32,
             GPUMemoryOperation::InitHe_F32 => INIT_HE_SHADER_F32,
             GPUMemoryOperation::InitUniform_F32 => INIT_UNIFORM_SHADER_F32,
-            GPUMemoryOperation::InitConstant_F32 => INIT_CONSTANT_SHADER_F32,
+            GPUMemoryOperation::InitConstant => INIT_CONSTANT_SHADER,
         }
     }
 
@@ -92,7 +98,7 @@ impl GPUMemoryOperation {
             GPUMemoryOperation::InitXavier_F32
                 | GPUMemoryOperation::InitHe_F32
                 | GPUMemoryOperation::InitUniform_F32
-                | GPUMemoryOperation::InitConstant_F32
+                | GPUMemoryOperation::InitConstant
         )
     }
 

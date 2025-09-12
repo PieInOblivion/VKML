@@ -6,8 +6,6 @@ layout(std430, binding = 0) buffer OutBuffer { float weights[]; };
 
 layout(push_constant) uniform PC {
     uint total_elements;
-    uint fan_in;
-    uint fan_out;
     uint seed;
     float min_val;        // min value (or -bound if using bound)
     float max_val;        // max value (or +bound if using bound)

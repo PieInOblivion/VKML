@@ -9,15 +9,15 @@ layout(std430, binding = 2) buffer Out { float c[]; };
 layout(push_constant) uniform PC {
     uint rank;
     uint pad;
+    uint total;
     uint dims[8];
-    uint stridesA[8];
-    uint stridesB[8];
+    uint strides_a[8];
+    uint strides_b[8];
 } pc;
 
 void main() {
     uint gid = gl_GlobalInvocationID.x;
-    uint total = 1;
-    for (uint i = 0; i < pc.rank; ++i) total *= pc.dims[i];
+    uint total = pc.total;
     if (gid >= total) return;
     uint idx = gid;
     uint offA = 0;
@@ -26,8 +26,8 @@ void main() {
         uint d = pc.dims[i];
         uint r = idx % d;
         idx /= d;
-        offA += r * pc.stridesA[i];
-        offB += r * pc.stridesB[i];
+    offA += r * pc.strides_a[i];
+    offB += r * pc.strides_b[i];
     }
     c[gid] = a[offA] / b[offB];
 }

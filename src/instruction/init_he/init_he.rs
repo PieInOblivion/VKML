@@ -1,9 +1,11 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
+    instruction::{
+        gpu_operations::GPUMemoryOperation, init_he::f32_cpu::f32_cpu, instruction::Instruction,
+    },
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
-    utils::math::normal_sample,
 };
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -75,9 +77,17 @@ impl Instruction for InitHeInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(
-                crate::instruction::gpu_operations::GPUMemoryOperation::InitHe_F32,
-            );
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                onnx_extractor::DataType::Float => GPUMemoryOperation::InitHe_F32,
+                _ => {
+                    return Err(
+                        format!("GPU InitHe unimplemented for DataType {:?}", op_datatype).into(),
+                    );
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
@@ -93,22 +103,34 @@ impl Instruction for InitHeInstruction {
             );
 
             let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let (fan_in, fan_out) = dst_tensor.desc.calculate_fan_in_out();
-            let mut pc = [0f32; 4];
-            pc[0] = dst_elems as f32;
-            pc[1] = fan_in as f32;
-            pc[2] = fan_out as f32;
-            pc[3] = rand::random::<u32>() as f32;
-            let pc_bytes = std::slice::from_raw_parts(
-                pc.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 4]>(),
-            );
+            let (fan_in, _) = dst_tensor.desc.calculate_fan_in_out();
+            let seed = rand::random::<u32>();
+            let gain = 2.0f32; // default gain for He init (variance scaling)
+
+            #[repr(C)]
+            struct PC {
+                total_elements: u32,
+                fan_in: u32,
+                seed: u32,
+                gain: f32,
+            }
+
+            let push_constants = PC {
+                total_elements: dst_elems as u32,
+                fan_in: fan_in as u32,
+                seed,
+                gain,
+            };
+
             gpu.get_device().cmd_push_constants(
                 command_buffer,
                 gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                pc_bytes,
+                std::slice::from_raw_parts(
+                    &push_constants as *const PC as *const u8,
+                    std::mem::size_of::<PC>(),
+                ),
             );
 
             let workgroup_size = 256u32;
@@ -128,19 +150,15 @@ impl Instruction for InitHeInstruction {
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
         let mut dst = tensor_graph.tensor_write(self.dst);
-        let (fan_in, _fan_out) = dst.desc.calculate_fan_in_out();
-        let total = dst.desc.num_elements();
+        let (fan_in, _) = dst.desc.calculate_fan_in_out();
+        // compute immutable info before taking mutable borrow
+        let dst_dims = dst.desc.to_dims();
+        let dtype = dst.desc.data_type();
+        let out = dst.get_cpu_memory_mut_slice_or_panic();
 
-        match dst.desc.data_type() {
-            onnx_extractor::DataType::Float => {
-                let out = dst.get_cpu_memory_mut_slice_or_panic();
-                let std_dev = (2.0 / fan_in as f32).sqrt();
-                for i in 0..total {
-                    let v = normal_sample(0.0, std_dev);
-                    let bytes = v.to_le_bytes();
-                    let base = i * 4;
-                    out[base..base + 4].copy_from_slice(&bytes);
-                }
+        match dtype {
+            DataType::Float => {
+                f32_cpu(fan_in, dst_dims, out);
             }
             _ => unimplemented!("InitHe CPU for other types"),
         }

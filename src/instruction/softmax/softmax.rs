@@ -1,8 +1,11 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{
+        gpu_operations::GPUMemoryOperation, instruction::Instruction, softmax::f32_cpu::f32_cpu,
+    },
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use onnx_extractor::DataType;
 use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
     ptr,
@@ -51,14 +54,15 @@ impl Instruction for SoftmaxInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_mem = tensor_graph.get_gpu_memory_or_panic(self.src);
-        let dst_mem = tensor_graph.get_gpu_memory_or_panic(self.dst);
-        let tensor = tensor_graph.tensors.get(self.src).unwrap();
+        let src_tensor = tensor_graph.tensor_read(self.src);
+        let src_mem = src_tensor.get_gpu_memory_or_panic();
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Currently we only support softmax on the last dimension
         assert_eq!(
             self.dim,
-            tensor.desc.to_dims().len() - 1,
+            src_tensor.desc.to_dims().len() - 1,
             "Only softmax on the last dimension is currently implemented, requested dimension: {}",
             self.dim
         );
@@ -132,10 +136,19 @@ impl Instruction for SoftmaxInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu
-                .get_compute_pipelines()
-                .get_pipeline(GPUMemoryOperation::Softmax)
-                .ok_or("Softmax pipeline not found")?;
+            let op_datatype = src_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                DataType::Float => GPUMemoryOperation::Softmax_F32,
+                _ => {
+                    return Err(format!(
+                        "GPU Softmax unimplemented for DataType {:?}",
+                        op_datatype
+                    )
+                    .into());
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -146,13 +159,13 @@ impl Instruction for SoftmaxInstruction {
             gpu.get_device().cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 0,
                 &[descriptor_set],
                 &[],
             );
 
-            let feature_size = tensor.desc.to_dims()[self.dim];
+            let feature_size = src_tensor.desc.to_dims()[self.dim] as usize;
             let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
 
             // Create push constants struct
@@ -170,7 +183,7 @@ impl Instruction for SoftmaxInstruction {
             // Push constants to the shader
             gpu.get_device().cmd_push_constants(
                 command_buffer,
-                gpu.get_compute_pipelines().get_layout(),
+                gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
                 std::slice::from_raw_parts(
@@ -187,9 +200,9 @@ impl Instruction for SoftmaxInstruction {
                 .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
 
             gpu.get_device().end_command_buffer(command_buffer)?;
-
-            Ok(())
         }
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
@@ -197,47 +210,32 @@ impl Instruction for SoftmaxInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let src_data = tensor_graph.tensors[self.src].data.read_data();
-        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
-
-        assert_eq!(
-            dst_data.len(),
-            src_data.len(),
-            "Destination tensor size {} doesn't match source tensor size {}",
-            dst_data.len(),
-            src_data.len()
+        assert!(
+            self.src != self.dst,
+            "Cannot use Softmax for in-place operation"
         );
 
-        let tensor = &tensor_graph.tensors[self.src];
-        let dims = tensor.desc.to_dims();
+        let src_tensor = tensor_graph.tensor_read(self.src);
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
 
+        let dims = src_tensor.desc.to_dims();
         assert_eq!(
             self.dim,
             dims.len() - 1,
             "CPU Softmax currently only supports the last dimension"
         );
 
-        let feature_size = dims[self.dim];
-        let batch_size = src_data.len() / feature_size;
+        let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
+        let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        for b in 0..batch_size {
-            let offset = b * feature_size;
-
-            let mut max_val = f32::MIN;
-            for i in 0..feature_size {
-                max_val = max_val.max(src_data[offset + i]);
+        match src_tensor.desc.data_type() {
+            DataType::Float => {
+                f32_cpu(dims, self.dim, src_bytes, dst_ptr);
             }
-
-            let mut sum = 0.0;
-            for i in 0..feature_size {
-                let exp_val = (src_data[offset + i] - max_val).exp();
-                dst_data[offset + i] = exp_val;
-                sum += exp_val;
-            }
-
-            for i in 0..feature_size {
-                dst_data[offset + i] /= sum;
-            }
+            _ => unimplemented!(
+                "softmax.rs unimplemented cpu instruction for DataType {:?}",
+                src_tensor.desc.data_type()
+            ),
         }
     }
 }

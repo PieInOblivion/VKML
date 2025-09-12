@@ -1,6 +1,6 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
+    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -47,7 +47,7 @@ impl Instruction for InitConstantInstruction {
         let dst_tensor = tensor_graph.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        // For now only support f32 constant init via compute shader
+        // Use generic constant-init compute shader that writes elements up to 8 bytes
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
                 s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
@@ -87,7 +87,8 @@ impl Instruction for InitConstantInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(InitConstant_F32);
+            // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
+            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::InitConstant);
 
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
@@ -104,23 +105,61 @@ impl Instruction for InitConstantInstruction {
                 &[],
             );
 
-            // Push constant: for constant init we expect first f32 is value and second is total elements
-            // NOTE: We should just count required bytes to make x datatype, compared to the vec<u8> len
-            let total_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let mut pc = [0f32; 2];
-            if self.constant.len() >= 4 {
-                pc[0] = f32::from_le_bytes([
-                    self.constant[0],
-                    self.constant[1],
-                    self.constant[2],
-                    self.constant[3],
-                ]);
+            // Determine element size for this tensor and pass it to the GPU so the shader
+            // can write using the correct stride/width. Panic if we don't know the size.
+            let elem_size_usize = dst_tensor.desc.data_type().size_in_bytes().expect(&format!(
+                "InitConstant create_command_buffer: unknown element size for DataType {:?}",
+                dst_tensor.desc.data_type()
+            ));
+            let elem_size = elem_size_usize as u32;
+
+            // Validate element size (host-side defense). We support up to 8 bytes per element.
+            if elem_size_usize == 0 || elem_size_usize > 8 {
+                panic!(
+                    "InitConstant create_command_buffer: unsupported element size {} (must be 1..=8)",
+                    elem_size_usize
+                );
             }
-            pc[1] = total_elements as f32;
+
+            // Compute total bytes from the tensor descriptor (preferred source of truth)
+            let total_bytes_usize = dst_tensor.desc.size_in_bytes();
+            if total_bytes_usize == 0 {
+                // nothing to do
+                return Ok(());
+            }
+            if total_bytes_usize > u32::MAX as usize {
+                panic!(
+                    "InitConstant create_command_buffer: total bytes {} too large (must fit in u32)",
+                    total_bytes_usize
+                );
+            }
+
+            let total_words = ((total_bytes_usize + 3) / 4) as u32;
+
+            // Build a little-endian u64 from the first up to 8 bytes of `self.constant`.
+            // Use `.get()` with a default of 0 so GPU path is tolerant of shorter inputs.
+            let mut value_u64: u64 = 0;
+            for i in 0..8usize {
+                let b = *self.constant.get(i).unwrap_or(&0) as u64;
+                value_u64 |= b << (8 * i);
+            }
+
+            #[repr(C)]
+            struct PC {
+                elem_size: u32,
+                value_lo: u32,
+                value_hi: u32,
+            }
+
+            let push_constants = PC {
+                elem_size,
+                value_lo: (value_u64 & 0xFFFFFFFF) as u32,
+                value_hi: (value_u64 >> 32) as u32,
+            };
 
             let pc_bytes = std::slice::from_raw_parts(
-                pc.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 2]>(),
+                &push_constants as *const PC as *const u8,
+                std::mem::size_of::<PC>(),
             );
 
             gpu.get_device().cmd_push_constants(
@@ -132,7 +171,7 @@ impl Instruction for InitConstantInstruction {
             );
 
             let workgroup_size = 256u32;
-            let num_workgroups = ((total_elements as u32) + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = ((total_words as u32) + workgroup_size - 1) / workgroup_size;
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups, 1, 1);
 
@@ -150,24 +189,39 @@ impl Instruction for InitConstantInstruction {
         let mut dst = tensor_graph.tensor_write(self.dst);
         let dtype = dst.desc.data_type();
 
-        match dtype {
-            onnx_extractor::DataType::Float => {
-                let out = dst.get_cpu_memory_mut_slice_or_panic();
-                let elem_bytes = std::mem::size_of::<f32>();
-                let total = out.len() / elem_bytes;
-                for i in 0..total {
-                    let base = i * elem_bytes;
-                    // copy up to 4 bytes from constant, or zero
-                    for j in 0..elem_bytes {
-                        out[base + j] = if j < self.constant.len() {
-                            self.constant[j]
-                        } else {
-                            0
-                        };
-                    }
-                }
-            }
-            _ => unimplemented!("InitConstant CPU for other types"),
+        // Use DataType's helper to get element size in bytes; panic if unknown so we don't assume a size.
+        let required_elem_bytes: usize = dtype.size_in_bytes().expect(&format!(
+            "InitConstant execute_cpu: unknown element size for DataType {:?}",
+            dtype
+        ));
+        assert!(required_elem_bytes > 0);
+
+        // Require that the provided constant bytes contain at least one element.
+        if self.constant.len() < required_elem_bytes {
+            panic!(
+                "InitConstant execute_cpu: constant bytes length {} too small for DataType {:?} (need {} bytes)",
+                self.constant.len(),
+                dtype,
+                required_elem_bytes
+            );
+        }
+
+        // Use the first `required_elem_bytes` bytes as the element pattern (little-endian assumed).
+        let pattern = &self.constant[0..required_elem_bytes];
+
+        let out = dst.get_cpu_memory_mut_slice_or_panic();
+
+        // Destination length must be a multiple of the element size.
+        if out.len() % required_elem_bytes != 0 {
+            panic!(
+                "InitConstant execute_cpu: destination length {} is not a multiple of element size {}",
+                out.len(),
+                required_elem_bytes
+            );
+        }
+
+        for chunk in out.chunks_mut(required_elem_bytes) {
+            chunk.copy_from_slice(pattern);
         }
     }
 }

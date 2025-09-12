@@ -7,7 +7,6 @@ layout(std430, binding = 0) buffer OutBuffer { float weights[]; };
 layout(push_constant) uniform PC {
     uint total_elements;
     uint fan_in;
-    uint fan_out;         // unused for He
     uint seed;
     float gain;
 } pc;

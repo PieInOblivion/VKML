@@ -1,9 +1,12 @@
 use crate::{
     gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
+    instruction::{
+        gpu_operations::GPUMemoryOperation, init_uniform::f32_cpu::f32_cpu,
+        instruction::Instruction,
+    },
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use rand::distr::{Distribution, Uniform};
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -81,9 +84,19 @@ impl Instruction for InitUniformInstruction {
             gpu.get_device()
                 .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
-            let pipeline = gpu.get_or_create_pipeline(
-                crate::instruction::gpu_operations::GPUMemoryOperation::InitUniform_F32,
-            );
+            let op_datatype = dst_tensor.desc.data_type();
+            let gpu_op = match op_datatype {
+                onnx_extractor::DataType::Float => GPUMemoryOperation::InitUniform_F32,
+                _ => {
+                    return Err(format!(
+                        "GPU InitUniform unimplemented for DataType {:?}",
+                        op_datatype
+                    )
+                    .into());
+                }
+            };
+
+            let pipeline = gpu.get_or_create_pipeline(gpu_op);
             gpu.get_device().cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
@@ -99,21 +112,32 @@ impl Instruction for InitUniformInstruction {
             );
 
             let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let mut pc = [0f32; 4];
-            pc[0] = dst_elems as f32;
-            pc[1] = self.min;
-            pc[2] = self.max;
-            pc[3] = rand::random::<u32>() as f32;
-            let pc_bytes = std::slice::from_raw_parts(
-                pc.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 4]>(),
-            );
+            let seed = rand::random::<u32>();
+            // We don't have fan_in/fan_out here, set to 0
+            #[repr(C)]
+            struct PC {
+                total_elements: u32,
+                seed: u32,
+                min_val: f32,
+                max_val: f32,
+            }
+
+            let push_constants = PC {
+                total_elements: dst_elems as u32,
+                seed,
+                min_val: self.min,
+                max_val: self.max,
+            };
+
             gpu.get_device().cmd_push_constants(
                 command_buffer,
                 gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                pc_bytes,
+                std::slice::from_raw_parts(
+                    &push_constants as *const PC as *const u8,
+                    std::mem::size_of::<PC>(),
+                ),
             );
 
             let workgroup_size = 256u32;
@@ -133,19 +157,13 @@ impl Instruction for InitUniformInstruction {
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
         let mut dst = tensor_graph.tensor_write(self.dst);
-        let total = dst.desc.num_elements();
+        let dtype = dst.desc.data_type();
+        let dst_dims = dst.desc.to_dims();
+        let out = dst.get_cpu_memory_mut_slice_or_panic();
 
-        match dst.desc.data_type() {
-            onnx_extractor::DataType::Float => {
-                let out = dst.get_cpu_memory_mut_slice_or_panic();
-                let dist = Uniform::new(self.min, self.max);
-                let mut rng = rand::rng();
-                for i in 0..total {
-                    let v: f32 = dist.unwrap().sample(&mut rng);
-                    let bytes = v.to_le_bytes();
-                    let base = i * 4;
-                    out[base..base + 4].copy_from_slice(&bytes);
-                }
+        match dtype {
+            DataType::Float => {
+                f32_cpu(self.min, self.max, dst_dims, out);
             }
             _ => unimplemented!("InitUniform CPU for other types"),
         }

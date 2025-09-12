@@ -3,6 +3,7 @@ use crate::{
     instruction::instruction::Instruction,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
@@ -57,8 +58,6 @@ impl Instruction for ConcatInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
-
         assert_eq!(
             self.dim, 1,
             "CPU Concat only implemented for dimension 1, got {}",
@@ -69,54 +68,74 @@ impl Instruction for ConcatInstruction {
             "Concat requires at least one source tensor"
         );
 
+        // Prepare tensors and validate shapes
         let first_source = self.sources[0];
-        let src_tensor = &tensor_graph.tensors[first_source];
-        let src_dims = src_tensor.desc.to_dims();
+        let first_desc = tensor_graph.tensor_read(first_source).desc.to_dims();
+        assert_eq!(first_desc.len(), 2, "Concat only supports 2D tensors");
+        let batch_size = first_desc[0] as usize;
 
-        assert_eq!(src_dims.len(), 2, "Concat only supports 2D tensors");
-        let batch_size = src_dims[0];
-
-        let mut total_features = 0;
+        let mut total_features: usize = 0;
+        let mut source_features: Vec<usize> = Vec::with_capacity(self.sources.len());
         for &src_id in &self.sources {
-            let src_tensor = &tensor_graph.tensors[src_id];
-            let src_dims = src_tensor.desc.to_dims();
-
+            let src_desc = tensor_graph.tensor_read(src_id).desc.to_dims();
             assert_eq!(
-                src_dims.len(),
+                src_desc.len(),
                 2,
                 "All source tensors must be 2D for Concat"
             );
             assert_eq!(
-                src_dims[0], batch_size,
-                "All source tensors must have same batch size {}, got {}",
-                batch_size, src_dims[0]
+                src_desc[0] as usize, batch_size,
+                "All source tensors must have same batch size"
             );
-
-            total_features += src_dims[1];
+            let feat = src_desc[1] as usize;
+            source_features.push(feat);
+            total_features += feat;
         }
 
-        let dst_dims = tensor_graph.tensors[self.dst].desc.to_dims();
-        assert_eq!(dst_dims.len(), 2, "Destination tensor must be 2D");
-        assert_eq!(dst_dims[0], batch_size, "Destination batch size mismatch");
+        let dst_desc = tensor_graph.tensor_read(self.dst).desc.to_dims();
+        assert_eq!(dst_desc.len(), 2, "Destination tensor must be 2D");
         assert_eq!(
-            dst_dims[1], total_features,
+            dst_desc[0] as usize, batch_size,
+            "Destination batch size mismatch"
+        );
+        assert_eq!(
+            dst_desc[1] as usize, total_features,
             "Destination feature size mismatch"
         );
 
-        let mut dst_idx = 0;
-        for b in 0..batch_size {
-            for &src_id in &self.sources {
-                let src_data = tensor_graph.tensors[src_id].data.read_data();
-                let src_tensor = &tensor_graph.tensors[src_id];
-                let src_dims = src_tensor.desc.to_dims();
-                let feat_dim = src_dims[1];
-                let src_offset = b * feat_dim;
+        // Copy source CPU buffers into owned Vec<u8> first so we don't hold
+        // immutable borrows on `tensor_graph` while we later need a mutable
+        // borrow for the destination tensor. Also gather each source's dims.
+        let mut owned_src_bytes: Vec<Vec<u8>> = Vec::with_capacity(self.sources.len());
+        let mut src_dims_vec: Vec<Vec<i64>> = Vec::with_capacity(self.sources.len());
+        for &src_id in &self.sources {
+            let src_tensor = tensor_graph.tensor_read(src_id);
+            let src_slice = src_tensor.get_cpu_memory_slice_or_panic();
+            owned_src_bytes.push(src_slice.to_vec());
+            src_dims_vec.push(src_tensor.desc.to_dims());
+        }
 
-                for i in 0..feat_dim {
-                    dst_data[dst_idx] = src_data[src_offset + i];
-                    dst_idx += 1;
-                }
+        // Build a vector of byte-slice references that point into our owned buffers.
+        let src_bytes_vec: Vec<&[u8]> = owned_src_bytes.iter().map(|v| v.as_slice()).collect();
+
+        // Now it's safe to take a mutable borrow for the destination tensor.
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let op_datatype = dst_tensor.desc.data_type();
+        match op_datatype {
+            DataType::Float => {
+                let mut dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+                crate::instruction::concat::f32_cpu::f32_cpu(
+                    &src_bytes_vec,
+                    &src_dims_vec,
+                    self.dim,
+                    &dst_desc,
+                    &mut dst_bytes,
+                );
             }
+            _ => unimplemented!(
+                "concat.rs unimplemented cpu instruction for DataType {:?}",
+                dst_tensor.desc.data_type()
+            ),
         }
     }
 }
