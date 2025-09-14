@@ -15,6 +15,7 @@ use crate::{
     utils::expect_msg::ExpectMsg,
 };
 
+use super::vk_extensions::VkExtensions;
 use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
 // TODO: Performance gains when needing to multiple tasks in sequence
@@ -36,6 +37,7 @@ pub struct GPU {
     pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
     memory_tracker: MemoryTracker,
+    extensions: VkExtensions,
 }
 
 impl GPU {
@@ -77,6 +79,13 @@ impl GPU {
             let physical_device = *physical_devices
                 .get(device_index)
                 .ok_or("GPU index out of range")?;
+
+            // Enumerate device extensions and populate extension flags
+            let device_extensions = instance
+                .enumerate_device_extension_properties(physical_device, None)
+                .expect_msg("Failed to enumerate device extension properties");
+
+            let vk_extensions = VkExtensions::from_extension_properties(&device_extensions);
 
             let queue_family_index = instance
                 .get_physical_device_queue_family_properties(physical_device)
@@ -256,6 +265,7 @@ impl GPU {
                 pipelines: RwLock::new(HashMap::new()),
                 pipeline_layout,
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, Kept for for testing at the moment
+                extensions: vk_extensions,
             })
         }
     }
@@ -712,6 +722,10 @@ impl GPU {
 
     pub fn get_layout(&self) -> vk::PipelineLayout {
         self.pipeline_layout
+    }
+
+    pub fn extensions(&self) -> &VkExtensions {
+        &self.extensions
     }
 
     pub fn get_device(&self) -> &Device {
