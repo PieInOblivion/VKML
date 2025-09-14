@@ -6,7 +6,7 @@ pub struct VkExtensions {
     pub cooperative_matrix: bool,
     pub shader_float16_int8: bool,
     pub timeline_semaphore: bool,
-    pub descriptor_indexing: bool,
+    pub synchronization2: bool
 }
 
 impl VkExtensions {
@@ -14,7 +14,7 @@ impl VkExtensions {
     pub const VK_KHR_COOPERATIVE_MATRIX: &'static str = "VK_KHR_cooperative_matrix";
     pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
     pub const VK_KHR_TIMELINE_SEMAPHORE: &'static str = "VK_KHR_timeline_semaphore";
-    pub const VK_EXT_DESCRIPTOR_INDEXING: &'static str = "VK_EXT_descriptor_indexing";
+    pub const VK_KHR_SYNCHRONIZATION2: &'static str = "VK_KHR_synchronization2";
 
     // build from a slice of vk::ExtensionProperties returned by Vulkan
     pub fn from_extension_properties(props: &[vk::ExtensionProperties]) -> Self {
@@ -29,7 +29,7 @@ impl VkExtensions {
                 Self::VK_KHR_COOPERATIVE_MATRIX => res.cooperative_matrix = true,
                 Self::VK_KHR_SHADER_FLOAT16_INT8 => res.shader_float16_int8 = true,
                 Self::VK_KHR_TIMELINE_SEMAPHORE => res.timeline_semaphore = true,
-                Self::VK_EXT_DESCRIPTOR_INDEXING => res.descriptor_indexing = true,
+                Self::VK_KHR_SYNCHRONIZATION2 => res.synchronization2 = true,
                 _ => {}
             }
         }
