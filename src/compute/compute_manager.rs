@@ -496,7 +496,7 @@ impl ComputeManager {
                                 };
 
                                 let command_buffers = match gpu
-                                    .device
+                                    .get_device()
                                     .allocate_command_buffers(&alloc_info)
                                 {
                                     Ok(cbs) => cbs,
@@ -515,7 +515,7 @@ impl ComputeManager {
                                 if let Err(e) =
                                     weight_init.create_command_buffer(gpu, cmd, &self.tensor_graph)
                                 {
-                                    gpu.device.free_command_buffers(
+                                    gpu.get_device().free_command_buffers(
                                         gpu.get_command_pool(),
                                         &command_buffers,
                                     );
@@ -527,7 +527,7 @@ impl ComputeManager {
                                 }
 
                                 if let Err(e) = gpu.submit_command_buffers_and_wait(&[cmd]) {
-                                    gpu.device.free_command_buffers(
+                                    gpu.get_device().free_command_buffers(
                                         gpu.get_command_pool(),
                                         &command_buffers,
                                     );
@@ -538,7 +538,7 @@ impl ComputeManager {
                                     )));
                                 }
 
-                                gpu.device
+                                gpu.get_device()
                                     .free_command_buffers(gpu.get_command_pool(), &command_buffers);
                             }
                         }
@@ -842,14 +842,14 @@ zp_define_task_fn!(
                 command_buffer_count: params.operations.len() as u32,
             };
 
-            let Ok(command_buffers) = gpu.device.allocate_command_buffers(&alloc_info) else {
+            let Ok(command_buffers) = gpu.get_device().allocate_command_buffers(&alloc_info) else {
                 eprintln!("Failed to allocate command buffers");
                 return;
             };
 
             if command_buffers.len() != params.operations.len() {
                 eprintln!("Mismatch between allocated command buffers and operations");
-                gpu.device
+                gpu.get_device()
                     .free_command_buffers(gpu.get_command_pool(), &command_buffers);
                 return;
             }
@@ -880,7 +880,7 @@ zp_define_task_fn!(
                 }
             }
 
-            gpu.device
+            gpu.get_device()
                 .free_command_buffers(gpu.get_command_pool(), &command_buffers);
         }
     }

@@ -5,8 +5,8 @@ use crate::{
     },
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use std::fmt::{Debug, Formatter, Result as FmtResult};
 use onnx_extractor::DataType;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -417,17 +417,17 @@ impl Instruction for Conv2DInstruction {
                 .to_vec()
         });
 
-    drop(src_guard);
-    drop(weights_guard);
+        drop(src_guard);
+        drop(weights_guard);
 
-    // Read dst descriptor info before taking mutable write guard to avoid borrow conflicts
-    let dst_read = tensor_graph.tensor_read(self.dst);
-    let dst_data_type = dst_read.desc.data_type();
-    let dst_dims_i64 = dst_read.desc.to_dims();
-    drop(dst_read);
+        // Read dst descriptor info before taking mutable write guard to avoid borrow conflicts
+        let dst_read = tensor_graph.tensor_read(self.dst);
+        let dst_data_type = dst_read.desc.data_type();
+        let dst_dims_i64 = dst_read.desc.to_dims();
+        drop(dst_read);
 
-    let mut dst_guard = tensor_graph.tensor_write(self.dst);
-    let dst_bytes = dst_guard.get_cpu_memory_mut_slice_or_panic();
+        let mut dst_guard = tensor_graph.tensor_write(self.dst);
+        let dst_bytes = dst_guard.get_cpu_memory_mut_slice_or_panic();
 
         let src_dims = src_dims_i64.iter().map(|d| *d as usize).collect();
         let weight_dims = weight_dims_i64.iter().map(|d| *d as usize).collect();

@@ -26,7 +26,7 @@ use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 pub struct GPU {
     entry: Arc<Entry>,
     instance: Instance,
-    pub device: Device,
+    device: Device,
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
     command_pool: vk::CommandPool,
