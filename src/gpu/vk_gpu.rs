@@ -115,20 +115,31 @@ impl GPU {
 
             let device_features = vk::PhysicalDeviceFeatures::default();
 
-            // Create device with requested queue count
+            // vkextensions to prepare both extension name strings and any required
+            // p_next feature structs. keep both return values alive until after device creation.
+            let extras = vk_extensions.prepare_device_create();
+            let enabled_names_ptrs = &extras.name_ptrs;
+            let device_create_pnext = extras.device_create_next();
+
+            // create device with requested queue count
             let device_create_info = vk::DeviceCreateInfo {
                 s_type: vk::StructureType::DEVICE_CREATE_INFO,
-                next: std::ptr::null(),
+                next: device_create_pnext,
                 flags: vk::DeviceCreateFlags::empty(),
                 queue_create_info_count: 1,
                 queue_create_infos: &queue_info,
                 enabled_layer_count: 0,
                 enabled_layer_names: std::ptr::null(),
-                enabled_extension_count: 0,
-                enabled_extension_names: ptr::null(),
+                enabled_extension_count: enabled_names_ptrs.len() as u32,
+                enabled_extension_names: if enabled_names_ptrs.is_empty() {
+                    ptr::null()
+                } else {
+                    enabled_names_ptrs.as_ptr()
+                },
                 enabled_features: &device_features,
             };
-
+            // Note: keep 'extras' alive until after device creation so its CStrings and
+            // p_next owners remain valid for the call.
             let device = instance
                 .create_device(physical_device, &device_create_info, None)
                 .expect_msg("Failed to create Vulkan device");
