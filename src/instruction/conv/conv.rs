@@ -109,7 +109,6 @@ impl Instruction for ConvInstruction {
             .as_ref()
             .map(|t| t.get_gpu_memory_or_panic());
 
-
         Ok(())
     }
 
