@@ -1,0 +1,67 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer SrcBuf { float src[]; };
+layout(std430, binding = 1) buffer WeightBuf { float weight[]; };
+layout(std430, binding = 2) buffer DstBuf { float dst[]; };
+layout(std430, binding = 3) buffer BiasBuf { float bias[]; };
+
+layout(push_constant) uniform PC {
+    uint n;
+    uint c;
+    uint m;
+    uint input_len;
+    uint output_len;
+    uint kernel;
+    uint stride;
+    uint dilation;
+    uint pad_begin;
+    uint group;
+    uint has_bias;
+} pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.n * pc.m * pc.output_len;
+    if (gid >= total) return;
+
+    uint rem = gid;
+    uint out_pos = rem % pc.output_len; rem /= pc.output_len;
+    uint oc = rem % pc.m; rem /= pc.m;
+    uint batch = rem; // remaining
+
+    uint m_per_group = pc.m / pc.group;
+    uint c_per_group = pc.c / pc.group;
+    uint group_id = oc / m_per_group;
+    uint c_start = group_id * c_per_group;
+
+    float acc = 0.0;
+
+    for (uint ic = c_start; ic < c_start + c_per_group; ++ic) {
+        for (uint k = 0u; k < pc.kernel; ++k) {
+            // compute input position: out*stride - pad + k*dilation
+            int in_pos_i = int(out_pos) * int(pc.stride) - int(pc.pad_begin) + int(k) * int(pc.dilation);
+            if (in_pos_i < 0) continue;
+            uint in_pos = uint(in_pos_i);
+            if (in_pos >= pc.input_len) continue;
+
+            // src offset: ((batch * C + ic) * input_len) + in_pos
+            uint src_off = ((batch * pc.c + ic) * pc.input_len) + in_pos;
+
+            // weight offset: ((oc * c_per_group + ic_in_group) * kernel) + k
+            uint ic_in_group = ic - c_start;
+            uint w_off = ((oc * c_per_group + ic_in_group) * pc.kernel) + k;
+
+            acc += src[src_off] * weight[w_off];
+        }
+    }
+
+    if (pc.has_bias != 0u) {
+        acc += bias[oc];
+    }
+
+    // dst offset: ((batch * M + oc) * output_len) + out_pos
+    uint dst_off = ((batch * pc.m + oc) * pc.output_len) + out_pos;
+    dst[dst_off] = acc;
+}

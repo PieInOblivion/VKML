@@ -186,7 +186,7 @@ impl GPU {
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
                     immutable_samplers: ptr::null(),
                 },
-                // Additional bindings if needed (bias buffer for Conv2D, etc.)
+                // Additional bindings if needed (bias buffer for Conv, etc.)
                 vk::DescriptorSetLayoutBinding {
                     binding: 3,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,

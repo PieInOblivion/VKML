@@ -18,7 +18,9 @@ const RELU_SHADER_F32: &[u8] = include_shader!("f32_relu.spv");
 const SIGMOID_SHADER_F32: &[u8] = include_shader!("f32_sigmoid.spv");
 const SOFTMAX_SHADER_F32: &[u8] = include_shader!("f32_softmax.spv");
 
+const CONV1D_SHADER_F32: &[u8] = include_shader!("f32_conv1d.spv");
 const CONV2D_SHADER_F32: &[u8] = include_shader!("f32_conv2d.spv");
+const CONV3D_SHADER_F32: &[u8] = include_shader!("f32_conv3d.spv");
 
 const MATMUL_SHADER_F32: &[u8] = include_shader!("f32_matmul.spv");
 const MATMUL_1D_2D_SHADER_F32: &[u8] = include_shader!("f32_matmul_1d_2d.spv");
@@ -47,7 +49,9 @@ pub enum GPUMemoryOperation {
     ReLU_F32,
     Sigmoid_F32,
     Softmax_F32,
+    Conv1D_F32,
     Conv2D_F32,
+    Conv3D_F32,
     MatMul_F32,
     MatMul1D2D_F32,
     MatMul2D1D_F32,
@@ -75,7 +79,9 @@ impl GPUMemoryOperation {
             GPUMemoryOperation::ReLU_F32 => RELU_SHADER_F32,
             GPUMemoryOperation::Sigmoid_F32 => SIGMOID_SHADER_F32,
             GPUMemoryOperation::Softmax_F32 => SOFTMAX_SHADER_F32,
+            GPUMemoryOperation::Conv1D_F32 => CONV1D_SHADER_F32,
             GPUMemoryOperation::Conv2D_F32 => CONV2D_SHADER_F32,
+            GPUMemoryOperation::Conv3D_F32 => CONV3D_SHADER_F32,
             GPUMemoryOperation::MatMul_F32 => MATMUL_SHADER_F32,
             GPUMemoryOperation::MatMul1D2D_F32 => MATMUL_1D_2D_SHADER_F32,
             GPUMemoryOperation::MatMul2D1D_F32 => MATMUL_2D_1D_SHADER_F32,

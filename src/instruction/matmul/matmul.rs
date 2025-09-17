@@ -1,8 +1,10 @@
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    tensor::tensor::Tensor,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
+use bytemuck::{try_cast_slice, try_cast_slice_mut};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -49,30 +51,32 @@ impl Instruction for MatMulInstruction {
         command_buffer: vk::CommandBuffer,
         tensor_graph: &TensorGraph,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_tensor = tensor_graph.tensors.get(self.src1).unwrap();
-        let src2_tensor = tensor_graph.tensors.get(self.src2).unwrap();
-        let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let dst_tensor = tensor_graph.tensor_read(self.dst);
 
-        let operation =
-            determine_matmul_variant(&src1_tensor.desc.to_dims(), &src2_tensor.desc.to_dims());
+        // Avoid borrowing temporaries returned by to_dims(); collect dims first
+        let src1_dims_vec = src1_tensor.desc.to_dims();
+        let src2_dims_vec = src2_tensor.desc.to_dims();
+        let operation = determine_matmul_variant(&src1_dims_vec, &src2_dims_vec);
 
-        if operation == GPUMemoryOperation::MatMul {
+        if operation == GPUMemoryOperation::MatMul_F32 {
             // Use generic fallback for unsupported dimension combinations
             create_generic_matmul_command_buffer(
                 gpu,
                 command_buffer,
-                src1_tensor,
-                src2_tensor,
-                dst_tensor,
+                &*src1_tensor,
+                &*src2_tensor,
+                &*dst_tensor,
             )
         } else {
             // Use specialised implementation for supported dimensions
             create_specialized_matmul_command_buffer(
                 gpu,
                 command_buffer,
-                src1_tensor,
-                src2_tensor,
-                dst_tensor,
+                &*src1_tensor,
+                &*src2_tensor,
+                &*dst_tensor,
                 operation,
             )
         }
@@ -88,17 +92,28 @@ impl Instruction for MatMulInstruction {
             "Cannot use MatMul for in-place operation"
         );
 
-        let src1_data = tensor_graph.tensors[self.src1].data.read_data();
-        let src2_data = tensor_graph.tensors[self.src2].data.read_data();
-        let mut dst_data = tensor_graph.tensors[self.dst].data.write_data();
+        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
 
-        let src1_tensor = tensor_graph.tensors.get(self.src1).unwrap();
-        let src2_tensor = tensor_graph.tensors.get(self.src2).unwrap();
-        let dst_tensor = tensor_graph.tensors.get(self.dst).unwrap();
+        // dims are i64 internally; convert to usize for CPU indexing/math
+        let src1_dims_i64 = src1_tensor.desc.to_dims();
+        let src2_dims_i64 = src2_tensor.desc.to_dims();
+        let dst_dims_i64 = dst_tensor.desc.to_dims();
+        let src1_dims: Vec<usize> = src1_dims_i64.iter().map(|&d| d as usize).collect();
+        let src2_dims: Vec<usize> = src2_dims_i64.iter().map(|&d| d as usize).collect();
+        let dst_dims: Vec<usize> = dst_dims_i64.iter().map(|&d| d as usize).collect();
 
-        let src1_dims = src1_tensor.desc.to_dims();
-        let src2_dims = src2_tensor.desc.to_dims();
-        let dst_dims = dst_tensor.desc.to_dims();
+        let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
+        let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
+        let dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+
+        let src1_data: &[f32] =
+            try_cast_slice(src1_bytes).expect("src1 bytes cannot be cast to f32 slice");
+        let src2_data: &[f32] =
+            try_cast_slice(src2_bytes).expect("src2 bytes cannot be cast to f32 slice");
+        let dst_data: &mut [f32] =
+            try_cast_slice_mut(dst_bytes).expect("dst bytes cannot be cast to f32 slice");
 
         // Zero initialize result
         for val in dst_data.iter_mut() {
@@ -311,32 +326,32 @@ impl Instruction for MatMulInstruction {
     }
 }
 
-fn determine_matmul_variant(src1_dims: &[usize], src2_dims: &[usize]) -> GPUMemoryOperation {
+fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOperation {
     match (src1_dims.len(), src2_dims.len()) {
-        (1, 2) => GPUMemoryOperation::MatMul1D2D,
-        (2, 1) => GPUMemoryOperation::MatMul2D1D,
-        (2, 2) => GPUMemoryOperation::MatMul2D2D,
-        (2, 3) => GPUMemoryOperation::MatMul2D3D,
-        (3, 2) => GPUMemoryOperation::MatMul3D2D,
-        (3, 3) => GPUMemoryOperation::MatMul3D3D,
-        (3, 1) => GPUMemoryOperation::MatMul3D1D,
-        (1, 3) => GPUMemoryOperation::MatMul1D3D,
+        (1, 2) => GPUMemoryOperation::MatMul1D2D_F32,
+        (2, 1) => GPUMemoryOperation::MatMul2D1D_F32,
+        (2, 2) => GPUMemoryOperation::MatMul2D2D_F32,
+        (2, 3) => GPUMemoryOperation::MatMul2D3D_F32,
+        (3, 2) => GPUMemoryOperation::MatMul3D2D_F32,
+        (3, 3) => GPUMemoryOperation::MatMul3D3D_F32,
+        (3, 1) => GPUMemoryOperation::MatMul3D1D_F32,
+        (1, 3) => GPUMemoryOperation::MatMul1D3D_F32,
         _ => {
             // Fallback to generic, or error
             eprintln!(
                 "Unsupported tensor dimensions for matmul: {:?} x {:?}",
                 src1_dims, src2_dims
             );
-            GPUMemoryOperation::MatMul
+            GPUMemoryOperation::MatMul_F32
         }
     }
 }
 
 fn configure_matmul_operation(
     operation: GPUMemoryOperation,
-    src1_tensor: &ComputeTensor,
-    src2_tensor: &ComputeTensor,
-    dst_tensor: &ComputeTensor,
+    src1_tensor: &Tensor,
+    src2_tensor: &Tensor,
+    dst_tensor: &Tensor,
 ) -> Result<(Vec<u32>, u32, u32, u32), Box<dyn std::error::Error>> {
     let src1_dims = src1_tensor.desc.to_dims();
     let src2_dims = src2_tensor.desc.to_dims();
@@ -346,7 +361,7 @@ fn configure_matmul_operation(
     let dst_strides = dst_tensor.desc.strides();
 
     match operation {
-        GPUMemoryOperation::MatMul1D2D => {
+        GPUMemoryOperation::MatMul1D2D_F32 => {
             // [k] × [k,n] → [n]
             let k = src1_dims[0];
             let n = src2_dims[1];
@@ -366,7 +381,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, 1, 1))
         }
 
-        GPUMemoryOperation::MatMul2D1D => {
+        GPUMemoryOperation::MatMul2D1D_F32 => {
             // [m,k] × [k] → [m]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -386,7 +401,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, 1, 1))
         }
 
-        GPUMemoryOperation::MatMul2D2D => {
+        GPUMemoryOperation::MatMul2D2D_F32 => {
             // [m,k] × [k,n] → [m,n]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -412,7 +427,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
 
-        GPUMemoryOperation::MatMul2D3D => {
+        GPUMemoryOperation::MatMul2D3D_F32 => {
             // [m,k] × [batch,k,n] → [batch,m,n]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -444,7 +459,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D2D => {
+        GPUMemoryOperation::MatMul3D2D_F32 => {
             // [batch,m,k] × [k,n] → [batch,m,n]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -476,7 +491,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D3D => {
+        GPUMemoryOperation::MatMul3D3D_F32 => {
             // [batch,m,k] × [batch,k,n] → [batch,m,n]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -509,7 +524,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D1D => {
+        GPUMemoryOperation::MatMul3D1D_F32 => {
             // [batch,m,k] × [k] → [batch,m]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -535,7 +550,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
 
-        GPUMemoryOperation::MatMul1D3D => {
+        GPUMemoryOperation::MatMul1D3D_F32 => {
             // [k] × [batch,k,n] → [batch,n]
             let k = src1_dims[0];
             let batch = src2_dims[0];
@@ -572,23 +587,14 @@ fn configure_matmul_operation(
 fn create_generic_matmul_command_buffer(
     gpu: &GPU,
     command_buffer: vk::CommandBuffer,
-    src1_tensor: &ComputeTensor,
-    src2_tensor: &ComputeTensor,
-    dst_tensor: &ComputeTensor,
+    src1_tensor: &Tensor,
+    src2_tensor: &Tensor,
+    dst_tensor: &Tensor,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        let src1_gpu_mem = match &src1_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Source tensor 1 not on GPU".into()),
-        };
-        let src2_gpu_mem = match &src2_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Source tensor 2 not on GPU".into()),
-        };
-        let dst_gpu_mem = match &dst_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Destination tensor not on GPU".into()),
-        };
+        let src1_gpu_mem = src1_tensor.get_gpu_memory_or_panic();
+        let src2_gpu_mem = src2_tensor.get_gpu_memory_or_panic();
+        let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Begin command buffer
         let begin_info = vk::CommandBufferBeginInfo {
@@ -599,16 +605,17 @@ fn create_generic_matmul_command_buffer(
             .begin_command_buffer(command_buffer, &begin_info)?;
 
         // Get pipeline
-        // Assuming pipeline.descriptor_set_layout and pipeline.pipeline_layout exist
-        let pipeline = gpu
-            .get_compute_pipelines()
-            .get_pipeline(GPUMemoryOperation::MatMul)
-            .ok_or("MatMul pipeline not found")?;
+        let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::MatMul_F32);
 
         // Prepare UBO data
         let src1_dims = src1_tensor.desc.to_dims();
         let src2_dims = src2_tensor.desc.to_dims();
         let dst_dims = dst_tensor.desc.to_dims();
+
+        // convert to usize vectors for UBO packing
+        let src1_dims_usize: Vec<usize> = src1_dims.iter().map(|&d| d as usize).collect();
+        let src2_dims_usize: Vec<usize> = src2_dims.iter().map(|&d| d as usize).collect();
+        let dst_dims_usize: Vec<usize> = dst_dims.iter().map(|&d| d as usize).collect();
 
         let src1_strides = src1_tensor.desc.strides();
         let src2_strides = src2_tensor.desc.strides();
@@ -617,19 +624,19 @@ fn create_generic_matmul_command_buffer(
         const MAX_DIMS: usize = 8; // Must match shader
 
         let (m, k, n, a_m_axis, a_k_axis, b_k_axis, b_n_axis) =
-            analyze_matmul_dimensions(&src1_dims, &src2_dims, &dst_dims)?;
+            analyze_matmul_dimensions(&src1_dims_usize, &src2_dims_usize, &dst_dims_usize)?;
 
         let mut ubo_data = Vec::<u32>::new();
         // Dimension counts
-        ubo_data.push(src1_dims.len() as u32);
-        ubo_data.push(src2_dims.len() as u32);
-        ubo_data.push(dst_dims.len() as u32);
+        ubo_data.push(src1_dims_usize.len() as u32);
+        ubo_data.push(src2_dims_usize.len() as u32);
+        ubo_data.push(dst_dims_usize.len() as u32);
         // Key dimensions
         ubo_data.push(m as u32);
         ubo_data.push(k as u32);
         ubo_data.push(n as u32);
         // batch_dims (count of batch dimensions in C tensor)
-        let batch_dims_count = dst_dims.len().saturating_sub(2);
+        let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
         ubo_data.push(batch_dims_count as u32);
         // Contraction axis information (matching shader struct order)
         ubo_data.push(a_k_axis as u32); // a_k_axis
@@ -645,9 +652,9 @@ fn create_generic_matmul_command_buffer(
             padded
         };
         // Tensor shapes
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src1_dims));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src2_dims));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&dst_dims));
+        ubo_data.extend_from_slice(&pad_dims_or_strides(&src1_dims_usize));
+        ubo_data.extend_from_slice(&pad_dims_or_strides(&src2_dims_usize));
+        ubo_data.extend_from_slice(&pad_dims_or_strides(&dst_dims_usize));
         // Tensor strides
         ubo_data.extend_from_slice(&pad_dims_or_strides(&src1_strides));
         ubo_data.extend_from_slice(&pad_dims_or_strides(&src2_strides));
@@ -767,7 +774,7 @@ fn create_generic_matmul_command_buffer(
         gpu.get_device().cmd_bind_descriptor_sets(
             command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            gpu.get_compute_pipelines().get_layout(),
+            gpu.get_layout(),
             0,
             &[descriptor_set],
             &[],
@@ -775,9 +782,9 @@ fn create_generic_matmul_command_buffer(
 
         // Calculate batch size for dispatch (product of C's batch dimensions)
         let mut batch_size_val = 1usize;
-        if dst_dims.len() > 2 {
-            for i in 0..(dst_dims.len() - 2) {
-                batch_size_val *= dst_dims[i];
+        if dst_dims_usize.len() > 2 {
+            for i in 0..(dst_dims_usize.len() - 2) {
+                batch_size_val *= dst_dims_usize[i];
             }
         }
 
@@ -889,24 +896,15 @@ fn analyze_matmul_dimensions(
 fn create_specialized_matmul_command_buffer(
     gpu: &GPU,
     command_buffer: vk::CommandBuffer,
-    src1_tensor: &ComputeTensor,
-    src2_tensor: &ComputeTensor,
-    dst_tensor: &ComputeTensor,
+    src1_tensor: &Tensor,
+    src2_tensor: &Tensor,
+    dst_tensor: &Tensor,
     operation: GPUMemoryOperation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        let src1_mem = match &src1_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Source tensor 1 not in GPU memory".into()),
-        };
-        let src2_mem = match &src2_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Source tensor 2 not in GPU memory".into()),
-        };
-        let dst_mem = match &dst_tensor.data {
-            TensorStorage::GPU(gpu_storage) => gpu_storage.memory(),
-            _ => return Err("Destination tensor not in GPU memory".into()),
-        };
+        let src1_mem = src1_tensor.get_gpu_memory_or_panic();
+        let src2_mem = src2_tensor.get_gpu_memory_or_panic();
+        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         let begin_info = vk::CommandBufferBeginInfo {
             s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
@@ -988,10 +986,7 @@ fn create_specialized_matmul_command_buffer(
         gpu.get_device()
             .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
-        let pipeline = gpu
-            .get_compute_pipelines()
-            .get_pipeline(operation)
-            .ok_or(format!("{:?} pipeline not found", operation))?;
+        let pipeline = gpu.get_or_create_pipeline(operation);
 
         gpu.get_device().cmd_bind_pipeline(
             command_buffer,
@@ -1002,7 +997,7 @@ fn create_specialized_matmul_command_buffer(
         gpu.get_device().cmd_bind_descriptor_sets(
             command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            gpu.get_compute_pipelines().get_layout(),
+            gpu.get_layout(),
             0,
             &[descriptor_set],
             &[],
@@ -1015,7 +1010,7 @@ fn create_specialized_matmul_command_buffer(
         // Push constants to the shader
         gpu.get_device().cmd_push_constants(
             command_buffer,
-            gpu.get_compute_pipelines().get_layout(),
+            gpu.get_layout(),
             vk::ShaderStageFlags::COMPUTE,
             0,
             std::slice::from_raw_parts(

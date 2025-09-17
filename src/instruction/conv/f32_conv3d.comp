@@ -1,0 +1,94 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(std430, binding = 0) buffer SrcBuf { float src[]; };
+layout(std430, binding = 1) buffer WeightBuf { float weight[]; };
+layout(std430, binding = 2) buffer DstBuf { float dst[]; };
+layout(std430, binding = 3) buffer BiasBuf { float bias[]; };
+
+layout(push_constant) uniform PC {
+    uint n;
+    uint c;
+    uint m;
+    uint in_d;
+    uint in_h;
+    uint in_w;
+    uint out_d;
+    uint out_h;
+    uint out_w;
+    uint k_d;
+    uint k_h;
+    uint k_w;
+    uint s_d;
+    uint s_h;
+    uint s_w;
+    uint d_d;
+    uint d_h;
+    uint d_w;
+    uint pad_d;
+    uint pad_h;
+    uint pad_w;
+    uint group;
+    uint has_bias;
+} pc;
+
+void main() {
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+    uint oz = gl_GlobalInvocationID.z % pc.out_w; // encode depth in z across dimension and batch/oc
+    // For simplicity, compute batch and oc from a separate dispatch-layer; here assume z contains combined index
+    uint combined = gl_WorkGroupID.z * gl_WorkGroupSize.z + gl_LocalInvocationID.z;
+    uint oc = combined % pc.m;
+    uint batch = combined / pc.m;
+
+    // A simpler mapping could be used depending on dispatch
+    if (ox >= pc.out_w || oy >= pc.out_h || oz >= pc.out_d) return;
+
+    float acc = 0.0;
+
+    uint m_per_group = pc.m / pc.group;
+    uint c_per_group = pc.c / pc.group;
+    uint group_id = oc / m_per_group;
+    uint c_start = group_id * c_per_group;
+
+    for (uint ic = c_start; ic < c_start + c_per_group; ++ic) {
+        for (uint kd = 0u; kd < pc.k_d; ++kd) {
+            int in_z_i = int(oz) * int(pc.s_d) - int(pc.pad_d) + int(kd) * int(pc.d_d);
+            if (in_z_i < 0) continue;
+            uint in_z = uint(in_z_i);
+            if (in_z >= pc.in_d) continue;
+
+            for (uint ky = 0u; ky < pc.k_h; ++ky) {
+                int in_y_i = int(oy) * int(pc.s_h) - int(pc.pad_h) + int(ky) * int(pc.d_h);
+                if (in_y_i < 0) continue;
+                uint in_y = uint(in_y_i);
+                if (in_y >= pc.in_h) continue;
+
+                for (uint kx = 0u; kx < pc.k_w; ++kx) {
+                    int in_x_i = int(ox) * int(pc.s_w) - int(pc.pad_w) + int(kx) * int(pc.d_w);
+                    if (in_x_i < 0) continue;
+                    uint in_x = uint(in_x_i);
+                    if (in_x >= pc.in_w) continue;
+
+                    // src offset: (((batch * C + ic) * in_d + in_z) * in_h + in_y) * in_w + in_x
+                    uint src_off = ((((batch * pc.c + ic) * pc.in_d + in_z) * pc.in_h + in_y) * pc.in_w) + in_x;
+
+                    // weight offset: ((((oc * c_per_group + ic_in_group) * k_d + kd) * k_h + ky) * k_w) + kx
+                    uint ic_in_group = ic - c_start;
+                    uint w_off = ((((oc * c_per_group + ic_in_group) * pc.k_d + kd) * pc.k_h + ky) * pc.k_w) + kx;
+
+                    acc += src[src_off] * weight[w_off];
+                }
+            }
+        }
+    }
+
+    if (pc.has_bias != 0u) {
+        acc += bias[oc];
+    }
+
+    // dst offset: ((((batch * M + oc) * out_d + oz) * out_h + oy) * out_w) + ox
+    uint dst_off = ((((batch * pc.m + oc) * pc.out_d + oz) * pc.out_h + oy) * pc.out_w) + ox;
+    dst[dst_off] = acc;
+}

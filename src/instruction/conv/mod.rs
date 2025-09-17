@@ -1,2 +1,2 @@
-pub mod conv2d;
+pub mod conv;
 pub mod f32_cpu;

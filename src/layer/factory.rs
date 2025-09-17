@@ -1,9 +1,9 @@
-use crate::tensor::desc::TensorDesc;
+use crate::{instruction::conv::conv::AutoPad, tensor::desc::TensorDesc};
 
 use super::{
     activations::{ActivationLayer, ActivationType},
     concat::ConcatLayer,
-    conv2d::Conv2DLayer,
+    conv::ConvLayer,
     element_wise::{ElementWiseLayer, ElementWiseOperation},
     input_buffer::InputLayer,
     layer::Layer,
@@ -30,30 +30,24 @@ impl Layers {
         Box::new(LinearLayer::new_with(in_features, out_features, bias))
     }
 
-    pub fn conv2d(in_channels: i64, out_channels: i64) -> Box<dyn Layer> {
-        Box::new(Conv2DLayer::new(in_channels, out_channels))
-    }
-
-    pub fn conv2d_with(
+    pub fn conv_with(
         in_features: i64,
         out_features: i64,
-        kernel_h: i64,
-        kernel_w: i64,
-        stride_h: i64,
-        stride_w: i64,
-        padding_h: i64,
-        padding_w: i64,
+        auto_pad: AutoPad,
+        dilations: Vec<usize>,
+        kernel_shape: Vec<usize>,
+        pads: Vec<usize>,
+        strides: Vec<usize>,
         bias: bool,
     ) -> Box<dyn Layer> {
-        Box::new(Conv2DLayer::new_with(
+        Box::new(ConvLayer::new_with(
             in_features,
             out_features,
-            kernel_h,
-            kernel_w,
-            stride_h,
-            stride_w,
-            padding_h,
-            padding_w,
+            auto_pad,
+            dilations,
+            kernel_shape,
+            pads,
+            strides,
             bias,
         ))
     }

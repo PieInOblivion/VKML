@@ -3,16 +3,26 @@ use onnx_extractor::DataType;
 use crate::{
     compute::compute_manager::DeviceLocation,
     instruction::{
-        add::add::AddInstruction, concat::concat::ConcatInstruction,
-        conv2d::conv2d::Conv2DInstruction, copy::copy::CopyInstruction, div::div::DivInstruction,
-        init_constant::init_constant::InitConstantInstruction, init_he::init_he::InitHeInstruction,
+        add::add::AddInstruction,
+        concat::concat::ConcatInstruction,
+        conv::conv::{AutoPad, ConvInstruction},
+        copy::copy::CopyInstruction,
+        div::div::DivInstruction,
+        init_constant::init_constant::InitConstantInstruction,
+        init_he::init_he::InitHeInstruction,
         init_load::init_load::InitLoadInstruction,
         init_uniform::init_uniform::InitUniformInstruction,
-        init_xavier::init_xavier::InitXavierInstruction, instruction::Instruction,
-        matmul::matmul::MatMulInstruction, max::max::MaxInstruction, min::min::MinInstruction,
-        mul::mul::MulInstruction, relu::relu::ReLUInstruction,
-        reshape::reshape::ReshapeInstruction, sigmoid::sigmoid::SigmoidInstruction,
-        softmax::softmax::SoftmaxInstruction, sub::sub::SubInstruction,
+        init_xavier::init_xavier::InitXavierInstruction,
+        instruction::Instruction,
+        matmul::matmul::MatMulInstruction,
+        max::max::MaxInstruction,
+        min::min::MinInstruction,
+        mul::mul::MulInstruction,
+        relu::relu::ReLUInstruction,
+        reshape::reshape::ReshapeInstruction,
+        sigmoid::sigmoid::SigmoidInstruction,
+        softmax::softmax::SoftmaxInstruction,
+        sub::sub::SubInstruction,
         transfer::transfer::TransferToDeviceInstruction,
     },
     tensor::desc::TensorDesc,
@@ -21,7 +31,7 @@ use crate::{
 
 pub mod add;
 pub mod concat;
-pub mod conv2d;
+pub mod conv;
 pub mod copy;
 pub mod div;
 pub mod gpu_operations;
@@ -50,21 +60,29 @@ pub fn concat(sources: Vec<TensorId>, dst: TensorId, dim: usize) -> Box<dyn Inst
     Box::new(ConcatInstruction { sources, dst, dim })
 }
 
-pub fn conv2d(
+pub fn conv(
     src: TensorId,
     weights: TensorId,
     bias: Option<TensorId>,
     dst: TensorId,
-    stride: (usize, usize),
-    padding: (usize, usize),
+    auto_pad: AutoPad,
+    dilations: Vec<usize>,
+    group: usize,
+    kernel_shape: Vec<usize>,
+    pads: Vec<usize>,
+    strides: Vec<usize>,
 ) -> Box<dyn Instruction> {
-    Box::new(Conv2DInstruction {
+    Box::new(ConvInstruction {
         src,
         weights,
         bias,
         dst,
-        stride,
-        padding,
+        auto_pad,
+        dilations,
+        group,
+        kernel_shape,
+        pads,
+        strides,
     })
 }
 

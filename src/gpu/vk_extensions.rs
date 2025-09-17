@@ -98,7 +98,7 @@ impl VkExtensions {
         let names = self.enabled_extension_names();
         let name_ptrs: Vec<*const c_char> =
             names.iter().map(|s| s.as_ptr() as *const c_char).collect();
-    // if no feature structs needed, return an empty pnext owner
+        // if no feature structs needed, return an empty pnext owner
         if !self.timeline_semaphore
             && !self.synchronization2
             && !self.shader_float16_int8
@@ -114,7 +114,7 @@ impl VkExtensions {
             };
         }
 
-    // build a p_next chain: box each feature struct and link via next
+        // build a p_next chain: box each feature struct and link via next
         let mut holders: Vec<Box<dyn Any>> = Vec::new();
         let mut head: *mut c_void = ptr::null_mut();
 

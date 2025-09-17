@@ -1,13 +1,11 @@
 use crate::{
     dataloader::error::VKMLError,
-    instruction,
-    instruction::instruction::Instruction,
+    instruction::{self, conv::conv::AutoPad, instruction::Instruction},
     tensor::{desc::TensorDesc, tensor::Tensor},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use onnx_extractor::{
-    AttributeValue, DataType, OnnxModel, OperationInfo as OnnxOperationInfo,
-    TensorInfo as OnnxTensorInfo,
+    AttributeValue, OnnxModel, OperationInfo as OnnxOperationInfo, TensorInfo as OnnxTensorInfo,
 };
 use std::{collections::HashMap, sync::RwLock};
 
@@ -24,7 +22,7 @@ impl OnnxParser {
 
         // Create tensors from ONNX model
         for (name, onnx_tensor) in &onnx_model.tensors {
-            let tensor_desc = Self::convert_onnx_tensor_to_desc_f32(onnx_tensor)?;
+            let tensor_desc = Self::convert_onnx_tensor_to_desc(onnx_tensor)?;
             memory_requirements += tensor_desc.size_in_bytes();
             let compute_tensor = if onnx_tensor.has_data() {
                 Tensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
@@ -71,20 +69,7 @@ impl OnnxParser {
         })
     }
 
-    fn convert_onnx_tensor_to_desc_f32(
-        onnx_tensor: &OnnxTensorInfo,
-    ) -> Result<TensorDesc, VKMLError> {
-        // Currently only Float32 tensors are supported end-to-end
-        let data_type = match &onnx_tensor.data_type {
-            DataType::Float => DataType::Float,
-            unsupported => {
-                return Err(VKMLError::OnnxImporterError(format!(
-                    "ONNX data type {:?} is not supported (expected Float32)",
-                    unsupported
-                )));
-            }
-        };
-
+    fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensorInfo) -> Result<TensorDesc, VKMLError> {
         // Convert i64 dimensions to usize, handling dynamic dimensions
         let dims: Result<Vec<i64>, VKMLError> = onnx_tensor.shape
         .iter()
@@ -109,7 +94,7 @@ impl OnnxParser {
             )));
         }
 
-        Ok(TensorDesc::new_with_type(dims, data_type))
+        Ok(TensorDesc::new_with_type(dims, onnx_tensor.data_type))
     }
 
     fn convert_onnx_operation_to_instruction(
@@ -157,7 +142,7 @@ impl OnnxParser {
         op_type: &str,
         input_ids: Vec<TensorId>,
         output_ids: Vec<TensorId>,
-        _attributes: &HashMap<String, AttributeValue>,
+        attributes: &HashMap<String, AttributeValue>,
     ) -> Result<Box<dyn Instruction>, VKMLError> {
         match op_type {
             "MatMul" => {
@@ -243,6 +228,111 @@ impl OnnxParser {
                     )));
                 }
                 Ok(instruction::relu(input_ids[0], output_ids[0]))
+            }
+            "Conv" => {
+                // Expect: input, weights, optional bias -> output
+                if input_ids.len() < 2 || output_ids.len() != 1 {
+                    return Err(VKMLError::OnnxImporterError(format!(
+                        "Conv requires at least 2 inputs (input, weights) and 1 output, got {} inputs and {} outputs",
+                        input_ids.len(),
+                        output_ids.len()
+                    )));
+                }
+
+                let src = input_ids[0];
+                let weights = input_ids[1];
+                let bias = input_ids.get(2).copied();
+                let dst = output_ids[0];
+
+                // Simplified parsing: map ONNX attributes directly into instruction fields.
+                let mut strides: Vec<usize> = Vec::new();
+                let mut dilations: Vec<usize> = Vec::new();
+                let mut kernel_shape: Vec<usize> = Vec::new();
+                let mut pads: Vec<usize> = Vec::new();
+                let mut groups: usize = 1;
+
+                // Helper: extract ints from AttributeValue as Vec<i64>
+                let attr_to_vec = |a: &AttributeValue| -> Option<Vec<i64>> {
+                    match a {
+                        AttributeValue::Ints(v) => Some(v.clone()),
+                        AttributeValue::Int(i) => Some(vec![*i]),
+                        _ => None,
+                    }
+                };
+
+                if let Some(val) = attributes.get("strides") {
+                    if let Some(v) = attr_to_vec(val) {
+                        strides = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("dilations") {
+                    if let Some(v) = attr_to_vec(val) {
+                        dilations = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("kernel_shape") {
+                    if let Some(v) = attr_to_vec(val) {
+                        kernel_shape = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                // Parse auto_pad per ONNX (default NOTSET)
+                let mut auto_pad: Option<AutoPad> = None;
+                if let Some(val) = attributes.get("auto_pad") {
+                    if let AttributeValue::String(s) = val {
+                        auto_pad = match s.as_str() {
+                            "VALID" => Some(AutoPad::Valid),
+                            "SAME_UPPER" => Some(AutoPad::SameUpper),
+                            "SAME_LOWER" => Some(AutoPad::SameLower),
+                            "NOTSET" | "" => Some(AutoPad::NotSet),
+                            _ => None,
+                        };
+                    }
+                }
+                let auto_pad_val = auto_pad.unwrap_or(AutoPad::NotSet);
+
+                // pads: only allowed when auto_pad == NOTSET
+                if let Some(val) = attributes.get("pads") {
+                    if auto_pad_val != AutoPad::NotSet {
+                        return Err(VKMLError::OnnxImporterError(
+                            "Conv: 'pads' and 'auto_pad' cannot be used together".to_string(),
+                        ));
+                    }
+                    if let Some(pv) = attr_to_vec(val) {
+                        if pv.iter().any(|x| *x < 0) {
+                            return Err(VKMLError::OnnxImporterError(
+                                "Pads must be non-negative for Conv operation".to_string(),
+                            ));
+                        }
+                        if pv.len() % 2 != 0 {
+                            return Err(VKMLError::OnnxImporterError(
+                                "Invalid 'pads' attribute length for Conv operation".to_string(),
+                            ));
+                        }
+                        pads = pv.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("group") {
+                    if let AttributeValue::Int(g) = val {
+                        groups = *g as usize;
+                    }
+                }
+
+                Ok(instruction::conv(
+                    src,
+                    weights,
+                    bias,
+                    dst,
+                    auto_pad_val,
+                    dilations,
+                    groups,
+                    kernel_shape,
+                    pads,
+                    strides,
+                ))
             }
             unsupported => Err(VKMLError::OnnxImporterError(format!(
                 "Operation '{}' is not implemented",

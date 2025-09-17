@@ -1,6 +1,6 @@
 pub mod activations;
 pub mod concat;
-pub mod conv2d;
+pub mod conv;
 pub mod element_wise;
 pub mod execution;
 pub mod factory;
