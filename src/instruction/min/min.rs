@@ -1,3 +1,5 @@
+use crate::instruction::min::push_constants::MinPushConstants;
+use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{
@@ -70,15 +72,7 @@ impl Instruction for MinInstruction {
         let dst_dims_usize = dst_desc.to_dims();
 
         // Prepare push constant data
-        #[repr(C)]
-        struct PushConstants {
-            rank: u32,
-            pad: u32, // Matches "uint pad;" in shader
-            total: u32,
-            dims: [u32; 8],
-            strides_a: [u32; 8],
-            strides_b: [u32; 8],
-        }
+        // Prepare push constant data using shared PushConstants
 
         let rank = dst_dims_usize.len() as u32;
         assert!(
@@ -126,7 +120,7 @@ impl Instruction for MinInstruction {
 
         let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
 
-        let push_const_values = PushConstants {
+        let push_const_values = MinPushConstants {
             rank,
             pad: 0, // Padding value, 0 is fine
             total: total_elements as u32,
@@ -135,12 +129,7 @@ impl Instruction for MinInstruction {
             strides_b: strides_b_arr,
         };
 
-        let push_constant_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                &push_const_values as *const _ as *const u8,
-                std::mem::size_of::<PushConstants>(),
-            )
-        };
+        let push_constant_bytes = as_bytes(&push_const_values);
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {

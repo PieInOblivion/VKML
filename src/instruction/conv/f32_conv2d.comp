@@ -33,7 +33,7 @@ void main() {
     uint oc = gl_GlobalInvocationID.z % pc.m; // use z for batch*oc mapping sometimes
     uint batch = gl_GlobalInvocationID.z / pc.m;
 
-    if (ox >= pc.out_w || oy >= pc.out_h || oc >= pc.m) return;
+    if (ox >= pc.out_w || oy >= pc.out_h || oc >= pc.m || batch >= pc.n) return;
 
     float acc = 0.0;
 

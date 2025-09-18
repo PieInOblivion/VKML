@@ -249,7 +249,7 @@ impl OnnxParser {
                 let mut dilations: Vec<usize> = Vec::new();
                 let mut kernel_shape: Vec<usize> = Vec::new();
                 let mut pads: Vec<usize> = Vec::new();
-                let mut groups: usize = 1;
+                let mut groups = 1;
 
                 // Helper: extract ints from AttributeValue as Vec<i64>
                 let attr_to_vec = |a: &AttributeValue| -> Option<Vec<i64>> {
@@ -317,7 +317,7 @@ impl OnnxParser {
 
                 if let Some(val) = attributes.get("group") {
                     if let AttributeValue::Int(g) = val {
-                        groups = *g as usize;
+                        groups = *g;
                     }
                 }
 

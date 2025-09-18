@@ -1,0 +1,62 @@
+#[repr(C)]
+pub struct Conv1DPushConstants {
+    pub n: u32,
+    pub c: u32,
+    pub m: u32,
+    pub input_len: u32,
+    pub output_len: u32,
+    pub kernel: u32,
+    pub stride: u32,
+    pub dilation: u32,
+    pub pad_begin: u32,
+    pub group: u32,
+    pub has_bias: u32,
+}
+
+#[repr(C)]
+pub struct Conv2DPushConstants {
+    pub n: u32,
+    pub c: u32,
+    pub m: u32,
+    pub in_h: u32,
+    pub in_w: u32,
+    pub out_h: u32,
+    pub out_w: u32,
+    pub k_h: u32,
+    pub k_w: u32,
+    pub s_h: u32,
+    pub s_w: u32,
+    pub d_h: u32,
+    pub d_w: u32,
+    pub pad_h: u32,
+    pub pad_w: u32,
+    pub group: u32,
+    pub has_bias: u32,
+}
+
+#[repr(C)]
+pub struct Conv3DPushConstants {
+    pub n: u32,
+    pub c: u32,
+    pub m: u32,
+    pub in_d: u32,
+    pub in_h: u32,
+    pub in_w: u32,
+    pub out_d: u32,
+    pub out_h: u32,
+    pub out_w: u32,
+    pub k_d: u32,
+    pub k_h: u32,
+    pub k_w: u32,
+    pub s_d: u32,
+    pub s_h: u32,
+    pub s_w: u32,
+    pub d_d: u32,
+    pub d_h: u32,
+    pub d_w: u32,
+    pub pad_d: u32,
+    pub pad_h: u32,
+    pub pad_w: u32,
+    pub group: u32,
+    pub has_bias: u32,
+}

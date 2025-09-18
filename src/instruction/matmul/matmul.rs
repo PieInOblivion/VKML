@@ -1007,16 +1007,20 @@ fn create_specialized_matmul_command_buffer(
         let (push_constants, dispatch_x, dispatch_y, dispatch_z) =
             configure_matmul_operation(operation, src1_tensor, src2_tensor, dst_tensor)?;
 
-        // Push constants to the shader
+        // Push constants to the shader. Convert Vec<u32> into a contiguous u8 slice
+        // by serializing each u32 in native-endian order.
+        let mut pc_bytes_vec: Vec<u8> =
+            Vec::with_capacity(push_constants.len() * std::mem::size_of::<u32>());
+        for v in &push_constants {
+            pc_bytes_vec.extend_from_slice(&v.to_ne_bytes());
+        }
+
         gpu.get_device().cmd_push_constants(
             command_buffer,
             gpu.get_layout(),
             vk::ShaderStageFlags::COMPUTE,
             0,
-            std::slice::from_raw_parts(
-                push_constants.as_ptr() as *const u8,
-                push_constants.len() * std::mem::size_of::<u32>(),
-            ),
+            pc_bytes_vec.as_slice(),
         );
 
         gpu.get_device()

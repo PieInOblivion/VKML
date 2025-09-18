@@ -36,14 +36,18 @@ layout(push_constant) uniform PC {
 void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
-    uint oz = gl_GlobalInvocationID.z % pc.out_w; // encode depth in z across dimension and batch/oc
-    // For simplicity, compute batch and oc from a separate dispatch-layer; here assume z contains combined index
-    uint combined = gl_WorkGroupID.z * gl_WorkGroupSize.z + gl_LocalInvocationID.z;
-    uint oc = combined % pc.m;
-    uint batch = combined / pc.m;
+    uint idx_z = gl_GlobalInvocationID.z;
 
-    // A simpler mapping could be used depending on dispatch
-    if (ox >= pc.out_w || oy >= pc.out_h || oz >= pc.out_d) return;
+    // z dimension encodes depth, out-channel and batch as a linear index:
+    // idx_z = oz + out_d * (oc + m * batch)
+    if (ox >= pc.out_w || oy >= pc.out_h) return;
+
+    uint rem = idx_z;
+    uint oz = rem % pc.out_d; rem /= pc.out_d;
+    uint oc = rem % pc.m; rem /= pc.m;
+    uint batch = rem;
+
+    if (oz >= pc.out_d || oc >= pc.m) return;
 
     float acc = 0.0;
 

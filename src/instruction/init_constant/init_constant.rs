@@ -1,3 +1,5 @@
+use crate::instruction::init_constant::push_constants::InitConstantPushConstants;
+use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
@@ -144,23 +146,13 @@ impl Instruction for InitConstantInstruction {
                 value_u64 |= b << (8 * i);
             }
 
-            #[repr(C)]
-            struct PC {
-                elem_size: u32,
-                value_lo: u32,
-                value_hi: u32,
-            }
-
-            let push_constants = PC {
+            let push_constants = InitConstantPushConstants {
                 elem_size,
                 value_lo: (value_u64 & 0xFFFFFFFF) as u32,
                 value_hi: (value_u64 >> 32) as u32,
             };
 
-            let pc_bytes = std::slice::from_raw_parts(
-                &push_constants as *const PC as *const u8,
-                std::mem::size_of::<PC>(),
-            );
+            let pc_bytes = as_bytes(&push_constants);
 
             gpu.get_device().cmd_push_constants(
                 command_buffer,

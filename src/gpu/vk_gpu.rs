@@ -659,11 +659,11 @@ impl GPU {
                     .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                     .collect();
             } else {
-                aligned_code = std::slice::from_raw_parts(
-                    shader_code.as_ptr() as *const u32,
-                    shader_code.len() / 4,
-                )
-                .to_vec();
+                // shader_code is 4-byte aligned; convert bytes -> u32 words safely
+                aligned_code = shader_code
+                    .chunks_exact(4)
+                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
             }
 
             let shader_info = vk::ShaderModuleCreateInfo {

@@ -43,6 +43,7 @@ pub mod init_xavier;
 pub mod instruction;
 pub mod matmul;
 pub mod max;
+pub mod maxpool;
 pub mod min;
 pub mod mul;
 pub mod relu;
@@ -67,7 +68,7 @@ pub fn conv(
     dst: TensorId,
     auto_pad: AutoPad,
     dilations: Vec<usize>,
-    group: usize,
+    group: i64,
     kernel_shape: Vec<usize>,
     pads: Vec<usize>,
     strides: Vec<usize>,
@@ -112,6 +113,28 @@ pub fn mul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction
 
 pub fn relu(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(ReLUInstruction { src, dst })
+}
+
+pub fn maxpool(
+    src: TensorId,
+    dst: TensorId,
+    auto_pad: AutoPad,
+    dilations: Vec<usize>,
+    kernel_shape: Vec<usize>,
+    pads: Vec<usize>,
+    strides: Vec<usize>,
+    ceil_mode: bool,
+) -> Box<dyn Instruction> {
+    Box::new(crate::instruction::maxpool::maxpool::MaxPoolInstruction {
+        src,
+        dst,
+        auto_pad,
+        dilations,
+        kernel_shape,
+        pads,
+        strides,
+        ceil_mode,
+    })
 }
 
 pub fn reshape(src: TensorId, dst: TensorId, new_shape: TensorDesc) -> Box<dyn Instruction> {

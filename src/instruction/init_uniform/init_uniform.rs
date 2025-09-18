@@ -1,3 +1,5 @@
+use crate::instruction::init_uniform::push_constants::InitUniformPushConstants;
+use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{
@@ -113,31 +115,22 @@ impl Instruction for InitUniformInstruction {
 
             let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
             let seed = rand::random::<u32>();
-            // We don't have fan_in/fan_out here, set to 0
-            #[repr(C)]
-            struct PC {
-                total_elements: u32,
-                seed: u32,
-                min_val: f32,
-                max_val: f32,
-            }
 
-            let push_constants = PC {
+            let push_constants = InitUniformPushConstants {
                 total_elements: dst_elems as u32,
                 seed,
                 min_val: self.min,
                 max_val: self.max,
             };
 
+            let pc_bytes = as_bytes(&push_constants);
+
             gpu.get_device().cmd_push_constants(
                 command_buffer,
                 gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                std::slice::from_raw_parts(
-                    &push_constants as *const PC as *const u8,
-                    std::mem::size_of::<PC>(),
-                ),
+                pc_bytes,
             );
 
             let workgroup_size = 256u32;

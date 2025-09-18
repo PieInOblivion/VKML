@@ -77,7 +77,7 @@ impl ComputeManager {
             )));
         }
 
-        manager.allocate_tensors()?;
+        manager.allocate_tensor_graph()?;
 
         Ok(manager)
     }
@@ -150,7 +150,7 @@ impl ComputeManager {
             )));
         }
 
-        manager.allocate_tensors()?;
+        manager.allocate_tensor_graph()?;
         Ok(manager)
     }
 
@@ -194,7 +194,7 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
 
-    fn allocate_tensors(&mut self) -> Result<(), VKMLError> {
+    fn allocate_tensor_graph(&mut self) -> Result<(), VKMLError> {
         // Get execution plan and flatten to a linear sequence of operations
         let execution_plan = self.tensor_graph.create_execution_plan();
         let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();

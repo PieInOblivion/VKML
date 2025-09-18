@@ -1,3 +1,3 @@
 pub mod f32_cpu;
-pub mod min;
+pub mod maxpool;
 pub mod push_constants;

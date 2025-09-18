@@ -1,3 +1,5 @@
+use crate::instruction::softmax::push_constants::SoftmaxPushConstants;
+use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{
@@ -168,28 +170,20 @@ impl Instruction for SoftmaxInstruction {
             let feature_size = src_tensor.desc.to_dims()[self.dim] as usize;
             let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
 
-            // Create push constants struct
-            #[repr(C)]
-            struct SoftmaxPushConstants {
-                batch_size: u32,
-                feature_size: u32,
-            }
-
+            // Create push constants struct (shared definition)
             let push_constants = SoftmaxPushConstants {
                 batch_size: batch_size as u32,
                 feature_size: feature_size as u32,
             };
 
-            // Push constants to the shader
+            let pc_bytes = as_bytes(&push_constants);
+
             gpu.get_device().cmd_push_constants(
                 command_buffer,
                 gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                std::slice::from_raw_parts(
-                    &push_constants as *const SoftmaxPushConstants as *const u8,
-                    std::mem::size_of::<SoftmaxPushConstants>(),
-                ),
+                pc_bytes,
             );
 
             // Calculate dispatch size based on batch size

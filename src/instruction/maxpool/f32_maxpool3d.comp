@@ -1,0 +1,75 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(std430, binding = 0) buffer SrcBuf { float src[]; };
+layout(std430, binding = 2) buffer DstBuf { float dst[]; };
+
+layout(push_constant) uniform PC {
+    uint n;
+    uint c;
+    uint in_d;
+    uint in_h;
+    uint in_w;
+    uint out_d;
+    uint out_h;
+    uint out_w;
+    uint k_d;
+    uint k_h;
+    uint k_w;
+    uint s_d;
+    uint s_h;
+    uint s_w;
+    uint d_d;
+    uint d_h;
+    uint d_w;
+    uint pad_d;
+    uint pad_h;
+    uint pad_w;
+} pc;
+
+void main() {
+    uvec3 gid = gl_GlobalInvocationID;
+    uint out_x = gid.x;
+    uint out_y = gid.y;
+    uint z_index = gid.z; // encodes (d * n * c) + (batch * c + ch)
+
+    if (out_x >= pc.out_w || out_y >= pc.out_h) return;
+
+    uint local_z_index = z_index;
+
+    uint total_z = pc.out_d * pc.n * pc.c;
+    uint slice = local_z_index; // 0..total_z-1
+    if (slice >= total_z) return;
+
+    uint out_d = slice / (pc.n * pc.c);
+    uint rem = slice % (pc.n * pc.c);
+    uint batch = rem / pc.c;
+    uint ch = rem % pc.c;
+
+    float acc = 0.0;
+    bool found = false;
+
+    for (uint kd = 0u; kd < pc.k_d; ++kd) {
+        for (uint ky = 0u; ky < pc.k_h; ++ky) {
+            for (uint kx = 0u; kx < pc.k_w; ++kx) {
+                int in_d_i = int(out_d) * int(pc.s_d) - int(pc.pad_d) + int(kd) * int(pc.d_d);
+                int in_y_i = int(out_y) * int(pc.s_h) - int(pc.pad_h) + int(ky) * int(pc.d_h);
+                int in_x_i = int(out_x) * int(pc.s_w) - int(pc.pad_w) + int(kx) * int(pc.d_w);
+                if (in_d_i < 0 || in_y_i < 0 || in_x_i < 0) continue;
+                uint in_d_u = uint(in_d_i);
+                uint in_y = uint(in_y_i);
+                uint in_x = uint(in_x_i);
+                if (in_d_u >= pc.in_d || in_y >= pc.in_h || in_x >= pc.in_w) continue;
+
+                uint src_off = ((((batch * pc.c + ch) * pc.in_d + in_d_u) * pc.in_h + in_y) * pc.in_w) + in_x;
+                float val = src[src_off];
+                if (!found) { acc = val; found = true; }
+                else if (val > acc) { acc = val; }
+            }
+        }
+    }
+
+    uint dst_off = ((((batch * pc.c + ch) * pc.out_d + out_d) * pc.out_h + out_y) * pc.out_w) + out_x;
+    if (found) dst[dst_off] = acc; else dst[dst_off] = 0.0;
+}

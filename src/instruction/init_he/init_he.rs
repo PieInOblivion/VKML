@@ -1,3 +1,5 @@
+use crate::instruction::init_he::push_constants::InitHePushConstants;
+use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{
@@ -107,30 +109,21 @@ impl Instruction for InitHeInstruction {
             let seed = rand::random::<u32>();
             let gain = 2.0f32; // default gain for He init (variance scaling)
 
-            #[repr(C)]
-            struct PC {
-                total_elements: u32,
-                fan_in: u32,
-                seed: u32,
-                gain: f32,
-            }
-
-            let push_constants = PC {
+            let push_constants = InitHePushConstants {
                 total_elements: dst_elems as u32,
                 fan_in: fan_in as u32,
                 seed,
                 gain,
             };
 
+            let pc_bytes = as_bytes(&push_constants);
+
             gpu.get_device().cmd_push_constants(
                 command_buffer,
                 gpu.get_layout(),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                std::slice::from_raw_parts(
-                    &push_constants as *const PC as *const u8,
-                    std::mem::size_of::<PC>(),
-                ),
+                pc_bytes,
             );
 
             let workgroup_size = 256u32;
