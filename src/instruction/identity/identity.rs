@@ -7,18 +7,18 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
-pub struct CopyInstruction {
+pub struct IdentityInstruction {
     pub src: TensorId,
     pub dst: TensorId,
 }
 
-impl Debug for CopyInstruction {
+impl Debug for IdentityInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "Copy(src={}, dst={})", self.src, self.dst)
     }
 }
 
-impl Instruction for CopyInstruction {
+impl Instruction for IdentityInstruction {
     fn get_input_tensor_ids(&self) -> Vec<TensorId> {
         vec![self.src]
     }

@@ -6,8 +6,8 @@ use crate::{
         add::add::AddInstruction,
         concat::concat::ConcatInstruction,
         conv::conv::{AutoPad, ConvInstruction},
-        copy::copy::CopyInstruction,
         div::div::DivInstruction,
+        identity::identity::IdentityInstruction,
         init_constant::init_constant::InitConstantInstruction,
         init_he::init_he::InitHeInstruction,
         init_load::init_load::InitLoadInstruction,
@@ -32,9 +32,9 @@ use crate::{
 pub mod add;
 pub mod concat;
 pub mod conv;
-pub mod copy;
 pub mod div;
 pub mod gpu_operations;
+pub mod identity;
 pub mod init_constant;
 pub mod init_he;
 pub mod init_load;
@@ -87,12 +87,36 @@ pub fn conv(
     })
 }
 
-pub fn copy(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(CopyInstruction { src, dst })
-}
-
 pub fn div(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(DivInstruction { src1, src2, dst })
+}
+
+pub fn identity(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(IdentityInstruction { src, dst })
+}
+
+pub fn init_constant(dst: TensorId, constant: Vec<u8>) -> Box<dyn Instruction> {
+    Box::new(InitConstantInstruction { dst, constant })
+}
+
+pub fn init_he(dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(InitHeInstruction { dst })
+}
+
+pub fn init_load(dst: TensorId, data: Vec<u8>, datatype: DataType) -> Box<dyn Instruction> {
+    Box::new(InitLoadInstruction {
+        dst,
+        data,
+        datatype,
+    })
+}
+
+pub fn init_uniform(dst: TensorId, min: f32, max: f32) -> Box<dyn Instruction> {
+    Box::new(InitUniformInstruction { dst, min, max })
+}
+
+pub fn init_xavier(dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(InitXavierInstruction { dst })
 }
 
 pub fn matmul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
@@ -101,18 +125,6 @@ pub fn matmul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruct
 
 pub fn max(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(MaxInstruction { src1, src2, dst })
-}
-
-pub fn min(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(MinInstruction { src1, src2, dst })
-}
-
-pub fn mul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(MulInstruction { src1, src2, dst })
-}
-
-pub fn relu(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(ReLUInstruction { src, dst })
 }
 
 pub fn maxpool(
@@ -135,6 +147,18 @@ pub fn maxpool(
         strides,
         ceil_mode,
     })
+}
+
+pub fn min(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(MinInstruction { src1, src2, dst })
+}
+
+pub fn mul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(MulInstruction { src1, src2, dst })
+}
+
+pub fn relu(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
+    Box::new(ReLUInstruction { src, dst })
 }
 
 pub fn reshape(src: TensorId, dst: TensorId, new_shape: TensorDesc) -> Box<dyn Instruction> {
@@ -168,29 +192,5 @@ pub fn transfer(
         dst,
         source_device,
         target_device,
-    })
-}
-
-pub fn init_constant(dst: TensorId, constant: Vec<u8>) -> Box<dyn Instruction> {
-    Box::new(InitConstantInstruction { dst, constant })
-}
-
-pub fn init_he(dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(InitHeInstruction { dst })
-}
-
-pub fn init_uniform(dst: TensorId, min: f32, max: f32) -> Box<dyn Instruction> {
-    Box::new(InitUniformInstruction { dst, min, max })
-}
-
-pub fn init_xavier(dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(InitXavierInstruction { dst })
-}
-
-pub fn init_load(dst: TensorId, data: Vec<u8>, datatype: DataType) -> Box<dyn Instruction> {
-    Box::new(InitLoadInstruction {
-        dst,
-        data,
-        datatype,
     })
 }
