@@ -164,7 +164,7 @@ impl Layer for ReshapeLayer {
         tensors.push(output_shape.clone());
 
         // Create Reshape instruction
-        let instruction = instruction::reshape(0, 1, output_shape);
+        let instruction = instruction::reshape(0, 1, output_shape.to_dims(), None);
 
         // Get input mappings using the trait method
         let input_mappings = self.map_input_tensors(input_shapes.len());

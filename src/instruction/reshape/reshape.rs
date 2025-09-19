@@ -11,17 +11,18 @@ use vulkanalia::{vk, vk::DeviceV1_0};
 pub struct ReshapeInstruction {
     pub src: TensorId,
     pub dst: TensorId,
-    pub new_shape: TensorDesc,
+    // The target shape values as provided by the instruction (int64 values). May contain -1 and 0.
+    pub shape_values: Vec<i64>,
+    // allowzero forwarded from ONNX attribute
+    pub allowzero: Option<i64>,
 }
 
 impl Debug for ReshapeInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
-            "Reshape(src={}, dst={}, shape={:?})",
-            self.src,
-            self.dst,
-            self.new_shape.to_dims()
+            "Reshape(src={}, dst={}, shape={:?}, allowzero={:?})",
+            self.src, self.dst, self.shape_values, self.allowzero
         )
     }
 }
@@ -94,6 +95,72 @@ impl Instruction for ReshapeInstruction {
     }
 
     fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+        // Start from the stored shape values provided by the instruction
+        let mut new_dims = self.shape_values.clone();
+
+        // Apply allowzero semantics: if allowzero is None or 0, zeros copy from input
+        let allowzero_flag = self.allowzero.unwrap_or(0) != 0;
+
+        if !allowzero_flag {
+            let src_desc = tensor_graph.tensor_read(self.src).desc.clone();
+            let src_dims = src_desc.to_dims();
+            for (i, val) in new_dims.iter_mut().enumerate() {
+                if *val == 0 {
+                    *val = *src_dims.get(i).unwrap_or(&1);
+                }
+            }
+        } else {
+            // allowzero==1: mixing -1 and 0 is invalid per ONNX. Check and error.
+            if new_dims.iter().any(|&d| d == 0) && new_dims.iter().any(|&d| d == -1) {
+                panic!("Reshape: 'allowzero' set but shape contains both 0 and -1");
+            }
+        }
+
+        // Infer -1 if present
+        let src_desc = tensor_graph.tensor_read(self.src).desc.clone();
+        let src_num = src_desc.num_elements();
+        let neg1_count = new_dims.iter().filter(|&&d| d == -1).count();
+        if neg1_count > 1 {
+            panic!("Reshape: more than one -1 in shape is not allowed");
+        }
+        if neg1_count == 1 {
+            let mut prod = 1usize;
+            for &d in &new_dims {
+                if d == -1 {
+                    continue;
+                }
+                if d < 0 {
+                    panic!("Reshape: negative dimensions other than -1 not allowed");
+                }
+                prod = prod.saturating_mul(d as usize);
+            }
+            if prod == 0 || src_num % prod != 0 {
+                panic!("Reshape: cannot infer -1 dimension at runtime");
+            }
+            let inferred = (src_num / prod) as i64;
+            for v in new_dims.iter_mut() {
+                if *v == -1 {
+                    *v = inferred;
+                }
+            }
+        } else {
+            // verify product matches
+            let prod: usize = new_dims.iter().map(|&d| d as usize).product();
+            if prod != src_num {
+                panic!("Reshape: total elements do not match input tensor at runtime");
+            }
+        }
+
+        // Update dst tensor descriptor (panic on failure to preserve current invariants)
+        {
+            let mut dst_t = tensor_graph.tensor_write(self.dst);
+            dst_t
+                .desc
+                .reshape(new_dims)
+                .expect("Invalid reshape at runtime");
+        }
+
+        // Copy data between underlying buffers (reshape is logical concerning layout)
         let src_tensor = tensor_graph.tensor_read(self.src);
         let mut dst_tensor = tensor_graph.tensor_write(self.dst);
 

@@ -161,11 +161,17 @@ pub fn relu(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(ReLUInstruction { src, dst })
 }
 
-pub fn reshape(src: TensorId, dst: TensorId, new_shape: TensorDesc) -> Box<dyn Instruction> {
+pub fn reshape(
+    src: TensorId,
+    dst: TensorId,
+    new_shape: Vec<i64>,
+    allowzero: Option<i64>,
+) -> Box<dyn Instruction> {
     Box::new(ReshapeInstruction {
         src,
         dst,
-        new_shape,
+        shape_values: new_shape,
+        allowzero,
     })
 }
 

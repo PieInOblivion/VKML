@@ -38,7 +38,7 @@ impl OnnxParser {
         // Create operations from ONNX nodes; fail fast if an op isn't supported
         for onnx_op in &onnx_model.operations {
             let instruction =
-                Self::convert_onnx_operation_to_instruction(onnx_op, &tensor_name_to_id)?;
+                Self::convert_onnx_operation_to_instruction(onnx_op, &tensor_name_to_id, &tensors)?;
             operations.push(instruction);
         }
 
@@ -71,7 +71,7 @@ impl OnnxParser {
 
     fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensorInfo) -> Result<TensorDesc, VKMLError> {
         // Convert i64 dimensions to usize, handling dynamic dimensions
-        let dims: Result<Vec<i64>, VKMLError> = onnx_tensor.shape
+        let dims = onnx_tensor.shape
         .iter()
         .map(|&dim| {
             if dim <= 0 {
@@ -83,9 +83,7 @@ impl OnnxParser {
                 Ok(dim)
             }
         })
-        .collect();
-
-        let dims = dims?;
+        .collect::<Result<Vec<i64>, VKMLError>>()?;
 
         if dims.is_empty() {
             return Err(VKMLError::OnnxImporterError(format!(
@@ -100,9 +98,10 @@ impl OnnxParser {
     fn convert_onnx_operation_to_instruction(
         onnx_op: &OnnxOperationInfo,
         tensor_map: &HashMap<String, TensorId>,
+        tensors: &Vec<RwLock<Tensor>>,
     ) -> Result<Box<dyn Instruction>, VKMLError> {
         // Resolve tensor names to IDs
-        let input_ids: Result<Vec<TensorId>, VKMLError> = onnx_op
+        let input_ids = onnx_op
             .inputs
             .iter()
             .map(|name| {
@@ -113,10 +112,9 @@ impl OnnxParser {
                     ))
                 })
             })
-            .collect();
-        let input_ids = input_ids?;
+            .collect::<Result<Vec<TensorId>, VKMLError>>()?;
 
-        let output_ids: Result<Vec<TensorId>, VKMLError> = onnx_op
+        let output_ids = onnx_op
             .outputs
             .iter()
             .map(|name| {
@@ -127,118 +125,164 @@ impl OnnxParser {
                     ))
                 })
             })
-            .collect();
-        let output_ids = output_ids?;
+            .collect::<Result<Vec<TensorId>, VKMLError>>()?;
 
-        Self::create_instruction_from_onnx_op(
-            &onnx_op.op_type,
-            input_ids,
-            output_ids,
-            &onnx_op.attributes,
-        )
-    }
+        let attributes = &onnx_op.attributes;
 
-    fn create_instruction_from_onnx_op(
-        op_type: &str,
-        input_ids: Vec<TensorId>,
-        output_ids: Vec<TensorId>,
-        attributes: &HashMap<String, AttributeValue>,
-    ) -> Result<Box<dyn Instruction>, VKMLError> {
-        match op_type {
-            "MatMul" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
+        // Small helpers to extract attribute values
+        let attr_to_vec = |a: &AttributeValue| -> Option<Vec<i64>> {
+            match a {
+                AttributeValue::Ints(v) => Some(v.clone()),
+                AttributeValue::Int(i) => Some(vec![*i]),
+                _ => None,
+            }
+        };
+
+        let attr_to_int = |a: &AttributeValue| -> Option<i64> {
+            match a {
+                AttributeValue::Int(i) => Some(*i),
+                _ => None,
+            }
+        };
+
+        let attr_to_string = |a: &AttributeValue| -> Option<String> {
+            match a {
+                AttributeValue::String(s) => Some(s.clone()),
+                _ => None,
+            }
+        };
+
+        match &*onnx_op.op_type {
+            "MatMul" => Ok(instruction::matmul(
+                input_ids[0],
+                input_ids[1],
+                output_ids[0],
+            )),
+            "Concat" => {
+                let axis = if let Some(a) = attributes.get("axis") {
+                    attr_to_int(a).ok_or_else(|| {
+                        VKMLError::OnnxImporterError(
+                            "Concat: 'axis' attribute must be an int".to_string(),
+                        )
+                    })? as usize
+                } else {
+                    0usize
+                };
+
+                Ok(instruction::concat(input_ids, output_ids[0], axis))
+            }
+            "Reshape" => {
+                let shape_id = input_ids[1];
+                let guard = tensors[shape_id].read().unwrap();
+                let raw = guard.get_cpu_memory_slice_or_panic();
+
+                if raw.len() % 8 != 0 {
                     return Err(VKMLError::OnnxImporterError(format!(
-                        "MatMul requires exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
+                        "Reshape: shape initializer has invalid raw byte length {}",
+                        raw.len()
                     )));
                 }
-                Ok(instruction::matmul(
+
+                let mut shape_vec: Vec<i64> = Vec::with_capacity(raw.len() / 8);
+                for chunk in raw.chunks_exact(8) {
+                    let mut a = [0u8; 8];
+                    a.copy_from_slice(chunk);
+                    shape_vec.push(i64::from_le_bytes(a));
+                }
+
+                let allowzero = attributes.get("allowzero").and_then(|a| attr_to_int(a));
+                Ok(instruction::reshape(
                     input_ids[0],
-                    input_ids[1],
                     output_ids[0],
+                    shape_vec,
+                    allowzero,
                 ))
             }
-            "Add" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Add requires exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::add(input_ids[0], input_ids[1], output_ids[0]))
+            "Sigmoid" => Ok(instruction::sigmoid(input_ids[0], output_ids[0])),
+            "Softmax" => {
+                // default axis is usually 1
+                let axis = if let Some(a) = attributes.get("axis") {
+                    attr_to_int(a).ok_or_else(|| {
+                        VKMLError::OnnxImporterError(
+                            "Softmax: 'axis' attribute must be an int".to_string(),
+                        )
+                    })? as usize
+                } else {
+                    1usize
+                };
+                Ok(instruction::softmax(input_ids[0], output_ids[0], axis))
             }
-            "Sub" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Sub requires exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::sub(input_ids[0], input_ids[1], output_ids[0]))
-            }
-            "Mul" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Mul requires exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::mul(input_ids[0], input_ids[1], output_ids[0]))
-            }
-            "Div" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Div requires exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::div(input_ids[0], input_ids[1], output_ids[0]))
-            }
-            "Max" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Max currently supports exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::max(input_ids[0], input_ids[1], output_ids[0]))
-            }
-            "Min" => {
-                if input_ids.len() != 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Min currently supports exactly 2 inputs and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::min(input_ids[0], input_ids[1], output_ids[0]))
-            }
-            "Relu" => {
-                if input_ids.len() != 1 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Relu requires exactly 1 input and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
-                }
-                Ok(instruction::relu(input_ids[0], output_ids[0]))
-            }
-            "Conv" => {
-                // Expect: input, weights, optional bias -> output
-                if input_ids.len() < 2 || output_ids.len() != 1 {
-                    return Err(VKMLError::OnnxImporterError(format!(
-                        "Conv requires at least 2 inputs (input, weights) and 1 output, got {} inputs and {} outputs",
-                        input_ids.len(),
-                        output_ids.len()
-                    )));
+            "Identity" => Ok(instruction::identity(input_ids[0], output_ids[0])),
+            "MaxPool" => {
+                // Parse attributes similar to Conv: kernel_shape, pads, strides, dilations, auto_pad, ceil_mode
+                let mut strides: Vec<usize> = Vec::new();
+                let mut dilations: Vec<usize> = Vec::new();
+                let mut kernel_shape: Vec<usize> = Vec::new();
+                let mut pads: Vec<usize> = Vec::new();
+                let mut auto_pad = AutoPad::NotSet;
+                let mut ceil_mode = false;
+
+                if let Some(val) = attributes.get("strides") {
+                    if let Some(v) = attr_to_vec(val) {
+                        strides = v.iter().map(|x| *x as usize).collect();
+                    }
                 }
 
+                if let Some(val) = attributes.get("dilations") {
+                    if let Some(v) = attr_to_vec(val) {
+                        dilations = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("kernel_shape") {
+                    if let Some(v) = attr_to_vec(val) {
+                        kernel_shape = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("pads") {
+                    if let Some(v) = attr_to_vec(val) {
+                        pads = v.iter().map(|x| *x as usize).collect();
+                    }
+                }
+
+                if let Some(val) = attributes.get("auto_pad") {
+                    if let Some(s) = attr_to_string(val) {
+                        auto_pad = match s.as_str() {
+                            "VALID" => AutoPad::Valid,
+                            "SAME_UPPER" => AutoPad::SameUpper,
+                            "SAME_LOWER" => AutoPad::SameLower,
+                            _ => AutoPad::NotSet,
+                        };
+                    }
+                }
+
+                if let Some(val) = attributes.get("ceil_mode") {
+                    if let Some(i) = attr_to_int(val) {
+                        ceil_mode = i != 0;
+                    }
+                }
+
+                Ok(instruction::maxpool(
+                    input_ids[0],
+                    output_ids[0],
+                    auto_pad,
+                    dilations,
+                    kernel_shape,
+                    pads,
+                    strides,
+                    ceil_mode,
+                ))
+            }
+            "Add" => Ok(instruction::add(input_ids[0], input_ids[1], output_ids[0])),
+            "Sub" => Ok(instruction::sub(input_ids[0], input_ids[1], output_ids[0])),
+            "Mul" => Ok(instruction::mul(input_ids[0], input_ids[1], output_ids[0])),
+            "Div" => Ok(instruction::div(input_ids[0], input_ids[1], output_ids[0])),
+            "Max" => Ok(instruction::max(input_ids[0], input_ids[1], output_ids[0])),
+            "Min" => Ok(instruction::min(input_ids[0], input_ids[1], output_ids[0])),
+            "Relu" => Ok(instruction::relu(input_ids[0], output_ids[0])),
+            "Conv" => {
+                // Expect: input, weights, optional bias -> output
                 let src = input_ids[0];
                 let weights = input_ids[1];
                 let bias = input_ids.get(2).copied();
@@ -250,15 +294,6 @@ impl OnnxParser {
                 let mut kernel_shape: Vec<usize> = Vec::new();
                 let mut pads: Vec<usize> = Vec::new();
                 let mut groups = 1;
-
-                // Helper: extract ints from AttributeValue as Vec<i64>
-                let attr_to_vec = |a: &AttributeValue| -> Option<Vec<i64>> {
-                    match a {
-                        AttributeValue::Ints(v) => Some(v.clone()),
-                        AttributeValue::Int(i) => Some(vec![*i]),
-                        _ => None,
-                    }
-                };
 
                 if let Some(val) = attributes.get("strides") {
                     if let Some(v) = attr_to_vec(val) {
