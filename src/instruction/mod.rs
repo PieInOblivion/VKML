@@ -25,7 +25,6 @@ use crate::{
         sub::sub::SubInstruction,
         transfer::transfer::TransferToDeviceInstruction,
     },
-    tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
 

@@ -1,19 +1,14 @@
-use std::sync::Arc;
-
-use zero_pool::ZeroPool;
-
 use super::memory_tracker::MemoryTracker;
 
 pub struct CPUCompute {
     pub memory_tracking: MemoryTracker,
-    thread_pool: Arc<ZeroPool>,
 }
 
 // TODO: Implement CPU layer computations, forward, backward etc.
 // TODO: Memory calculations don't update which means it wont account this applications usage
 
 impl CPUCompute {
-    pub fn new(memory_limit_bytes: Option<u64>, thread_pool: Arc<ZeroPool>) -> Self {
+    pub fn new(memory_limit_bytes: Option<u64>) -> Self {
         // This implementation will by default use only available memory
         // This does not include swap capacity etc
         // This allows for an override if user knows better
@@ -29,7 +24,6 @@ impl CPUCompute {
 
         Self {
             memory_tracking: MemoryTracker::new(memory_limit),
-            thread_pool: thread_pool.clone(),
         }
     }
 }

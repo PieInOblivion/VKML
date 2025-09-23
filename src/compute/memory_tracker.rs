@@ -17,11 +17,11 @@ impl MemoryTracker {
     }
 
     pub fn allocate(&self, size: u64) {
-        let prev = self.current.fetch_add(size, Ordering::SeqCst);
+        let prev = self.current.fetch_add(size, Ordering::Release);
         let new = match prev.checked_add(size) {
             Some(v) => v,
             None => {
-                self.current.fetch_sub(size, Ordering::SeqCst);
+                self.current.fetch_sub(size, Ordering::Release);
                 panic!(
                     "Memory allocation would overflow: current {} + size {}",
                     prev, size
@@ -30,7 +30,7 @@ impl MemoryTracker {
         };
 
         if new > self.maximum {
-            self.current.fetch_sub(size, Ordering::SeqCst);
+            self.current.fetch_sub(size, Ordering::Release);
             panic!(
                 "Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used",
                 size, prev, self.maximum
@@ -39,11 +39,11 @@ impl MemoryTracker {
     }
 
     pub fn deallocate(&self, size: u64) {
-        self.current.fetch_sub(size, Ordering::SeqCst);
+        self.current.fetch_sub(size, Ordering::Release);
     }
 
     pub fn get_current(&self) -> u64 {
-        self.current.load(Ordering::SeqCst)
+        self.current.load(Ordering::Acquire)
     }
 
     pub fn get_maximum(&self) -> u64 {

@@ -50,7 +50,7 @@ impl ComputeManager {
             model.verify()?;
         }
 
-        let cpu = CPUCompute::new(cpu_memory_limit_bytes, thread_pool.clone());
+        let cpu = CPUCompute::new(cpu_memory_limit_bytes);
 
         let tensor_graph = TensorGraph::from_graph_model(&model)?;
 
@@ -121,7 +121,7 @@ impl ComputeManager {
         gpus: Vec<GPU>,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
-        let cpu = CPUCompute::new(cpu_memory_limit_bytes, thread_pool.clone());
+        let cpu = CPUCompute::new(cpu_memory_limit_bytes);
 
         // TODO: Implement one type of model representation.
         // Placeholder minimal model until graph-only mode is supported
@@ -671,6 +671,9 @@ impl ComputeManager {
         // Execute each stage sequentially, but operations within a stage in parallel
         for stage in device_grouped_plan {
             let mut futures = Vec::new();
+            // Keep heap-allocated task params alive until we wait on futures.
+            let mut pending_gpu_task_boxes: Vec<Box<GpuBatchOperationsParams>> = Vec::new();
+            let mut pending_cpu_task_boxes: Vec<Box<SingleCpuOperationParams>> = Vec::new();
 
             // Process each device's operations in this stage
             for per_device_ops in stage {
@@ -685,28 +688,41 @@ impl ComputeManager {
                         let instruction_indices: Vec<usize> =
                             per_device_ops.iter().map(|op_id| *op_id).collect();
 
-                        let task = GpuBatchOperationsParams {
+                        let boxed_task = Box::new(GpuBatchOperationsParams {
                             operations: per_device_ops,
                             instruction_indices,
                             gpus: self.gpus.clone(),
                             gpu_idx: idx,
                             tensor_graph: &self.tensor_graph,
-                        };
+                        });
+
+                        pending_gpu_task_boxes.push(boxed_task);
+                        let task_ref: &GpuBatchOperationsParams =
+                            pending_gpu_task_boxes.last().unwrap().as_ref();
 
                         futures.push(
                             self.thread_pool
-                                .submit_task(gpu_batch_operations_task, &task),
+                                .submit_task(gpu_batch_operations_task, task_ref),
                         );
                     }
                     DeviceLocation::CPU => {
+                        // Submit each CPU operation as its own task so they can execute
+                        // concurrently. Box each task param and store it in
+                        // `pending_cpu_task_boxes` so the reference passed into the
+                        // thread pool remains valid until we wait on the futures.
                         for &operation_id in &per_device_ops {
-                            let task = SingleCpuOperationParams {
+                            let boxed = Box::new(SingleCpuOperationParams {
                                 operation_id,
                                 tensor_graph: &self.tensor_graph,
-                            };
+                            });
+
+                            pending_cpu_task_boxes.push(boxed);
+                            let task_ref: &SingleCpuOperationParams =
+                                pending_cpu_task_boxes.last().unwrap().as_ref();
+
                             futures.push(
                                 self.thread_pool
-                                    .submit_task(single_cpu_operation_task, &task),
+                                    .submit_task(single_cpu_operation_task, task_ref),
                             );
                         }
                     }
@@ -716,6 +732,10 @@ impl ComputeManager {
             for future in futures {
                 future.wait();
             }
+
+            // Drop boxed tasks for this stage now that futures have completed
+            drop(pending_gpu_task_boxes);
+            drop(pending_cpu_task_boxes);
         }
 
         Ok(())
@@ -813,16 +833,27 @@ impl ComputeManager {
     }
 }
 
+struct SingleCpuOperationParams<'a> {
+    operation_id: OperationId,
+    tensor_graph: &'a TensorGraph,
+}
+
+zp_define_task_fn!(
+    single_cpu_operation_task,
+    SingleCpuOperationParams,
+    |params| {
+        let tensor_graph = &params.tensor_graph;
+
+        let instruction = tensor_graph.get_instruction_or_panic(params.operation_id);
+        instruction.execute_cpu(tensor_graph);
+    }
+);
+
 struct GpuBatchOperationsParams<'a> {
     operations: Vec<OperationId>,
     instruction_indices: Vec<usize>,
     gpus: Arc<Vec<GPU>>,
     gpu_idx: usize,
-    tensor_graph: &'a TensorGraph,
-}
-
-struct SingleCpuOperationParams<'a> {
-    operation_id: OperationId,
     tensor_graph: &'a TensorGraph,
 }
 
@@ -886,22 +917,5 @@ zp_define_task_fn!(
             gpu.get_device()
                 .free_command_buffers(gpu.get_command_pool(), &command_buffers);
         }
-    }
-);
-
-zp_define_task_fn!(
-    single_cpu_operation_task,
-    SingleCpuOperationParams,
-    |params| {
-        let tensor_graph = &params.tensor_graph;
-
-        if params.operation_id >= tensor_graph.operations.len() {
-            eprintln!("Invalid instruction index: {}", params.operation_id);
-            return;
-        }
-
-        // Obtain the instruction via the graph helper and execute it.
-        let instruction = tensor_graph.get_instruction_or_panic(params.operation_id);
-        instruction.execute_cpu(tensor_graph);
     }
 );
