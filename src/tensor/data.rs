@@ -7,7 +7,7 @@ pub trait TensorData: Send + Sync {
     fn len_bytes(&self) -> usize;
 
     /// Read entire buffer into a host Vec<u8>. CPU implementation may avoid allocation in future.
-    fn read(&self) -> Vec<u8>;
+    fn read(&self) -> Box<[u8]>;
 
     /// Write entire buffer from host data. Length must match.
     fn write(&mut self, data: &[u8]);

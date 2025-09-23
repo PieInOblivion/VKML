@@ -12,10 +12,11 @@ impl TensorData for GpuData {
         self.memory.size as usize
     }
 
-    fn read(&self) -> Vec<u8> {
+    fn read(&self) -> Box<[u8]> {
         self.memory
             .read_memory()
             .expect("Failed to read GPU memory in read_host")
+            .into()
     }
 
     fn write(&mut self, data: &[u8]) {

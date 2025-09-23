@@ -29,8 +29,8 @@ pub struct TensorGraph {
     pub operations: Vec<Box<dyn Instruction>>,
 
     // Graph entry and exit points
-    pub input_tensors: Vec<TensorId>,
-    pub output_tensors: Vec<TensorId>,
+    pub input_tensor_ids: Vec<TensorId>,
+    pub output_tensor_ids: Vec<TensorId>,
 
     // Vector mapping from tensor indices to layer IDs
     pub tensor_to_layer: Vec<Option<LayerId>>,
@@ -192,8 +192,8 @@ impl TensorGraph {
         Ok(TensorGraph {
             tensors,
             operations,
-            input_tensors: input_tensors_model,
-            output_tensors: output_tensors_model,
+            input_tensor_ids: input_tensors_model,
+            output_tensor_ids: output_tensors_model,
             tensor_to_layer: tensor_to_layer_map,
             operation_to_layer: operation_to_layer_map,
             memory_requirements,
@@ -315,12 +315,12 @@ impl TensorGraph {
         }
     }
 
-    pub fn get_dag_input_tensor_ids(&self) -> &[TensorId] {
-        &self.input_tensors
+    pub fn get_input_tensor_ids(&self) -> &[TensorId] {
+        &self.input_tensor_ids
     }
 
-    pub fn get_dag_output_tensor_ids(&self) -> &[TensorId] {
-        &self.output_tensors
+    pub fn get_output_tensor_ids(&self) -> &[TensorId] {
+        &self.output_tensor_ids
     }
 
     pub fn tensor_read(&self, tensor_id: usize) -> RwLockReadGuard<'_, Tensor> {

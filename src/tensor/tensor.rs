@@ -22,7 +22,7 @@ pub struct Tensor {
 
 impl Tensor {
     /// Create a CPU-backed tensor from host data
-    pub fn new_cpu(desc: TensorDesc, host_data: Vec<u8>) -> Self {
+    pub fn new_cpu(desc: TensorDesc, host_data: Box<[u8]>) -> Self {
         let buf = CpuData::from_vec(host_data);
         Self {
             desc,
@@ -60,7 +60,7 @@ impl Tensor {
         matches!(self.device, DeviceId::GPU(_))
     }
 
-    pub fn read(&self) -> Vec<u8> {
+    pub fn read(&self) -> Box<[u8]> {
         self.buffer.read()
     }
 
@@ -84,7 +84,7 @@ impl Tensor {
             .downcast_ref::<CpuData>()
             .expect("Tensor is not backed by CPU storage");
 
-        cpu.data.as_slice()
+        &cpu.data
     }
 
     pub fn get_cpu_memory_mut_slice_or_panic(&mut self) -> &mut [u8] {
@@ -93,6 +93,6 @@ impl Tensor {
             .downcast_mut::<CpuData>()
             .expect("Tensor is not backed by CPU storage");
 
-        cpu.data.as_mut_slice()
+        &mut cpu.data
     }
 }

@@ -4,11 +4,11 @@ use crate::tensor::data::TensorData;
 
 /// Simple CPU buffer: owns a Vec<u8>, no locks.
 pub struct CpuData {
-    pub data: Vec<u8>,
+    pub data: Box<[u8]>,
 }
 
 impl CpuData {
-    pub fn from_vec(v: Vec<u8>) -> Self {
+    pub fn from_vec(v: Box<[u8]>) -> Self {
         Self { data: v }
     }
 }
@@ -18,7 +18,7 @@ impl TensorData for CpuData {
         self.data.len()
     }
 
-    fn read(&self) -> Vec<u8> {
+    fn read(&self) -> Box<[u8]> {
         self.data.clone()
     }
 

@@ -42,7 +42,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let layer_output_tensors: Vec<TensorId> = if is_output_layer {
                 cm.tensor_graph
-                    .output_tensors
+                    .output_tensor_ids
                     .iter()
                     .filter(|&&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
                     .cloned()
@@ -152,14 +152,14 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
     let mut entry_points = cm
         .tensor_graph
-        .input_tensors
+        .input_tensor_ids
         .iter()
         .filter_map(|&id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten())
         .collect::<Vec<_>>();
 
     let mut exit_points = cm
         .tensor_graph
-        .output_tensors
+        .output_tensor_ids
         .iter()
         .filter_map(|&id| cm.tensor_graph.tensor_to_layer.get(id).cloned().flatten())
         .collect::<Vec<_>>();
@@ -203,7 +203,7 @@ fn get_layer_output_tensors(cm: &ComputeManager, layer_id: LayerId) -> Vec<Tenso
     // First check explicit output tensors
     let explicit_outputs: Vec<TensorId> = cm
         .tensor_graph
-        .output_tensors
+        .output_tensor_ids
         .iter()
         .filter(|&&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
         .cloned()
@@ -455,7 +455,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     let output_tensors: Vec<_> = tensor_ids
         .iter()
         .filter(|&&id| {
-            cm.tensor_graph.output_tensors.contains(&id)
+            cm.tensor_graph.output_tensor_ids.contains(&id)
                 || cm
                     .tensor_graph
                     .get_tensor_consumers(id)

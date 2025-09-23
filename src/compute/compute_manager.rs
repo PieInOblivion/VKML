@@ -90,7 +90,7 @@ impl ComputeManager {
             ))
         })?;
 
-        let tensor_graph = OnnxParser::parse_onnx_model(&onnx_model)?;
+        let tensor_graph = OnnxParser::parse_onnx_model(onnx_model)?;
 
         let gpus = Self::available_gpus()?;
         Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, None)
@@ -110,7 +110,7 @@ impl ComputeManager {
             ))
         })?;
 
-        let tensor_graph = OnnxParser::parse_onnx_model(&onnx_model)?;
+        let tensor_graph = OnnxParser::parse_onnx_model(onnx_model)?;
 
         Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, cpu_memory_limit_bytes)
     }
@@ -578,7 +578,7 @@ impl ComputeManager {
                 // Allocate zeroed host backing (initialisation will run via execute_cpu)
                 let buf = vec![0u8; size_in_bytes as usize];
                 self.cpu.memory_tracking.allocate(size_in_bytes);
-                Ok(Tensor::new_cpu(desc.clone(), buf))
+                Ok(Tensor::new_cpu(desc.clone(), buf.into()))
             }
             DeviceLocation::GPU(idx) => {
                 let gpu_idx = *idx; // copy the usize
@@ -599,7 +599,7 @@ impl ComputeManager {
 
     pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<Tensor>, VKMLError> {
         // Get input tensor indices
-        let input_tensor_ids = self.tensor_graph.input_tensors.clone();
+        let input_tensor_ids = self.tensor_graph.get_input_tensor_ids();
 
         // Validate input batch count
         if batches.len() != input_tensor_ids.len() {
@@ -613,10 +613,13 @@ impl ComputeManager {
         // Load input data into tensors
         for (batch_idx, batch) in batches.into_iter().enumerate() {
             let tensor_id = input_tensor_ids[batch_idx];
-            let tensor = self.tensor_graph.tensor_read(tensor_id);
 
             // Validate size after conversion
-            let expected_bytes = tensor.desc.size_in_bytes();
+            let expected_bytes = {
+                let tensor = self.tensor_graph.tensor_read(tensor_id);
+                tensor.desc.size_in_bytes()
+            };
+
             if batch.buffer.len_bytes() != expected_bytes {
                 return Err(VKMLError::VulkanLoadError(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
@@ -635,7 +638,7 @@ impl ComputeManager {
         self.execute()?;
 
         // Gather output data and convert to DataBatch objects
-        let output_tensor_ids = &self.tensor_graph.output_tensors;
+        let output_tensor_ids = &self.tensor_graph.get_output_tensor_ids();
         let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
 
         for &tensor_id in output_tensor_ids.iter() {
@@ -653,7 +656,7 @@ impl ComputeManager {
 
             // Create DataBatch with tensor's data type
             // No conversion - just packaging the tensor's data with its type
-            let batch = Tensor::new_cpu(tensor.desc.clone(), bytes);
+            let batch = Tensor::new_cpu(tensor.desc.clone(), bytes.into());
 
             output_batches.push(batch);
         }

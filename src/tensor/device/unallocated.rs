@@ -16,7 +16,7 @@ impl TensorData for UnallocatedData {
         panic!("Unallocated buffer has no size; consult TensorDesc")
     }
 
-    fn read(&self) -> Vec<u8> {
+    fn read(&self) -> Box<[u8]> {
         panic!("Attempted to read from unallocated buffer")
     }
 

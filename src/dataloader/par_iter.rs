@@ -122,7 +122,7 @@ impl<T: DataLoader> ParallelDataIterator<T> {
 
         let desc = TensorDesc::new_with_type(vec![num_elems as i64], pending.data_type);
 
-        Some(Tensor::new_cpu(desc, pending.data))
+        Some(Tensor::new_cpu(desc, pending.data.into()))
     }
 }
 

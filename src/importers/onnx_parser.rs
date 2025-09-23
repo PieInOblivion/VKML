@@ -4,16 +4,14 @@ use crate::{
     tensor::{desc::TensorDesc, tensor::Tensor},
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
-use onnx_extractor::{
-    AttributeValue, OnnxModel, OperationInfo as OnnxOperationInfo, TensorInfo as OnnxTensorInfo,
-};
+use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, OnnxTensor};
 use std::{collections::HashMap, sync::RwLock};
 
 pub struct OnnxParser;
 
 impl OnnxParser {
     /// Convert ONNX model to TensorGraph
-    pub fn parse_onnx_model(onnx_model: &OnnxModel) -> Result<TensorGraph, VKMLError> {
+    pub fn parse_onnx_model(onnx_model: OnnxModel) -> Result<TensorGraph, VKMLError> {
         let mut tensors = Vec::new();
         let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
         let mut tensor_name_to_id: HashMap<String, TensorId> = HashMap::new();
@@ -21,13 +19,14 @@ impl OnnxParser {
         let mut memory_requirements = 0;
 
         // Create tensors from ONNX model
-        for (name, onnx_tensor) in &onnx_model.tensors {
-            let tensor_desc = Self::convert_onnx_tensor_to_desc(onnx_tensor)?;
+        for (name, onnx_tensor) in onnx_model.tensors {
+            let tensor_desc = Self::convert_onnx_tensor_to_desc(&onnx_tensor)?;
             memory_requirements += tensor_desc.size_in_bytes();
             let compute_tensor = if onnx_tensor.has_data() {
-                Tensor::new_cpu(tensor_desc, onnx_tensor.get_raw_data().unwrap())
+                Tensor::new_cpu(tensor_desc, onnx_tensor.into_bytes().unwrap())
             } else {
-                Tensor::new_unallocated(tensor_desc)
+                let size = tensor_desc.size_in_bytes();
+                Tensor::new_cpu(tensor_desc, vec![0u8; size].into())
             };
 
             let tensor_id = tensors.len();
@@ -43,13 +42,13 @@ impl OnnxParser {
         }
 
         // Map input/output tensor names to IDs
-        let input_tensors: Vec<TensorId> = onnx_model
+        let input_tensor_ids: Vec<TensorId> = onnx_model
             .inputs
             .iter()
             .filter_map(|name| tensor_name_to_id.get(name).copied())
             .collect();
 
-        let output_tensors: Vec<TensorId> = onnx_model
+        let output_tensor_ids: Vec<TensorId> = onnx_model
             .outputs
             .iter()
             .filter_map(|name| tensor_name_to_id.get(name).copied())
@@ -61,15 +60,15 @@ impl OnnxParser {
         Ok(TensorGraph {
             tensors,
             operations,
-            input_tensors,
-            output_tensors,
+            input_tensor_ids,
+            output_tensor_ids,
             tensor_to_layer,
             operation_to_layer,
             memory_requirements,
         })
     }
 
-    fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensorInfo) -> Result<TensorDesc, VKMLError> {
+    fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensor) -> Result<TensorDesc, VKMLError> {
         // Convert i64 dimensions to usize, handling dynamic dimensions
         let dims = onnx_tensor.shape
         .iter()
@@ -96,7 +95,7 @@ impl OnnxParser {
     }
 
     fn convert_onnx_operation_to_instruction(
-        onnx_op: &OnnxOperationInfo,
+        onnx_op: &OnnxOperation,
         tensor_map: &HashMap<String, TensorId>,
         tensors: &Vec<RwLock<Tensor>>,
     ) -> Result<Box<dyn Instruction>, VKMLError> {

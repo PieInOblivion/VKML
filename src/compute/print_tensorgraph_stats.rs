@@ -14,11 +14,11 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
 
     let mut produced_tensors = HashSet::new();
 
-    produced_tensors.extend(cm.tensor_graph.input_tensors.iter().cloned());
+    produced_tensors.extend(cm.tensor_graph.input_tensor_ids.iter().cloned());
 
     // Add parameter tensors (tensors with no producers)
     for tensor_id in 0..cm.tensor_graph.tensors.len() {
-        if !cm.tensor_graph.input_tensors.contains(&tensor_id) {
+        if !cm.tensor_graph.input_tensor_ids.contains(&tensor_id) {
             let producers = cm.tensor_graph.get_tensor_producers(tensor_id);
             if producers.is_empty() {
                 produced_tensors.insert(tensor_id);
@@ -209,8 +209,11 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
     println!("\n=== TENSOR GRAPH SUMMARY ===\n");
     println!("Total Tensors: {}", cm.tensor_graph.tensors.len());
     println!("Total Operations: {}", cm.tensor_graph.operations.len());
-    println!("Input Tensors: {}", cm.tensor_graph.input_tensors.len());
-    println!("Output Tensors: {}", cm.tensor_graph.output_tensors.len());
+    println!("Input Tensors: {}", cm.tensor_graph.input_tensor_ids.len());
+    println!(
+        "Output Tensors: {}",
+        cm.tensor_graph.output_tensor_ids.len()
+    );
     println!("Execution Stages: {}", execution_plan.len());
 
     let total_memory = cm.tensor_graph.memory_requirements;
