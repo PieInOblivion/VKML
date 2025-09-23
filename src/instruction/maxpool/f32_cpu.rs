@@ -54,7 +54,8 @@ pub fn f32_cpu(
 
                 // scan kernel positions and compute max
                 // If a window contains no valid input positions (fully padded) we write 0.0
-                let mut max_val: f32 = 0.0;
+                let mut max_val: f32 = f32::NEG_INFINITY;
+                let mut found = false;
 
                 // nested loops over kernel elements via mixed radix
                 let mut k_multi = vec![0usize; spatial_rank];
@@ -84,6 +85,7 @@ pub fn f32_cpu(
                         if val > max_val {
                             max_val = val;
                         }
+                        found = true;
                     }
 
                     // increment k_multi
@@ -103,9 +105,13 @@ pub fn f32_cpu(
                     }
                 }
 
-                // if no valid in-bounds values found (fully padded window), set 0
-                // ONNX defines that windows that start in the right padded region are ignored; if no elements, behaviour is undefined; we'll set -inf.
-                dst_f[dst_off] = 0.0;
+                // If no valid in-bounds values found (fully padded window), write 0.0.
+                // Otherwise write the computed max value.
+                if found {
+                    dst_f[dst_off] = max_val;
+                } else {
+                    dst_f[dst_off] = 0.0;
+                }
 
                 // increment out_index
                 let mut carry = 1usize;
