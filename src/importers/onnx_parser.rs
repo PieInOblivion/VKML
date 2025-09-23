@@ -5,14 +5,17 @@ use crate::{
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
 };
 use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, OnnxTensor};
-use std::{collections::HashMap, sync::RwLock};
+use std::collections::HashMap;
 
 pub struct OnnxParser;
 
 impl OnnxParser {
     /// Convert ONNX model to TensorGraph
-    pub fn parse_onnx_model(onnx_model: OnnxModel) -> Result<TensorGraph, VKMLError> {
-        let mut tensors = Vec::new();
+    pub fn parse_onnx_model(
+        onnx_model: OnnxModel,
+    ) -> Result<(TensorGraph, Vec<Tensor>), VKMLError> {
+        let mut tensor_descs = Vec::new();
+        let mut tensors_with_data = Vec::new();
         let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
         let mut tensor_name_to_id: HashMap<String, TensorId> = HashMap::new();
 
@@ -20,24 +23,29 @@ impl OnnxParser {
 
         // Create tensors from ONNX model
         for (name, onnx_tensor) in onnx_model.tensors {
-            let tensor_desc = Self::convert_onnx_tensor_to_desc(&onnx_tensor)?;
-            memory_requirements += tensor_desc.size_in_bytes();
+            let onnx_tensor_desc = Self::convert_onnx_tensor_to_desc(&onnx_tensor)?;
+            memory_requirements += onnx_tensor_desc.size_in_bytes();
+
+            tensor_descs.push(onnx_tensor_desc.clone());
+
             let compute_tensor = if onnx_tensor.has_data() {
-                Tensor::new_cpu(tensor_desc, onnx_tensor.into_bytes().unwrap())
+                Tensor::new_cpu(onnx_tensor_desc, onnx_tensor.into_bytes().unwrap())
             } else {
-                let size = tensor_desc.size_in_bytes();
-                Tensor::new_cpu(tensor_desc, vec![0u8; size].into())
+                let size = onnx_tensor_desc.size_in_bytes();
+                Tensor::new_cpu(onnx_tensor_desc, vec![0u8; size].into())
             };
 
-            let tensor_id = tensors.len();
-            tensors.push(RwLock::new(compute_tensor));
-            tensor_name_to_id.insert(name.clone(), tensor_id);
+            tensors_with_data.push(compute_tensor);
+            tensor_name_to_id.insert(name.clone(), tensor_descs.len() - 1);
         }
 
         // Create operations from ONNX nodes; fail fast if an op isn't supported
         for onnx_op in &onnx_model.operations {
-            let instruction =
-                Self::convert_onnx_operation_to_instruction(onnx_op, &tensor_name_to_id, &tensors)?;
+            let instruction = Self::convert_onnx_operation_to_instruction(
+                onnx_op,
+                &tensor_name_to_id,
+                &tensors_with_data,
+            )?;
             operations.push(instruction);
         }
 
@@ -54,18 +62,21 @@ impl OnnxParser {
             .filter_map(|name| tensor_name_to_id.get(name).copied())
             .collect();
 
-        let tensor_to_layer = vec![None; tensors.len()];
+        let tensor_to_layer = vec![None; tensor_descs.len()];
         let operation_to_layer = vec![0; operations.len()];
 
-        Ok(TensorGraph {
-            tensors,
-            operations,
-            input_tensor_ids,
-            output_tensor_ids,
-            tensor_to_layer,
-            operation_to_layer,
-            memory_requirements,
-        })
+        Ok((
+            TensorGraph {
+                tensor_descs,
+                operations,
+                input_tensor_ids,
+                output_tensor_ids,
+                tensor_to_layer,
+                operation_to_layer,
+                memory_requirements,
+            },
+            tensors_with_data,
+        ))
     }
 
     fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensor) -> Result<TensorDesc, VKMLError> {
@@ -97,7 +108,7 @@ impl OnnxParser {
     fn convert_onnx_operation_to_instruction(
         onnx_op: &OnnxOperation,
         tensor_map: &HashMap<String, TensorId>,
-        tensors: &Vec<RwLock<Tensor>>,
+        tensors: &Vec<Tensor>,
     ) -> Result<Box<dyn Instruction>, VKMLError> {
         // Resolve tensor names to IDs
         let input_ids = onnx_op
@@ -172,8 +183,7 @@ impl OnnxParser {
             }
             "Reshape" => {
                 let shape_id = input_ids[1];
-                let guard = tensors[shape_id].read().unwrap();
-                let raw = guard.get_cpu_memory_slice_or_panic();
+                let raw = &tensors[shape_id].get_cpu_memory_slice_or_panic();
 
                 if raw.len() % 8 != 0 {
                     return Err(VKMLError::OnnxImporterError(format!(
