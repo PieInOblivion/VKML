@@ -30,6 +30,8 @@ pub struct ComputeManager {
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 
+    tensors: Vec<RwLock<Tensor>>,
+
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
 }
@@ -58,6 +60,7 @@ impl ComputeManager {
             gpus: Arc::new(gpus),
             cpu,
             thread_pool,
+            tensors: Vec::new(),
             model,
             tensor_graph: tensor_graph,
         };
@@ -131,6 +134,7 @@ impl ComputeManager {
             gpus: Arc::new(gpus),
             cpu,
             thread_pool,
+            tensors: Vec::new(),
             model,
             tensor_graph: tensor_graph,
         };

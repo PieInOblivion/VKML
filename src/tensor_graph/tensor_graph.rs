@@ -3,12 +3,9 @@ use crate::{
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::{desc::TensorDesc, tensor::Tensor},
+    tensor::desc::TensorDesc,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
-};
+use std::collections::{HashMap, HashSet};
 
 // TODO:
 // This representation of tensor dag needs changing.
@@ -25,10 +22,10 @@ pub type OperationId = usize;
 pub type TensorId = usize;
 
 pub struct TensorGraph {
-    pub tensors: Vec<RwLock<Tensor>>,
+    pub tensor_descs: Vec<TensorDesc>,
     pub operations: Vec<Box<dyn Instruction>>,
 
-    // Graph entry and exit points
+    // Graph entry and exit points (indices into tensor_descs)
     pub input_tensor_ids: Vec<TensorId>,
     pub output_tensor_ids: Vec<TensorId>,
 
@@ -46,7 +43,7 @@ impl TensorGraph {
         }
 
         let execution_order = &model.verified.as_ref().unwrap().execution_order;
-        let mut tensors = Vec::new();
+        let mut tensor_descs: Vec<TensorDesc> = Vec::new();
         let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
         let mut tensor_to_layer_map = Vec::new();
         let mut operation_to_layer_map = Vec::new();
@@ -100,12 +97,10 @@ impl TensorGraph {
             for (local_idx, local_tensor_desc) in layer_exec.tensors.iter().enumerate() {
                 if layer_exec.input_mappings.get(&local_idx).is_none() {
                     // Only if not an input reference
-                    let global_tensor_id = tensors.len();
+                    let global_tensor_id = tensor_descs.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
                     memory_requirements += local_tensor_desc.size_in_bytes();
-                    tensors.push(RwLock::new(Tensor::new_unallocated(
-                        local_tensor_desc.clone(),
-                    )));
+                    tensor_descs.push(local_tensor_desc.clone());
                     tensor_to_layer_map.push(Some(layer_id));
                     // Ensure latest_producer_op_for_tensor is large enough
                     if global_tensor_id >= latest_producer_op_for_tensor.len() {
@@ -190,7 +185,7 @@ impl TensorGraph {
         output_tensors_model.sort_unstable();
 
         Ok(TensorGraph {
-            tensors,
+            tensor_descs,
             operations,
             input_tensor_ids: input_tensors_model,
             output_tensor_ids: output_tensors_model,
@@ -321,13 +316,5 @@ impl TensorGraph {
 
     pub fn get_output_tensor_ids(&self) -> &[TensorId] {
         &self.output_tensor_ids
-    }
-
-    pub fn tensor_read(&self, tensor_id: usize) -> RwLockReadGuard<'_, Tensor> {
-        self.tensors[tensor_id].read().unwrap()
-    }
-
-    pub fn tensor_write(&self, tensor_id: usize) -> RwLockWriteGuard<'_, Tensor> {
-        self.tensors[tensor_id].write().unwrap()
     }
 }

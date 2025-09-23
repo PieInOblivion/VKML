@@ -47,7 +47,7 @@ impl Tensor {
         let buf = UnallocatedData::new();
         Self {
             desc,
-            device: DeviceId::CPU,
+            device: DeviceId::Unallocated,
             buffer: Box::new(buf),
         }
     }
