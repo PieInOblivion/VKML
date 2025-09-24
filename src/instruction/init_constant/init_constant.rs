@@ -179,7 +179,7 @@ impl Instruction for InitConstantInstruction {
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {
-        let mut dst = cm.tensor_write(self.dst);
+        let dst = cm.tensor_write(self.dst);
         let dtype = dst.desc.data_type();
 
         // Use DataType's helper to get element size in bytes; panic if unknown so we don't assume a size.

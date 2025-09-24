@@ -178,7 +178,7 @@ impl Instruction for ReLUInstruction {
         );
 
         let src_tensor = cm.tensor_read(self.src);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         let a = src_tensor.desc.to_dims();
         let c = dst_tensor.desc.to_dims();

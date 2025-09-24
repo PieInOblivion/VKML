@@ -546,7 +546,7 @@ impl Instruction for ConvInstruction {
             .map(|t| t.get_cpu_memory_slice_or_panic().to_vec());
 
         // Obtain dst as mutable write guard
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
         let dst_desc = dst_tensor.desc.clone();
 
         // Convert dims to usize vectors

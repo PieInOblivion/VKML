@@ -151,7 +151,7 @@ impl Instruction for ReshapeInstruction {
 
         // Update dst tensor descriptor (panic on failure to preserve current invariants)
         {
-            let mut dst_t = cm.tensor_write(self.dst);
+            let dst_t = cm.tensor_write(self.dst);
             dst_t
                 .desc
                 .reshape(new_dims)
@@ -160,7 +160,7 @@ impl Instruction for ReshapeInstruction {
 
         // Copy data between underlying buffers (reshape is logical concerning layout)
         let src_tensor = cm.tensor_read(self.src);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         dst_tensor.write(&src_tensor.read());
     }

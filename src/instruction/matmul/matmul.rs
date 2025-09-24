@@ -95,7 +95,7 @@ impl Instruction for MatMulInstruction {
 
         let src1_tensor = cm.tensor_read(self.src1);
         let src2_tensor = cm.tensor_read(self.src2);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         // dims are i64 internally; convert to usize for CPU indexing/math
         let src1_dims_i64 = src1_tensor.desc.to_dims();

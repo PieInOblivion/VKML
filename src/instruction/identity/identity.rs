@@ -84,7 +84,7 @@ impl Instruction for IdentityInstruction {
 
     fn execute_cpu(&self, cm: &ComputeManager) {
         let src_tensor = cm.tensor_read(self.src);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         dst_tensor.write(&src_tensor.read());
     }

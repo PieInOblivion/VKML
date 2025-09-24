@@ -426,7 +426,7 @@ impl Instruction for MaxPoolInstruction {
         let src_desc = src_guard.desc.clone();
         let src_bytes = src_guard.get_cpu_memory_slice_or_panic();
 
-        let mut dst_guard = cm.tensor_write(self.dst);
+        let dst_guard = cm.tensor_write(self.dst);
         let dst_desc = dst_guard.desc.clone();
         let dst_ptr = dst_guard.get_cpu_memory_mut_slice_or_panic();
 

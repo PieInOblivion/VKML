@@ -211,7 +211,7 @@ impl Instruction for SoftmaxInstruction {
         );
 
         let src_tensor = cm.tensor_read(self.src);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         let dims = src_tensor.desc.to_dims();
         assert_eq!(

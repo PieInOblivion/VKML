@@ -52,7 +52,7 @@ impl Instruction for InitLoadInstruction {
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {
-        let mut dst = cm.tensor_write(self.dst);
+        let dst = cm.tensor_write(self.dst);
         match self.datatype {
             onnx_extractor::DataType::Float => {
                 let out = dst.get_cpu_memory_mut_slice_or_panic();

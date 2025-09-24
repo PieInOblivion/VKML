@@ -292,7 +292,7 @@ impl Instruction for AddInstruction {
 
         let src1_tensor = cm.tensor_read(self.src1);
         let src2_tensor = cm.tensor_read(self.src2);
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
 
         let a = src1_tensor.desc.to_dims();
         let b = src2_tensor.desc.to_dims();

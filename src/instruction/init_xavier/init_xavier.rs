@@ -156,7 +156,7 @@ impl Instruction for InitXavierInstruction {
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {
-        let mut dst = cm.tensor_write(self.dst);
+        let dst = cm.tensor_write(self.dst);
         let (fan_in, fan_out) = dst.desc.calculate_fan_in_out();
         let dst_dims = dst.desc.to_dims();
         let dtype = dst.desc.data_type();

@@ -118,7 +118,7 @@ impl Instruction for ConcatInstruction {
         let src_bytes_vec: Vec<&[u8]> = owned_src_bytes.iter().map(|v| v.as_slice()).collect();
 
         // Now it's safe to take a mutable borrow for the destination tensor.
-        let mut dst_tensor = cm.tensor_write(self.dst);
+        let dst_tensor = cm.tensor_write(self.dst);
         let op_datatype = dst_tensor.desc.data_type();
         match op_datatype {
             DataType::Float => {
