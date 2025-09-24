@@ -25,13 +25,13 @@ use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 // TODO: Look at VK_KHR_device_group. I Think we want to stick with individually managed GPUs though
 
 pub struct GPU {
-    entry: Arc<Entry>,
+    _entry: Arc<Entry>,
     instance: Instance,
     device: Device,
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
     command_pool: vk::CommandPool,
-    queue_family_index: u32,
+    _queue_family_index: u32,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
     pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
@@ -264,13 +264,13 @@ impl GPU {
             // Set limit as property of the gpu
 
             Ok(Self {
-                entry,
+                _entry: entry,
                 instance,
                 device,
                 physical_device,
                 compute_queues,
                 command_pool,
-                queue_family_index,
+                _queue_family_index: queue_family_index,
                 descriptor_pool,
                 descriptor_set_layout,
                 pipelines: RwLock::new(HashMap::new()),

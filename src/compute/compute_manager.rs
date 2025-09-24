@@ -26,14 +26,14 @@ pub enum DeviceLocation {
 }
 
 pub struct ComputeManager {
-    gpus: Arc<Vec<GPU>>,
-    cpu: CPUCompute,
-    thread_pool: Arc<ZeroPool>,
-
     pub tensors: Vec<RwLock<Tensor>>,
 
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
+
+    gpus: Arc<Vec<GPU>>,
+    cpu: CPUCompute,
+    thread_pool: Arc<ZeroPool>,
 }
 
 impl ComputeManager {
@@ -57,12 +57,12 @@ impl ComputeManager {
         let tensor_graph = TensorGraph::from_graph_model(&model)?;
 
         let mut manager = Self {
-            gpus: Arc::new(gpus),
-            cpu,
-            thread_pool,
             tensors: Vec::new(),
             model,
             tensor_graph: tensor_graph,
+            gpus: Arc::new(gpus),
+            cpu,
+            thread_pool,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -207,14 +207,16 @@ impl ComputeManager {
 
     fn allocate_tensor_graph(
         &mut self,
-        initialisers: Vec<Option<Box<[u8]>>>,
+        mut initialisers: Vec<Option<Box<[u8]>>>,
     ) -> Result<(), VKMLError> {
         // Get execution plan and flatten to a linear sequence of operations
         let execution_plan = self.tensor_graph.create_execution_plan();
         let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();
 
         // Track planned tensor locations: tensor_id -> DeviceLocation
-        let mut tensor_locations: Vec<Option<DeviceLocation>> = vec![None; self.tensors.len()];
+        // Start with the number of tensor descriptors in the graph (planning may add more)
+        let mut tensor_locations: Vec<Option<DeviceLocation>> =
+            vec![None; self.tensor_graph.tensor_descs.len()];
 
         // Maintain a list of tensor remappings: original_id -> new_id on device
         let mut tensor_remappings: HashMap<(usize, DeviceLocation), usize> = HashMap::new();
@@ -224,12 +226,7 @@ impl ComputeManager {
             HashMap::new();
 
         // New tensors created for transfers - including layer info
-        let mut new_tensors: Vec<(
-            TensorDesc,
-            DeviceLocation,
-            Box<dyn Instruction>,
-            Option<LayerId>,
-        )> = Vec::new();
+        let mut new_tensors: Vec<(TensorDesc, DeviceLocation, Option<LayerId>)> = Vec::new();
 
         // Transfer operations to add
         let mut transfer_operations: Vec<(OperationId, Box<dyn Instruction>)> = Vec::new();
@@ -262,7 +259,8 @@ impl ComputeManager {
             let mut memory_needed = 0;
             for &tensor_id in input_tensors.iter().chain(output_tensors.iter()) {
                 if tensor_locations[tensor_id].is_none() {
-                    memory_needed += self.tensor_read(tensor_id).desc.size_in_bytes() as u64;
+                    memory_needed +=
+                        self.tensor_graph.tensor_descs[tensor_id].size_in_bytes() as u64;
                 }
             }
 
@@ -288,11 +286,8 @@ impl ComputeManager {
                 // Check if tensor is unallocated
                 if tensor_locations[tensor_id].is_none() {
                     // Plan to allocate the tensor on current device
-                    let tensor_size = self
-                        .tensor_graph
-                        .tensor_read(tensor_id)
-                        .desc
-                        .size_in_bytes() as u64;
+                    let tensor_size =
+                        self.tensor_graph.tensor_descs[tensor_id].size_in_bytes() as u64;
                     tensor_locations[tensor_id] = Some(current_device.clone());
                     available_memory[current_device_idx].1 -= tensor_size;
 
@@ -307,27 +302,22 @@ impl ComputeManager {
                         remapping_needed = true;
                     } else {
                         // Create a new tensor on current device
-                        let new_tensor_id = self.tensor_graph.tensors.len() + new_tensors.len();
-                        let original_tensor = self.tensor_graph.tensor_read(tensor_id);
+                        let new_tensor_id =
+                            self.tensor_graph.tensor_descs.len() + new_tensors.len();
+                        let original_desc = &self.tensor_graph.tensor_descs[tensor_id];
 
                         // Preserve the layer association
                         let original_layer_id = self.tensor_graph.tensor_to_layer[tensor_id];
 
                         // Plan the new tensor
-                        let tensor_desc = original_tensor.desc.clone();
+                        let tensor_desc = original_desc.clone();
                         let tensor_size = tensor_desc.size_in_bytes() as u64;
-                        let weight_init = instruction::init_constant(0, vec![0, 0, 0, 0]); // Will be filled by transfer
 
                         // Reserve memory on current device
                         available_memory[current_device_idx].1 -= tensor_size;
 
                         // Add to new tensors list with layer info
-                        new_tensors.push((
-                            tensor_desc,
-                            current_device.clone(),
-                            weight_init,
-                            original_layer_id,
-                        ));
+                        new_tensors.push((tensor_desc, current_device.clone(), original_layer_id));
 
                         // Create transfer instruction
                         let src_device = tensor_locations[tensor_id].clone().unwrap();
@@ -361,11 +351,8 @@ impl ComputeManager {
                 // Check if tensor is unallocated
                 if tensor_locations[tensor_id].is_none() {
                     // Plan to allocate the tensor on current device
-                    let tensor_size = self
-                        .tensor_graph
-                        .tensor_read(tensor_id)
-                        .desc
-                        .size_in_bytes() as u64;
+                    let tensor_size =
+                        self.tensor_graph.tensor_descs[tensor_id].size_in_bytes() as u64;
                     tensor_locations[tensor_id] = Some(current_device.clone());
                     available_memory[current_device_idx].1 -= tensor_size;
 
@@ -380,27 +367,22 @@ impl ComputeManager {
                         remapping_needed = true;
                     } else {
                         // Create a new tensor on current device
-                        let new_tensor_id = self.tensor_graph.tensors.len() + new_tensors.len();
-                        let original_tensor = self.tensor_graph.tensor_read(tensor_id);
+                        let new_tensor_id =
+                            self.tensor_graph.tensor_descs.len() + new_tensors.len();
+                        let original_desc = &self.tensor_graph.tensor_descs[tensor_id];
 
                         // Preserve the layer association
                         let original_layer_id = self.tensor_graph.tensor_to_layer[tensor_id];
 
                         // Plan the new tensor
-                        let tensor_desc = original_tensor.desc.clone();
+                        let tensor_desc = original_desc.clone();
                         let tensor_size = tensor_desc.size_in_bytes() as u64;
-                        let weight_init = self.get_weight_init_for_tensor(tensor_id);
 
                         // Reserve memory on current device
                         available_memory[current_device_idx].1 -= tensor_size;
 
                         // Add to new tensors list with layer info
-                        new_tensors.push((
-                            tensor_desc,
-                            current_device.clone(),
-                            weight_init,
-                            original_layer_id,
-                        ));
+                        new_tensors.push((tensor_desc, current_device.clone(), original_layer_id));
 
                         // Record the remapping
                         tensor_remappings.insert(remapping_key, new_tensor_id);
@@ -426,12 +408,10 @@ impl ComputeManager {
 
         // Now apply all of our planned changes
 
-        // 1. Create all new tensors for transfers
-        for (tensor_desc, device_location, _weight_init, layer_id) in new_tensors {
-            // Add the new tensor
-            self.tensor_graph
-                .tensors
-                .push(RwLock::new(Tensor::new_unallocated(tensor_desc)));
+        // 1. Create all new tensor descriptors for transfers (allocation happens later)
+        for (tensor_desc, device_location, layer_id) in new_tensors {
+            // Add the new tensor descriptor
+            self.tensor_graph.tensor_descs.push(tensor_desc);
 
             // Add the same layer ID to maintain the connection
             self.tensor_graph.tensor_to_layer.push(layer_id);
@@ -463,143 +443,94 @@ impl ComputeManager {
         }
 
         // 4. Now that planning is complete, actually allocate the tensors
-        // TODO: This can surely be better...
-        for tensor_id in 0..tensor_locations.len() {
-            if tensor_id >= self.tensor_graph.tensors.len() {
-                break;
-            }
+        // Ensure self.tensors will hold an entry for every tensor descriptor
+        self.tensors = Vec::with_capacity(self.tensor_graph.tensor_descs.len());
 
-            if let Some(device_location) = &tensor_locations[tensor_id] {
-                let tensor = self.tensor_graph.tensor_read(tensor_id);
-                if tensor.device == DeviceId::Unallocated {
-                    // Get the tensor description first
-                    let tensor_desc = tensor.desc.clone();
-                    drop(tensor);
+        for tensor_id in 0..self.tensor_graph.tensor_descs.len() {
+            // Determine target device; default to CPU if planning left it None
+            let target = tensor_locations
+                .get(tensor_id)
+                .and_then(|opt| opt.clone())
+                .unwrap_or(DeviceLocation::CPU);
 
-                    // Get the appropriate weight initialization (already remapped)
-                    let weight_init = self.get_weight_init_for_tensor(tensor_id);
+            let tensor_desc = self.tensor_graph.tensor_descs[tensor_id].clone();
 
-                    // Allocate the tensor backing (no initialization yet)
-                    let new_tensor = self.allocate_empty_tensor(&tensor_desc, device_location)?;
+            // Take ownership of any provided initialiser for zero-copy allocation.
+            // `take()` leaves a `None` in the original vector slot.
+            let init_box: Option<Box<[u8]>> =
+                initialisers.get_mut(tensor_id).and_then(|opt| opt.take());
 
-                    // Update the tensor with the allocated data so the instruction can find it
-                    self.tensor_graph.tensors[tensor_id] = RwLock::new(new_tensor);
+            // Allocate via helper to centralise tracking and upload logic
+            let allocated = self
+                .allocate_tensor(&tensor_desc, &target, init_box)
+                .map_err(|e| {
+                    VKMLError::Generic(format!(
+                        "Allocation failed for tensor {}: {:?}",
+                        tensor_id, e
+                    ))
+                })?;
 
-                    // Run the initialization instruction now that the tensor exists in the graph
-                    match device_location {
-                        DeviceLocation::CPU => {
-                            // Synchronous CPU init; execute_cpu will be parallelised later
-                            weight_init.execute_cpu(&self.tensor_graph);
-                        }
-                        DeviceLocation::GPU(idx) => {
-                            let gpu = &self.gpus[*idx];
-
-                            unsafe {
-                                let alloc_info = vulkanalia::vk::CommandBufferAllocateInfo {
-                                    s_type:
-                                        vulkanalia::vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                                    next: std::ptr::null(),
-                                    command_pool: gpu.get_command_pool(),
-                                    level: vulkanalia::vk::CommandBufferLevel::PRIMARY,
-                                    command_buffer_count: 1,
-                                };
-
-                                let command_buffers = match gpu
-                                    .get_device()
-                                    .allocate_command_buffers(&alloc_info)
-                                {
-                                    Ok(cbs) => cbs,
-                                    Err(e) => {
-                                        // rollback memory tracking and fail
-                                        gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                        return Err(VKMLError::VulkanLoadError(format!(
-                                            "Failed to allocate command buffer: {:?}",
-                                            e
-                                        )));
-                                    }
-                                };
-
-                                let cmd = command_buffers[0];
-
-                                if let Err(e) = weight_init.create_command_buffer(gpu, cmd, &self) {
-                                    gpu.get_device().free_command_buffers(
-                                        gpu.get_command_pool(),
-                                        &command_buffers,
-                                    );
-                                    gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                    return Err(VKMLError::VulkanLoadError(format!(
-                                        "GPU init create_command_buffer failed: {}",
-                                        e
-                                    )));
-                                }
-
-                                if let Err(e) = gpu.submit_command_buffers_and_wait(&[cmd]) {
-                                    gpu.get_device().free_command_buffers(
-                                        gpu.get_command_pool(),
-                                        &command_buffers,
-                                    );
-                                    gpu.deallocate_memory(tensor_desc.size_in_bytes() as u64);
-                                    return Err(VKMLError::VulkanLoadError(format!(
-                                        "Failed to submit init command buffer: {}",
-                                        e
-                                    )));
-                                }
-
-                                gpu.get_device()
-                                    .free_command_buffers(gpu.get_command_pool(), &command_buffers);
-                            }
-                        }
-                    }
-                }
-            }
+            self.tensors.push(RwLock::new(allocated));
         }
 
         Ok(())
     }
 
-    fn get_weight_init_for_tensor(&self, tensor_id: usize) -> Box<dyn Instruction> {
-        if let Some(layer_id) = self.tensor_graph.tensor_to_layer[tensor_id] {
-            if let Some(layer) = self.model.layers.get(&layer_id) {
-                if let Some(weight_init) = &layer.weight_init {
-                    let mut copy = weight_init.clone();
-                    copy.remap_tensor_ids(&Vec::new(), &vec![tensor_id]);
-                    return copy;
-                }
-            }
-        }
-
-        let mut copy = self.model.weight_init.clone();
-        copy.remap_tensor_ids(&Vec::new(), &vec![tensor_id]);
-        return copy;
-    }
-
-    fn allocate_empty_tensor(
+    /// Allocate a tensor on the requested device. If `init_box` is Some, use the provided
+    /// boxed bytes to initialise the tensor (CPU will take ownership for zero-copy; GPU will
+    /// upload then drop the host box). Returns the allocated Tensor.
+    pub fn allocate_tensor(
         &self,
         desc: &TensorDesc,
         target_device: &DeviceLocation,
+        init_box: Option<Box<[u8]>>,
     ) -> Result<Tensor, VKMLError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match target_device {
             DeviceLocation::CPU => {
-                // Allocate zeroed host backing (initialisation will run via execute_cpu)
-                let buf = vec![0u8; size_in_bytes as usize];
-                self.cpu.memory_tracking.allocate(size_in_bytes);
-                Ok(Tensor::new_cpu(desc.clone(), buf.into()))
+                // CPU allocation: use provided boxed bytes if present (zero-copy), else zeroed buffer
+                if let Some(boxed) = init_box {
+                    if boxed.len() != desc.size_in_bytes() {
+                        return Err(VKMLError::Generic(format!(
+                            "Initialiser size mismatch for tensor: expected {} got {}",
+                            desc.size_in_bytes(),
+                            boxed.len()
+                        )));
+                    }
+                    self.cpu.memory_tracking.allocate(size_in_bytes);
+                    Ok(Tensor::new_cpu(desc.clone(), boxed))
+                } else {
+                    let buf = vec![0u8; size_in_bytes as usize];
+                    self.cpu.memory_tracking.allocate(size_in_bytes);
+                    Ok(Tensor::new_cpu(desc.clone(), buf.into()))
+                }
             }
             DeviceLocation::GPU(idx) => {
-                let gpu_idx = *idx; // copy the usize
+                let gpu_idx = *idx;
                 let gpu = &self.gpus[gpu_idx];
 
                 // Reserve tracking
                 gpu.allocate_memory(size_in_bytes);
 
-                // Allocate uninitialised GPU memory (function takes usize bytes)
-                let gpu_mem = gpu
-                    .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
-                    .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
-
-                Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
+                if let Some(boxed) = init_box {
+                    if boxed.len() != desc.size_in_bytes() {
+                        return Err(VKMLError::Generic(format!(
+                            "Initialiser size mismatch for tensor: expected {} got {}",
+                            desc.size_in_bytes(),
+                            boxed.len()
+                        )));
+                    }
+                    // Upload to GPU (creates GPUMemory). Borrow boxed slice for upload then drop host memory.
+                    let gpu_mem = gpu.move_to_gpu(&boxed);
+                    Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
+                } else {
+                    // Allocate uninitialised GPU memory
+                    let gpu_mem = gpu
+                        .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
+                        .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
+                    Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
+                }
             }
         }
     }

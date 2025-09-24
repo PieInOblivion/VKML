@@ -46,10 +46,6 @@ impl MemoryTracker {
         self.current.load(Ordering::Acquire)
     }
 
-    pub fn get_maximum(&self) -> u64 {
-        self.maximum
-    }
-
     pub fn get_available(&self) -> u64 {
         self.maximum - self.get_current()
     }
