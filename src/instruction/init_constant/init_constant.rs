@@ -1,9 +1,10 @@
+use crate::ComputeManager;
 use crate::instruction::init_constant::push_constants::InitConstantPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -44,9 +45,9 @@ impl Instruction for InitConstantInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Use generic constant-init compute shader that writes elements up to 8 bytes
@@ -177,8 +178,8 @@ impl Instruction for InitConstantInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let mut dst = tensor_graph.tensor_write(self.dst);
+    fn execute_cpu(&self, cm: &ComputeManager) {
+        let mut dst = cm.tensor_write(self.dst);
         let dtype = dst.desc.data_type();
 
         // Use DataType's helper to get element size in bytes; panic if unknown so we don't assume a size.

@@ -115,7 +115,13 @@ impl ComputeManager {
 
         let (tensor_graph, tensor_data) = OnnxParser::parse_onnx_model(onnx_model)?;
 
-        Self::new_from_tensor_graph_with(tensor_graph, tensor_data, thread_pool, gpus, cpu_memory_limit_bytes)
+        Self::new_from_tensor_graph_with(
+            tensor_graph,
+            tensor_data,
+            thread_pool,
+            gpus,
+            cpu_memory_limit_bytes,
+        )
     }
 
     pub fn new_from_tensor_graph_with(
@@ -634,9 +640,7 @@ impl ComputeManager {
                 )));
             }
 
-            self
-                .tensor_write(tensor_id)
-                .write(&batch.read());
+            self.tensor_write(tensor_id).write(&batch.read());
         }
 
         // Execute the model
@@ -852,7 +856,10 @@ zp_define_task_fn!(
     single_cpu_operation_task,
     SingleCpuOperationParams,
     |params| {
-        let instruction = &params.compute_manager.tensor_graph.get_instruction_or_panic(params.operation_id);
+        let instruction = &params
+            .compute_manager
+            .tensor_graph
+            .get_instruction_or_panic(params.operation_id);
         instruction.execute_cpu(&params.compute_manager);
     }
 );
@@ -898,12 +905,17 @@ zp_define_task_fn!(
             let mut valid_buffers = Vec::new();
 
             for i in 0..params.operations.len() {
-                let instruction = params.compute_manager
+                let instruction = params
+                    .compute_manager
                     .tensor_graph
                     .get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
-                    .create_command_buffer(&gpu, command_buffers[i], &params.compute_manager.tensor_graph)
+                    .create_command_buffer(
+                        &gpu,
+                        command_buffers[i],
+                        &params.compute_manager.tensor_graph,
+                    )
                     .is_ok()
                 {
                     valid_buffers.push(command_buffers[i]);

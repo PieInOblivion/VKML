@@ -1,7 +1,6 @@
 use crate::{
-    gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    ComputeManager, gpu::vk_gpu::GPU, instruction::instruction::Instruction,
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -47,7 +46,7 @@ impl Instruction for ConcatInstruction {
         &self,
         _gpu: &GPU,
         _command_buffer: vk::CommandBuffer,
-        _tensor_graph: &TensorGraph,
+        _cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Complex operation that would require custom shaders
         Err("GPU implementation of Concat not yet supported".into())
@@ -57,7 +56,7 @@ impl Instruction for ConcatInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         assert_eq!(
             self.dim, 1,
             "CPU Concat only implemented for dimension 1, got {}",
@@ -70,14 +69,14 @@ impl Instruction for ConcatInstruction {
 
         // Prepare tensors and validate shapes
         let first_source = self.sources[0];
-        let first_desc = tensor_graph.tensor_read(first_source).desc.to_dims();
+        let first_desc = cm.tensor_read(first_source).desc.to_dims();
         assert_eq!(first_desc.len(), 2, "Concat only supports 2D tensors");
         let batch_size = first_desc[0] as usize;
 
         let mut total_features: usize = 0;
         let mut source_features: Vec<usize> = Vec::with_capacity(self.sources.len());
         for &src_id in &self.sources {
-            let src_desc = tensor_graph.tensor_read(src_id).desc.to_dims();
+            let src_desc = cm.tensor_read(src_id).desc.to_dims();
             assert_eq!(
                 src_desc.len(),
                 2,
@@ -92,7 +91,7 @@ impl Instruction for ConcatInstruction {
             total_features += feat;
         }
 
-        let dst_desc = tensor_graph.tensor_read(self.dst).desc.to_dims();
+        let dst_desc = cm.tensor_read(self.dst).desc.to_dims();
         assert_eq!(dst_desc.len(), 2, "Destination tensor must be 2D");
         assert_eq!(
             dst_desc[0] as usize, batch_size,
@@ -109,7 +108,7 @@ impl Instruction for ConcatInstruction {
         let mut owned_src_bytes: Vec<Vec<u8>> = Vec::with_capacity(self.sources.len());
         let mut src_dims_vec: Vec<Vec<i64>> = Vec::with_capacity(self.sources.len());
         for &src_id in &self.sources {
-            let src_tensor = tensor_graph.tensor_read(src_id);
+            let src_tensor = cm.tensor_read(src_id);
             let src_slice = src_tensor.get_cpu_memory_slice_or_panic();
             owned_src_bytes.push(src_slice.to_vec());
             src_dims_vec.push(src_tensor.desc.to_dims());
@@ -119,7 +118,7 @@ impl Instruction for ConcatInstruction {
         let src_bytes_vec: Vec<&[u8]> = owned_src_bytes.iter().map(|v| v.as_slice()).collect();
 
         // Now it's safe to take a mutable borrow for the destination tensor.
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let mut dst_tensor = cm.tensor_write(self.dst);
         let op_datatype = dst_tensor.desc.data_type();
         match op_datatype {
             DataType::Float => {

@@ -1,3 +1,4 @@
+use crate::ComputeManager;
 use crate::instruction::AutoPad;
 use crate::instruction::maxpool::push_constants::{
     MaxPool1DPushConstants, MaxPool2DPushConstants, MaxPool3DPushConstants,
@@ -7,7 +8,7 @@ use crate::{
     gpu::vk_gpu::GPU,
     instruction::{instruction::Instruction, maxpool::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -123,13 +124,13 @@ impl Instruction for MaxPoolInstruction {
 
     fn create_command_buffer(
         &self,
-        _gpu: &GPU,
-        _command_buffer: vk::CommandBuffer,
-        _tensor_graph: &TensorGraph,
+        gpu: &GPU,
+        command_buffer: vk::CommandBuffer,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // GPU implementation: bind src(0) and dst(2), push constants and dispatch.
-        let src_tensor = _tensor_graph.tensor_read(self.src);
-        let dst_tensor = _tensor_graph.tensor_read(self.dst);
+        let src_tensor = cm.tensor_read(self.src);
+        let dst_tensor = cm.tensor_read(self.dst);
 
         let src_mem = src_tensor.get_gpu_memory_or_panic();
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
@@ -144,19 +145,19 @@ impl Instruction for MaxPoolInstruction {
                 inheritance_info: std::ptr::null(),
             };
 
-            _gpu.get_device()
-                .begin_command_buffer(_command_buffer, &begin_info)?;
+            gpu.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
 
-            let set_layouts = [*_gpu.get_descriptor_set_layout()];
+            let set_layouts = [*gpu.get_descriptor_set_layout()];
             let alloc_info = vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                 next: std::ptr::null(),
-                descriptor_pool: *_gpu.get_descriptor_pool(),
+                descriptor_pool: *gpu.get_descriptor_pool(),
                 descriptor_set_count: 1,
                 set_layouts: set_layouts.as_ptr(),
             };
 
-            let descriptor_set = _gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
+            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
             let buffer_infos = [
                 vk::DescriptorBufferInfo {
@@ -198,7 +199,7 @@ impl Instruction for MaxPoolInstruction {
                 },
             ];
 
-            _gpu.get_device()
+            gpu.get_device()
                 .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
             // choose shader based on spatial rank
@@ -240,26 +241,26 @@ impl Instruction for MaxPoolInstruction {
 
                     let push_constant_bytes = as_bytes(&pc);
 
-                    let pipeline = _gpu.get_or_create_pipeline(
+                    let pipeline = gpu.get_or_create_pipeline(
                         crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool1D_F32,
                     );
 
-                    _gpu.get_device().cmd_bind_pipeline(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_pipeline(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         pipeline,
                     );
-                    _gpu.get_device().cmd_bind_descriptor_sets(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_descriptor_sets(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
-                        _gpu.get_layout(),
+                        gpu.get_layout(),
                         0,
                         &[descriptor_set],
                         &[],
                     );
-                    _gpu.get_device().cmd_push_constants(
-                        _command_buffer,
-                        _gpu.get_layout(),
+                    gpu.get_device().cmd_push_constants(
+                        command_buffer,
+                        gpu.get_layout(),
                         vk::ShaderStageFlags::COMPUTE,
                         0,
                         push_constant_bytes,
@@ -269,8 +270,8 @@ impl Instruction for MaxPoolInstruction {
                         (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
                     let workgroup_size = 256u64;
                     let num_groups = ((total + workgroup_size - 1) / workgroup_size) as u32;
-                    _gpu.get_device()
-                        .cmd_dispatch(_command_buffer, num_groups, 1, 1);
+                    gpu.get_device()
+                        .cmd_dispatch(command_buffer, num_groups, 1, 1);
                 }
                 2 => {
                     let src_dims = src_desc.to_dims();
@@ -302,26 +303,26 @@ impl Instruction for MaxPoolInstruction {
 
                     let push_constant_bytes = as_bytes(&pc);
 
-                    let pipeline = _gpu.get_or_create_pipeline(
+                    let pipeline = gpu.get_or_create_pipeline(
                         crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool2D_F32,
                     );
 
-                    _gpu.get_device().cmd_bind_pipeline(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_pipeline(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         pipeline,
                     );
-                    _gpu.get_device().cmd_bind_descriptor_sets(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_descriptor_sets(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
-                        _gpu.get_layout(),
+                        gpu.get_layout(),
                         0,
                         &[descriptor_set],
                         &[],
                     );
-                    _gpu.get_device().cmd_push_constants(
-                        _command_buffer,
-                        _gpu.get_layout(),
+                    gpu.get_device().cmd_push_constants(
+                        command_buffer,
+                        gpu.get_layout(),
                         vk::ShaderStageFlags::COMPUTE,
                         0,
                         push_constant_bytes,
@@ -333,8 +334,8 @@ impl Instruction for MaxPoolInstruction {
                     let groups_y = (out_h + 16 - 1) / 16;
                     let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * c
 
-                    _gpu.get_device()
-                        .cmd_dispatch(_command_buffer, groups_x, groups_y, groups_z);
+                    gpu.get_device()
+                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
                 }
                 3 => {
                     let src_dims = src_desc.to_dims();
@@ -375,26 +376,26 @@ impl Instruction for MaxPoolInstruction {
 
                     let push_constant_bytes = as_bytes(&pc);
 
-                    let pipeline = _gpu.get_or_create_pipeline(
+                    let pipeline = gpu.get_or_create_pipeline(
                         crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool3D_F32,
                     );
 
-                    _gpu.get_device().cmd_bind_pipeline(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_pipeline(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         pipeline,
                     );
-                    _gpu.get_device().cmd_bind_descriptor_sets(
-                        _command_buffer,
+                    gpu.get_device().cmd_bind_descriptor_sets(
+                        command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
-                        _gpu.get_layout(),
+                        gpu.get_layout(),
                         0,
                         &[descriptor_set],
                         &[],
                     );
-                    _gpu.get_device().cmd_push_constants(
-                        _command_buffer,
-                        _gpu.get_layout(),
+                    gpu.get_device().cmd_push_constants(
+                        command_buffer,
+                        gpu.get_layout(),
                         vk::ShaderStageFlags::COMPUTE,
                         0,
                         push_constant_bytes,
@@ -407,25 +408,25 @@ impl Instruction for MaxPoolInstruction {
                         (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
                     let groups_z = (total_z + local_z - 1) / local_z;
 
-                    _gpu.get_device()
-                        .cmd_dispatch(_command_buffer, groups_x, groups_y, groups_z);
+                    gpu.get_device()
+                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
                 }
                 _ => panic!("Unsupported spatial rank {} for GPU MaxPool", spatial_rank),
             }
 
-            _gpu.get_device().end_command_buffer(_command_buffer)?;
+            gpu.get_device().end_command_buffer(command_buffer)?;
         }
 
         Ok(())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         // Acquire read guard and dst write guard
-        let src_guard = tensor_graph.tensor_read(self.src);
+        let src_guard = cm.tensor_read(self.src);
         let src_desc = src_guard.desc.clone();
         let src_bytes = src_guard.get_cpu_memory_slice_or_panic();
 
-        let mut dst_guard = tensor_graph.tensor_write(self.dst);
+        let mut dst_guard = cm.tensor_write(self.dst);
         let dst_desc = dst_guard.desc.clone();
         let dst_ptr = dst_guard.get_cpu_memory_mut_slice_or_panic();
 

@@ -1,12 +1,13 @@
 use crate::instruction::mul::push_constants::MulPushConstants;
 use crate::utils::as_bytes;
+use crate::ComputeManager;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, mul::f32_cpu::f32_cpu,
     },
     tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -53,13 +54,13 @@ impl Instruction for MulInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_tensor = tensor_graph.tensor_read(self.src1);
+        let src1_tensor = cm.tensor_read(self.src1);
         let src1_mem = src1_tensor.get_gpu_memory_or_panic();
-        let src2_tensor = tensor_graph.tensor_read(self.src2);
+        let src2_tensor = cm.tensor_read(self.src2);
         let src2_mem = src2_tensor.get_gpu_memory_or_panic();
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Get tensor descriptions for calculating broadcast shapes and strides
@@ -274,15 +275,15 @@ impl Instruction for MulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         assert!(
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use Mul for in-place operation. Use MulInplace instead."
         );
 
-        let src1_tensor = tensor_graph.tensor_read(self.src1);
-        let src2_tensor = tensor_graph.tensor_read(self.src2);
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let src1_tensor = cm.tensor_read(self.src1);
+        let src2_tensor = cm.tensor_read(self.src2);
+        let mut dst_tensor = cm.tensor_write(self.dst);
 
         let a = src1_tensor.desc.to_dims();
         let b = src2_tensor.desc.to_dims();

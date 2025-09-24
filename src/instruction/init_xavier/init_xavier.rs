@@ -1,3 +1,4 @@
+use crate::ComputeManager;
 use crate::instruction::init_xavier::push_constants::InitXavierPushConstants;
 use crate::utils::as_bytes;
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     instruction::{
         gpu_operations::GPUMemoryOperation, init_xavier::f32_cpu::f32_cpu, instruction::Instruction,
     },
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -41,9 +42,9 @@ impl Instruction for InitXavierInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // For now f32-only GPU path using existing pipeline
@@ -154,8 +155,8 @@ impl Instruction for InitXavierInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let mut dst = tensor_graph.tensor_write(self.dst);
+    fn execute_cpu(&self, cm: &ComputeManager) {
+        let mut dst = cm.tensor_write(self.dst);
         let (fan_in, fan_out) = dst.desc.calculate_fan_in_out();
         let dst_dims = dst.desc.to_dims();
         let dtype = dst.desc.data_type();

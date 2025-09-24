@@ -1,3 +1,4 @@
+use crate::ComputeManager;
 use crate::instruction::conv::push_constants::{
     Conv1DPushConstants, Conv2DPushConstants, Conv3DPushConstants,
 };
@@ -8,7 +9,7 @@ use crate::{
     instruction::{
         conv::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
     },
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -155,12 +156,12 @@ impl Instruction for ConvInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Acquire read guards for tensors so we can access descriptors and GPU memory
-        let src_tensor = tensor_graph.tensor_read(self.src);
-        let weights_tensor = tensor_graph.tensor_read(self.weights);
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let src_tensor = cm.tensor_read(self.src);
+        let weights_tensor = cm.tensor_read(self.weights);
+        let dst_tensor = cm.tensor_read(self.dst);
 
         // Basic sanity checks for group before doing GPU work
         let src_desc_tmp = src_tensor.desc.clone();
@@ -180,7 +181,7 @@ impl Instruction for ConvInstruction {
 
         // Optional bias read guard (kept in scope)
         let bias_tensor_opt = if let Some(bid) = self.bias {
-            Some(tensor_graph.tensor_read(bid))
+            Some(cm.tensor_read(bid))
         } else {
             None
         };
@@ -524,13 +525,13 @@ impl Instruction for ConvInstruction {
         Ok(())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         // Acquire read guards and extract copies of metadata and input bytes so we can
         // drop the read guards before taking a mutable write guard on dst.
-        let src_guard = tensor_graph.tensor_read(self.src);
-        let weights_guard = tensor_graph.tensor_read(self.weights);
+        let src_guard = cm.tensor_read(self.src);
+        let weights_guard = cm.tensor_read(self.weights);
         let bias_guard_opt = if let Some(bid) = self.bias {
-            Some(tensor_graph.tensor_read(bid))
+            Some(cm.tensor_read(bid))
         } else {
             None
         };
@@ -545,7 +546,7 @@ impl Instruction for ConvInstruction {
             .map(|t| t.get_cpu_memory_slice_or_panic().to_vec());
 
         // Obtain dst as mutable write guard
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let mut dst_tensor = cm.tensor_write(self.dst);
         let dst_desc = dst_tensor.desc.clone();
 
         // Convert dims to usize vectors

@@ -1,7 +1,6 @@
 use crate::{
-    gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    ComputeManager, gpu::vk_gpu::GPU, instruction::instruction::Instruction,
+    tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -41,11 +40,11 @@ impl Instruction for IdentityInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_tensor = tensor_graph.tensor_read(self.src);
+        let src_tensor = cm.tensor_read(self.src);
         let src_mem = src_tensor.get_gpu_memory_or_panic();
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
@@ -83,9 +82,9 @@ impl Instruction for IdentityInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let src_tensor = tensor_graph.tensor_read(self.src);
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+    fn execute_cpu(&self, cm: &ComputeManager) {
+        let src_tensor = cm.tensor_read(self.src);
+        let mut dst_tensor = cm.tensor_write(self.dst);
 
         dst_tensor.write(&src_tensor.read());
     }

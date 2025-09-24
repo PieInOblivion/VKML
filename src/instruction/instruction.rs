@@ -1,7 +1,6 @@
 use crate::{
-    dataloader::error::VKMLError,
-    gpu::vk_gpu::GPU,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId}, ComputeManager,
+    ComputeManager, dataloader::error::VKMLError, gpu::vk_gpu::GPU,
+    tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::Debug;
 use vulkanalia::vk;
@@ -21,7 +20,7 @@ pub trait Instruction: Debug {
         &self,
         _gpu: &GPU,
         _command_buffer: vk::CommandBuffer,
-        _tensor_graph: &TensorGraph,
+        _cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Err(Box::new(VKMLError::VulkanLoadError(format!(
             "GPU execution not implemented for {:?}",

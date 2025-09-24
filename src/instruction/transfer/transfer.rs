@@ -2,7 +2,7 @@ use crate::{
     compute::compute_manager::DeviceLocation,
     gpu::vk_gpu::GPU,
     instruction::instruction::Instruction,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId, ComputeManager,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
@@ -48,9 +48,9 @@ impl Instruction for TransferToDeviceInstruction {
         &self,
         _gpu: &GPU,
         _command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_cpu(tensor_graph);
+        self.execute_cpu(cm);
         Ok(())
     }
 
@@ -58,8 +58,8 @@ impl Instruction for TransferToDeviceInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let data = tensor_graph.tensor_read(self.src).read();
-        tensor_graph.tensor_write(self.dst).write(&data);
+    fn execute_cpu(&self, cm: &ComputeManager) {
+        let data = cm.tensor_read(self.src).read();
+        cm.tensor_write(self.dst).write(&data);
     }
 }

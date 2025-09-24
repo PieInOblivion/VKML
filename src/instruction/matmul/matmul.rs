@@ -1,8 +1,9 @@
 use crate::{
+    ComputeManager,
     gpu::vk_gpu::GPU,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
     tensor::tensor::Tensor,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId,
 };
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -49,11 +50,11 @@ impl Instruction for MatMulInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src1_tensor = tensor_graph.tensor_read(self.src1);
-        let src2_tensor = tensor_graph.tensor_read(self.src2);
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let src1_tensor = cm.tensor_read(self.src1);
+        let src2_tensor = cm.tensor_read(self.src2);
+        let dst_tensor = cm.tensor_read(self.dst);
 
         // Avoid borrowing temporaries returned by to_dims(); collect dims first
         let src1_dims_vec = src1_tensor.desc.to_dims();
@@ -86,15 +87,15 @@ impl Instruction for MatMulInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         assert!(
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use MatMul for in-place operation"
         );
 
-        let src1_tensor = tensor_graph.tensor_read(self.src1);
-        let src2_tensor = tensor_graph.tensor_read(self.src2);
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let src1_tensor = cm.tensor_read(self.src1);
+        let src2_tensor = cm.tensor_read(self.src2);
+        let mut dst_tensor = cm.tensor_write(self.dst);
 
         // dims are i64 internally; convert to usize for CPU indexing/math
         let src1_dims_i64 = src1_tensor.desc.to_dims();

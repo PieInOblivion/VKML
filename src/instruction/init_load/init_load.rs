@@ -1,7 +1,6 @@
 use crate::{
-    gpu::vk_gpu::GPU,
-    instruction::instruction::Instruction,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    ComputeManager, gpu::vk_gpu::GPU, instruction::instruction::Instruction,
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -42,9 +41,9 @@ impl Instruction for InitLoadInstruction {
         &self,
         _gpu: &GPU,
         _command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_cpu(tensor_graph);
+        self.execute_cpu(cm);
         Ok(())
     }
 
@@ -52,8 +51,8 @@ impl Instruction for InitLoadInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
-        let mut dst = tensor_graph.tensor_write(self.dst);
+    fn execute_cpu(&self, cm: &ComputeManager) {
+        let mut dst = cm.tensor_write(self.dst);
         match self.datatype {
             onnx_extractor::DataType::Float => {
                 let out = dst.get_cpu_memory_mut_slice_or_panic();

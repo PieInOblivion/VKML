@@ -4,7 +4,7 @@ use crate::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
     },
     tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId, ComputeManager,
 };
 use onnx_extractor::DataType;
 use std::{
@@ -48,11 +48,11 @@ impl Instruction for SigmoidInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let src_tensor = tensor_graph.tensor_read(self.src);
+        let src_tensor = cm.tensor_read(self.src);
         let src_mem = src_tensor.get_gpu_memory_or_panic();
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
@@ -169,15 +169,15 @@ impl Instruction for SigmoidInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         // Follow add.rs pattern: compute broadcast shapes/strides and delegate to helper
         assert!(
             self.src != self.dst,
             "Cannot use Sigmoid for in-place operation"
         );
 
-        let src_tensor = tensor_graph.tensor_read(self.src);
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let src_tensor = cm.tensor_read(self.src);
+        let mut dst_tensor = cm.tensor_write(self.dst);
 
         let a = src_tensor.desc.to_dims();
         let c = dst_tensor.desc.to_dims();

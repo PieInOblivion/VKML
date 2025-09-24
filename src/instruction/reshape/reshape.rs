@@ -1,7 +1,7 @@
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::instruction::Instruction,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::TensorId, ComputeManager,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -49,13 +49,13 @@ impl Instruction for ReshapeInstruction {
         &self,
         gpu: &GPU,
         command_buffer: vk::CommandBuffer,
-        tensor_graph: &TensorGraph,
+        cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Reshape in Vulkan is a logical operation, not a physical one
         // We essentially need to copy data between the tensors
-        let src_tensor = tensor_graph.tensor_read(self.src);
+        let src_tensor = cm.tensor_read(self.src);
         let src_mem = src_tensor.get_gpu_memory_or_panic();
-        let dst_tensor = tensor_graph.tensor_read(self.dst);
+        let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
@@ -93,7 +93,7 @@ impl Instruction for ReshapeInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &ComputeManager) {
         // Start from the stored shape values provided by the instruction
         let mut new_dims = self.shape_values.clone();
 
@@ -101,7 +101,7 @@ impl Instruction for ReshapeInstruction {
         let allowzero_flag = self.allowzero.unwrap_or(0) != 0;
 
         if !allowzero_flag {
-            let src_desc = tensor_graph.tensor_read(self.src).desc.clone();
+            let src_desc = cm.tensor_read(self.src).desc.clone();
             let src_dims = src_desc.to_dims();
             for (i, val) in new_dims.iter_mut().enumerate() {
                 if *val == 0 {
@@ -116,7 +116,7 @@ impl Instruction for ReshapeInstruction {
         }
 
         // Infer -1 if present
-        let src_desc = tensor_graph.tensor_read(self.src).desc.clone();
+        let src_desc = cm.tensor_read(self.src).desc.clone();
         let src_num = src_desc.num_elements();
         let neg1_count = new_dims.iter().filter(|&&d| d == -1).count();
         if neg1_count > 1 {
@@ -152,7 +152,7 @@ impl Instruction for ReshapeInstruction {
 
         // Update dst tensor descriptor (panic on failure to preserve current invariants)
         {
-            let mut dst_t = tensor_graph.tensor_write(self.dst);
+            let mut dst_t = cm.tensor_write(self.dst);
             dst_t
                 .desc
                 .reshape(new_dims)
@@ -160,8 +160,8 @@ impl Instruction for ReshapeInstruction {
         }
 
         // Copy data between underlying buffers (reshape is logical concerning layout)
-        let src_tensor = tensor_graph.tensor_read(self.src);
-        let mut dst_tensor = tensor_graph.tensor_write(self.dst);
+        let src_tensor = cm.tensor_read(self.src);
+        let mut dst_tensor = cm.tensor_write(self.dst);
 
         dst_tensor.write(&src_tensor.read());
     }
