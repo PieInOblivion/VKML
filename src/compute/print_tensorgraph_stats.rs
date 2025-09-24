@@ -17,7 +17,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
     produced_tensors.extend(cm.tensor_graph.input_tensor_ids.iter().cloned());
 
     // Add parameter tensors (tensors with no producers)
-    for tensor_id in 0..cm.tensor_graph.tensors.len() {
+    for tensor_id in 0..cm.tensors.len() {
         if !cm.tensor_graph.input_tensor_ids.contains(&tensor_id) {
             let producers = cm.tensor_graph.get_tensor_producers(tensor_id);
             if producers.is_empty() {
@@ -52,13 +52,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             let inputs = cm.tensor_graph.get_operation_inputs(*op_id);
             println!("  Inputs:");
             for input in inputs {
-                let tensor = cm.tensor_graph.tensor_read(input);
+                let tensor = cm.tensor_read(input);
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
                     DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
-                    DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
                 let producers: String = cm
@@ -85,13 +84,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             let outputs = cm.tensor_graph.get_operation_outputs(*op_id);
             println!("  Outputs:");
             for output in outputs {
-                let tensor = cm.tensor_graph.tensor_read(output);
+                let tensor = cm.tensor_read(output);
                 let shape = format!("{:?}", tensor.desc.to_dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
                     DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
-                    DeviceId::Unallocated => "Unallocated".to_string(),
                 };
 
                 let consumers: Vec<String> = cm
@@ -187,12 +185,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             }
 
             println!("  Tensors:");
-            let layer_tensors: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+            let layer_tensors: Vec<TensorId> = (0..cm.tensors.len())
                 .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(*layer_id)))
                 .collect();
 
             for tensor_id in layer_tensors {
-                let tensor = cm.tensor_graph.tensor_read(tensor_id);
+                let tensor = cm.tensor_read(tensor_id);
 
                 println!(
                     "    Tensor {}: Shape {:?}, Size: {}",
@@ -207,7 +205,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
     }
 
     println!("\n=== TENSOR GRAPH SUMMARY ===\n");
-    println!("Total Tensors: {}", cm.tensor_graph.tensors.len());
+    println!("Total Tensors: {}", cm.tensors.len());
     println!("Total Operations: {}", cm.tensor_graph.operations.len());
     println!("Input Tensors: {}", cm.tensor_graph.input_tensor_ids.len());
     println!(

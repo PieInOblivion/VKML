@@ -1,7 +1,7 @@
 use crate::{
     dataloader::error::VKMLError,
     gpu::vk_gpu::GPU,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    tensor_graph::tensor_graph::{TensorGraph, TensorId}, ComputeManager,
 };
 use std::fmt::Debug;
 use vulkanalia::vk;
@@ -30,7 +30,7 @@ pub trait Instruction: Debug {
     }
 
     // Execute on CPU (default implementation returns error)
-    fn execute_cpu(&self, _tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, _cm: &ComputeManager) {
         panic!("CPU execution not implemented for {:?}", self)
     }
 

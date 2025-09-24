@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
@@ -30,7 +30,7 @@ pub struct ComputeManager {
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 
-    tensors: Vec<RwLock<Tensor>>,
+    pub tensors: Vec<RwLock<Tensor>>,
 
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
@@ -93,10 +93,10 @@ impl ComputeManager {
             ))
         })?;
 
-        let tensor_graph = OnnxParser::parse_onnx_model(onnx_model)?;
+        let (tensor_graph, tensor_data) = OnnxParser::parse_onnx_model(onnx_model)?;
 
         let gpus = Self::available_gpus()?;
-        Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, None)
+        Self::new_from_tensor_graph_with(tensor_graph, tensor_data, thread_pool, gpus, None)
     }
 
     /// Create ComputeManager from ONNX file with custom settings
@@ -113,13 +113,14 @@ impl ComputeManager {
             ))
         })?;
 
-        let tensor_graph = OnnxParser::parse_onnx_model(onnx_model)?;
+        let (tensor_graph, tensor_data) = OnnxParser::parse_onnx_model(onnx_model)?;
 
-        Self::new_from_tensor_graph_with(tensor_graph, thread_pool, gpus, cpu_memory_limit_bytes)
+        Self::new_from_tensor_graph_with(tensor_graph, tensor_data, thread_pool, gpus, cpu_memory_limit_bytes)
     }
 
     pub fn new_from_tensor_graph_with(
         tensor_graph: TensorGraph,
+        tensor_data: Vec<Tensor>,
         thread_pool: Arc<ZeroPool>,
         gpus: Vec<GPU>,
         cpu_memory_limit_bytes: Option<u64>,
@@ -620,7 +621,7 @@ impl ComputeManager {
 
             // Validate size after conversion
             let expected_bytes = {
-                let tensor = self.tensor_graph.tensor_read(tensor_id);
+                let tensor = self.tensor_read(tensor_id);
                 tensor.desc.size_in_bytes()
             };
 
@@ -633,7 +634,7 @@ impl ComputeManager {
                 )));
             }
 
-            self.tensor_graph
+            self
                 .tensor_write(tensor_id)
                 .write(&batch.read());
         }
@@ -646,7 +647,7 @@ impl ComputeManager {
         let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
 
         for &tensor_id in output_tensor_ids.iter() {
-            let tensor = self.tensor_graph.tensor_read(tensor_id);
+            let tensor = self.tensor_read(tensor_id);
 
             // Get data from tensor (currently returns f32, but will return native type in future)
             let output_data = tensor.read();
@@ -695,9 +696,8 @@ impl ComputeManager {
                         let boxed_task = Box::new(GpuBatchOperationsParams {
                             operations: per_device_ops,
                             instruction_indices,
-                            gpus: self.gpus.clone(),
                             gpu_idx: idx,
-                            tensor_graph: &self.tensor_graph,
+                            compute_manager: &self,
                         });
 
                         pending_gpu_task_boxes.push(boxed_task);
@@ -717,7 +717,7 @@ impl ComputeManager {
                         for &operation_id in &per_device_ops {
                             let boxed = Box::new(SingleCpuOperationParams {
                                 operation_id,
-                                tensor_graph: &self.tensor_graph,
+                                compute_manager: &self,
                             });
 
                             pending_cpu_task_boxes.push(boxed);
@@ -772,12 +772,11 @@ impl ComputeManager {
 
         // Check input tensors to determine device
         for &tensor_id in &input_tensor_ids {
-            match self.tensor_graph.tensor_read(tensor_id).device {
+            match self.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
                     return Ok(DeviceLocation::GPU(gpu_idx));
                 }
-                DeviceId::Unallocated => continue,
             }
         }
 
@@ -785,12 +784,11 @@ impl ComputeManager {
         let output_tensor_ids = self.tensor_graph.get_operation_outputs(*op_id);
 
         for &tensor_id in &output_tensor_ids {
-            match self.tensor_graph.tensor_read(tensor_id).device {
+            match self.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
                     return Ok(DeviceLocation::GPU(gpu_idx));
                 }
-                DeviceId::Unallocated => continue,
             }
         }
 
@@ -835,37 +833,42 @@ impl ComputeManager {
     pub fn print_tensor_flow(&self) {
         crate::compute::print_tensorgraph_stats::print_tensor_flow(self);
     }
+
+    pub fn tensor_read(&self, tensor_id: usize) -> RwLockReadGuard<'_, Tensor> {
+        self.tensors[tensor_id].read().unwrap()
+    }
+
+    pub fn tensor_write(&self, tensor_id: usize) -> RwLockWriteGuard<'_, Tensor> {
+        self.tensors[tensor_id].write().unwrap()
+    }
 }
 
 struct SingleCpuOperationParams<'a> {
     operation_id: OperationId,
-    tensor_graph: &'a TensorGraph,
+    compute_manager: &'a ComputeManager,
 }
 
 zp_define_task_fn!(
     single_cpu_operation_task,
     SingleCpuOperationParams,
     |params| {
-        let tensor_graph = &params.tensor_graph;
-
-        let instruction = tensor_graph.get_instruction_or_panic(params.operation_id);
-        instruction.execute_cpu(tensor_graph);
+        let instruction = &params.compute_manager.tensor_graph.get_instruction_or_panic(params.operation_id);
+        instruction.execute_cpu(&params.compute_manager);
     }
 );
 
 struct GpuBatchOperationsParams<'a> {
     operations: Vec<OperationId>,
     instruction_indices: Vec<usize>,
-    gpus: Arc<Vec<GPU>>,
     gpu_idx: usize,
-    tensor_graph: &'a TensorGraph,
+    compute_manager: &'a ComputeManager,
 }
 
 zp_define_task_fn!(
     gpu_batch_operations_task,
     GpuBatchOperationsParams,
     |params| {
-        let gpu = &params.gpus[params.gpu_idx];
+        let gpu = &params.compute_manager.gpus[params.gpu_idx];
 
         if params.operations.is_empty() {
             return;
@@ -895,12 +898,12 @@ zp_define_task_fn!(
             let mut valid_buffers = Vec::new();
 
             for i in 0..params.operations.len() {
-                let instruction = params
+                let instruction = params.compute_manager
                     .tensor_graph
                     .get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
-                    .create_command_buffer(&gpu, command_buffers[i], &params.tensor_graph)
+                    .create_command_buffer(&gpu, command_buffers[i], &params.compute_manager.tensor_graph)
                     .is_ok()
                 {
                     valid_buffers.push(command_buffers[i]);

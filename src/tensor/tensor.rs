@@ -3,7 +3,7 @@ use crate::{
     tensor::{
         data::TensorData,
         desc::TensorDesc,
-        device::{cpu::CpuData, gpu::GpuData, unallocated::UnallocatedData},
+        device::{cpu::CpuData, gpu::GpuData},
     },
 };
 
@@ -11,7 +11,6 @@ use crate::{
 pub enum DeviceId {
     CPU,
     GPU(usize),
-    Unallocated,
 }
 
 pub struct Tensor {
@@ -37,17 +36,6 @@ impl Tensor {
         Self {
             desc,
             device: DeviceId::GPU(gpu_idx),
-            buffer: Box::new(buf),
-        }
-    }
-
-    /// Create an unallocated tensor (placeholder) with no backing storage.
-    /// Mostly used for planning.
-    pub fn new_unallocated(desc: TensorDesc) -> Self {
-        let buf = UnallocatedData::new();
-        Self {
-            desc,
-            device: DeviceId::Unallocated,
             buffer: Box::new(buf),
         }
     }

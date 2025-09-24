@@ -34,7 +34,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
     for &layer_id in &ordered_layer_ids {
         if let Some(layer) = cm.model.layers.get(&layer_id) {
-            let layer_tensor_ids: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+            let layer_tensor_ids: Vec<TensorId> = (0..cm.tensors.len())
                 .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
                 .collect();
 
@@ -96,8 +96,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
                         if output_idx < connected_layer_outputs.len() {
                             let output_tensor_id = connected_layer_outputs[output_idx];
-                            if output_tensor_id < cm.tensor_graph.tensors.len() {
-                                let tensor = cm.tensor_graph.tensor_read(output_tensor_id);
+                            if output_tensor_id < cm.tensors.len() {
+                                let tensor = cm.tensor_read(output_tensor_id);
                                 let dims = tensor.desc.to_dims();
                                 return Some(format_dimensions(&dims));
                             }
@@ -108,8 +108,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
                     .join(", ")
             };
 
-            let output_shapes_str = if output_tensor < cm.tensor_graph.tensors.len() {
-                let tensor = cm.tensor_graph.tensor_read(output_tensor);
+            let output_shapes_str = if output_tensor < cm.tensors.len() {
+                let tensor = cm.tensor_read(output_tensor);
                 format_dimensions(&tensor.desc.to_dims())
             } else {
                 "Unknown".to_string()
@@ -120,13 +120,12 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let memory_bytes = layer_tensor_ids
                 .iter()
-                .map(|&id| cm.tensor_graph.tensor_read(id).desc.size_in_bytes() as u64)
+                .map(|&id| cm.tensor_read(id).desc.size_in_bytes() as u64)
                 .sum();
 
-            let device_location = match &cm.tensor_graph.tensor_read(output_tensor).device {
+            let device_location = match &cm.tensor_read(output_tensor).device {
                 DeviceId::CPU => "CPU".to_string(),
                 DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
-                DeviceId::Unallocated => "Unallocated".to_string(),
             };
 
             let layer_type = layer.layer.name();
@@ -196,7 +195,7 @@ fn format_dimensions(dims: &[i64]) -> String {
 
 fn get_layer_output_tensors(cm: &ComputeManager, layer_id: LayerId) -> Vec<TensorId> {
     // Get all tensors belonging to this layer
-    let layer_tensors: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+    let layer_tensors: Vec<TensorId> = (0..cm.tensors.len())
         .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
         .collect();
 
@@ -402,12 +401,12 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     }
 
     // Get all tensors belonging to this layer
-    let tensor_ids: Vec<TensorId> = (0..cm.tensor_graph.tensors.len())
+    let tensor_ids: Vec<TensorId> = (0..cm.tensors.len())
         .filter(|&id| cm.tensor_graph.tensor_to_layer.get(id) == Some(&Some(layer_id)))
         .collect();
 
     for &tensor_id in &tensor_ids {
-        let tensor = cm.tensor_graph.tensor_read(tensor_id);
+        let tensor = cm.tensor_read(tensor_id);
         let raw = tensor.read();
         let gpu_idx = match &tensor.device {
             DeviceId::GPU(idx) => Some(*idx),
@@ -476,7 +475,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         println!("  No explicit output tensors found");
     } else {
         for &tensor_id in &output_tensors {
-            let tensor = cm.tensor_graph.tensor_read(tensor_id);
+            let tensor = cm.tensor_read(tensor_id);
             println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.to_dims());
         }
     }

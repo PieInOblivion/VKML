@@ -283,7 +283,7 @@ impl Instruction for AddInstruction {
         Box::new(self.clone())
     }
 
-    fn execute_cpu(&self, tensor_graph: &TensorGraph) {
+    fn execute_cpu(&self, cm: &TensorGraph) {
         assert!(
             self.src1 != self.dst && self.src2 != self.dst,
             "Cannot use Add for in-place operation"
