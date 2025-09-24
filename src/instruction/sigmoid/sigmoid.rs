@@ -1,10 +1,11 @@
 use crate::{
+    ComputeManager,
     gpu::vk_gpu::GPU,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
     },
     tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::TensorId, ComputeManager,
+    tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::{

@@ -22,7 +22,7 @@ pub struct Tensor {
 impl Tensor {
     /// Create a CPU-backed tensor from host data
     pub fn new_cpu(desc: TensorDesc, host_data: Box<[u8]>) -> Self {
-        let buf = CpuData::from_vec(host_data);
+        let buf = CpuData::from_boxed_slice(host_data);
         Self {
             desc,
             device: DeviceId::CPU,

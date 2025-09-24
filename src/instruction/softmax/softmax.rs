@@ -1,6 +1,6 @@
+use crate::ComputeManager;
 use crate::instruction::softmax::push_constants::SoftmaxPushConstants;
 use crate::utils::as_bytes;
-use crate::ComputeManager;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{

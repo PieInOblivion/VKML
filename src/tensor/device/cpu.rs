@@ -8,7 +8,7 @@ pub struct CpuData {
 }
 
 impl CpuData {
-    pub fn from_vec(v: Box<[u8]>) -> Self {
+    pub fn from_boxed_slice(v: Box<[u8]>) -> Self {
         Self { data: v }
     }
 }

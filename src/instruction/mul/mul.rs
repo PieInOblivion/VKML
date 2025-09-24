@@ -1,6 +1,6 @@
+use crate::ComputeManager;
 use crate::instruction::mul::push_constants::MulPushConstants;
 use crate::utils::as_bytes;
-use crate::ComputeManager;
 use crate::{
     gpu::vk_gpu::GPU,
     instruction::{

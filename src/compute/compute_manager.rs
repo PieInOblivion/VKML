@@ -80,7 +80,7 @@ impl ComputeManager {
             )));
         }
 
-        manager.allocate_tensor_graph()?;
+        manager.allocate_tensor_graph(Vec::new())?;
 
         Ok(manager)
     }
@@ -93,10 +93,10 @@ impl ComputeManager {
             ))
         })?;
 
-        let (tensor_graph, tensor_data) = OnnxParser::parse_onnx_model(onnx_model)?;
+        let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
 
         let gpus = Self::available_gpus()?;
-        Self::new_from_tensor_graph_with(tensor_graph, tensor_data, thread_pool, gpus, None)
+        Self::new_from_tensor_graph_with(tensor_graph, tensor_bytes, thread_pool, gpus, None)
     }
 
     /// Create ComputeManager from ONNX file with custom settings
@@ -113,11 +113,11 @@ impl ComputeManager {
             ))
         })?;
 
-        let (tensor_graph, tensor_data) = OnnxParser::parse_onnx_model(onnx_model)?;
+        let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
 
         Self::new_from_tensor_graph_with(
             tensor_graph,
-            tensor_data,
+            tensor_bytes,
             thread_pool,
             gpus,
             cpu_memory_limit_bytes,
@@ -126,7 +126,7 @@ impl ComputeManager {
 
     pub fn new_from_tensor_graph_with(
         tensor_graph: TensorGraph,
-        tensor_data: Vec<Tensor>,
+        tensor_bytes: Vec<Option<Box<[u8]>>>,
         thread_pool: Arc<ZeroPool>,
         gpus: Vec<GPU>,
         cpu_memory_limit_bytes: Option<u64>,
@@ -161,7 +161,7 @@ impl ComputeManager {
             )));
         }
 
-        manager.allocate_tensor_graph()?;
+        manager.allocate_tensor_graph(tensor_bytes)?;
         Ok(manager)
     }
 
@@ -205,14 +205,16 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
 
-    fn allocate_tensor_graph(&mut self) -> Result<(), VKMLError> {
+    fn allocate_tensor_graph(
+        &mut self,
+        initialisers: Vec<Option<Box<[u8]>>>,
+    ) -> Result<(), VKMLError> {
         // Get execution plan and flatten to a linear sequence of operations
         let execution_plan = self.tensor_graph.create_execution_plan();
         let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();
 
         // Track planned tensor locations: tensor_id -> DeviceLocation
-        let mut tensor_locations: Vec<Option<DeviceLocation>> =
-            vec![None; self.tensor_graph.tensors.len()];
+        let mut tensor_locations: Vec<Option<DeviceLocation>> = vec![None; self.tensors.len()];
 
         // Maintain a list of tensor remappings: original_id -> new_id on device
         let mut tensor_remappings: HashMap<(usize, DeviceLocation), usize> = HashMap::new();
@@ -260,11 +262,7 @@ impl ComputeManager {
             let mut memory_needed = 0;
             for &tensor_id in input_tensors.iter().chain(output_tensors.iter()) {
                 if tensor_locations[tensor_id].is_none() {
-                    memory_needed += self
-                        .tensor_graph
-                        .tensor_read(tensor_id)
-                        .desc
-                        .size_in_bytes() as u64;
+                    memory_needed += self.tensor_read(tensor_id).desc.size_in_bytes() as u64;
                 }
             }
 
@@ -523,9 +521,7 @@ impl ComputeManager {
 
                                 let cmd = command_buffers[0];
 
-                                if let Err(e) =
-                                    weight_init.create_command_buffer(gpu, cmd, &self.tensor_graph)
-                                {
+                                if let Err(e) = weight_init.create_command_buffer(gpu, cmd, &self) {
                                     gpu.get_device().free_command_buffers(
                                         gpu.get_command_pool(),
                                         &command_buffers,
@@ -911,11 +907,7 @@ zp_define_task_fn!(
                     .get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
-                    .create_command_buffer(
-                        &gpu,
-                        command_buffers[i],
-                        &params.compute_manager.tensor_graph,
-                    )
+                    .create_command_buffer(&gpu, command_buffers[i], &params.compute_manager)
                     .is_ok()
                 {
                     valid_buffers.push(command_buffers[i]);
