@@ -1,5 +1,3 @@
-use onnx_extractor::DataType;
-
 use crate::{
     compute::compute_manager::DeviceLocation,
     instruction::{
@@ -10,7 +8,6 @@ use crate::{
         identity::identity::IdentityInstruction,
         init_constant::init_constant::InitConstantInstruction,
         init_he::init_he::InitHeInstruction,
-        init_load::init_load::InitLoadInstruction,
         init_uniform::init_uniform::InitUniformInstruction,
         init_xavier::init_xavier::InitXavierInstruction,
         instruction::Instruction,
@@ -36,7 +33,6 @@ pub mod gpu_operations;
 pub mod identity;
 pub mod init_constant;
 pub mod init_he;
-pub mod init_load;
 pub mod init_uniform;
 pub mod init_xavier;
 pub mod instruction;
@@ -100,14 +96,6 @@ pub fn init_constant(dst: TensorId, constant: Vec<u8>) -> Box<dyn Instruction> {
 
 pub fn init_he(dst: TensorId) -> Box<dyn Instruction> {
     Box::new(InitHeInstruction { dst })
-}
-
-pub fn init_load(dst: TensorId, data: Vec<u8>, datatype: DataType) -> Box<dyn Instruction> {
-    Box::new(InitLoadInstruction {
-        dst,
-        data,
-        datatype,
-    })
 }
 
 pub fn init_uniform(dst: TensorId, min: f32, max: f32) -> Box<dyn Instruction> {
