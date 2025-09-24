@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 
+use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
+use crate::tensor::cell::TensorCell;
 use crate::tensor::tensor::{DeviceId, Tensor};
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
@@ -26,7 +28,7 @@ pub enum DeviceLocation {
 }
 
 pub struct ComputeManager {
-    pub tensors: Vec<RwLock<Tensor>>,
+    pub tensors: Vec<TensorCell>,
 
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
@@ -470,7 +472,7 @@ impl ComputeManager {
                     ))
                 })?;
 
-            self.tensors.push(RwLock::new(allocated));
+            self.tensors.push(TensorCell::new(allocated));
         }
 
         Ok(())
@@ -754,23 +756,23 @@ impl ComputeManager {
     }
 
     pub fn print_model_stats(&self) {
-        crate::compute::print_model_stats::print_model_stats(self);
+        print_model_stats::print_model_stats(self);
     }
 
     pub fn print_layer_values(&self, layer_id: LayerId) -> Result<(), VKMLError> {
-        crate::compute::print_model_stats::print_layer_values(self, layer_id)
+        print_model_stats::print_layer_values(self, layer_id)
     }
 
     pub fn print_tensor_flow(&self) {
-        crate::compute::print_tensorgraph_stats::print_tensor_flow(self);
+        print_tensorgraph_stats::print_tensor_flow(self);
     }
 
-    pub fn tensor_read(&self, tensor_id: usize) -> RwLockReadGuard<'_, Tensor> {
-        self.tensors[tensor_id].read().unwrap()
+    pub fn tensor_read(&self, tensor_id: usize) -> &Tensor {
+        unsafe { self.tensors[tensor_id].as_ref() }
     }
 
-    pub fn tensor_write(&self, tensor_id: usize) -> RwLockWriteGuard<'_, Tensor> {
-        self.tensors[tensor_id].write().unwrap()
+    pub fn tensor_write(&self, tensor_id: usize) -> &mut Tensor {
+        unsafe { self.tensors[tensor_id].as_mut() }
     }
 }
 

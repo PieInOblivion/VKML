@@ -1,3 +1,4 @@
+pub mod cell;
 pub mod data;
 pub mod desc;
 pub mod device;
