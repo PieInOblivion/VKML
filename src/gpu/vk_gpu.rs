@@ -46,7 +46,7 @@ impl GPU {
             let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
             let entry =
                 Arc::new(Entry::new(loader).expect_msg("Failed to create Vulkan entry point"));
-            let aname = CString::new("VK GPU")?;
+            let aname = CString::new("vkml").unwrap();
 
             let appinfo = vk::ApplicationInfo {
                 s_type: vk::StructureType::APPLICATION_INFO,
@@ -282,7 +282,7 @@ impl GPU {
     }
 
     unsafe fn create_instance(entry: &Entry) -> Instance {
-        let aname = CString::new("gpu_mm").expect_msg("Failed to create application name");
+        let aname = CString::new("vkml").unwrap();
         let appinfo = vk::ApplicationInfo {
             s_type: vk::StructureType::APPLICATION_INFO,
             next: ptr::null(),
@@ -676,7 +676,7 @@ impl GPU {
 
             let shader_module = self.device.create_shader_module(&shader_info, None)?;
 
-            let entry_point = std::ffi::CString::new("main")?;
+            let entry_point = CString::new("main").unwrap();
             let pipeline_info = vk::ComputePipelineCreateInfo {
                 s_type: vk::StructureType::COMPUTE_PIPELINE_CREATE_INFO,
                 next: std::ptr::null(),

@@ -29,3 +29,4 @@ pub use importers::onnx_parser;
 pub use layer::factory::Layers;
 pub use model::{graph_model::GraphModel, layer_connection::LayerConnection};
 pub use tensor::tensor::Tensor;
+pub use gpu::vk_gpu::GPU;
