@@ -1,3 +1,4 @@
+use crate::instruction::matmul::f32_cpu::f32_cpu;
 use crate::{
     ComputeManager,
     gpu::vk_gpu::GPU,
@@ -5,7 +6,7 @@ use crate::{
     tensor::tensor::Tensor,
     tensor_graph::tensor_graph::TensorId,
 };
-use bytemuck::{try_cast_slice, try_cast_slice_mut};
+use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
@@ -88,14 +89,11 @@ impl Instruction for MatMulInstruction {
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {
-        assert!(
-            self.src1 != self.dst && self.src2 != self.dst,
-            "Cannot use MatMul for in-place operation"
-        );
-
         let src1_tensor = cm.tensor_read(self.src1);
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_write(self.dst);
+
+        let dtype = dst_tensor.desc.data_type();
 
         // dims are i64 internally; convert to usize for CPU indexing/math
         let src1_dims_i64 = src1_tensor.desc.to_dims();
@@ -109,226 +107,38 @@ impl Instruction for MatMulInstruction {
         let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
         let dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        let src1_data: &[f32] =
-            try_cast_slice(src1_bytes).expect("src1 bytes cannot be cast to f32 slice");
-        let src2_data: &[f32] =
-            try_cast_slice(src2_bytes).expect("src2 bytes cannot be cast to f32 slice");
-        let dst_data: &mut [f32] =
-            try_cast_slice_mut(dst_bytes).expect("dst bytes cannot be cast to f32 slice");
-
-        // Zero initialize result
-        for val in dst_data.iter_mut() {
-            *val = 0.0;
-        }
-
-        // Handle special cases for 1D tensors
-        let (effective_src1_dims, effective_src2_dims) = match (src1_dims.len(), src2_dims.len()) {
-            (1, 1) => {
-                panic!("MatMul between two 1D tensors is not supported");
+        match dtype {
+            DataType::Float => {
+                f32_cpu(
+                    src1_dims, src2_dims, dst_dims, src1_bytes, src2_bytes, dst_bytes,
+                );
             }
-            (1, _) => {
-                let mut dims = Vec::with_capacity(src1_dims.len() + 1);
-                dims.push(1);
-                dims.extend_from_slice(&src1_dims);
-                (dims, src2_dims.clone())
-            }
-            (_, 1) => {
-                let mut dims = Vec::with_capacity(src2_dims.len() + 1);
-                dims.extend_from_slice(&src2_dims);
-                dims.push(1);
-                (src1_dims.clone(), dims)
-            }
-            _ => (src1_dims.clone(), src2_dims.clone()),
-        };
-
-        // Extract core matrix dimensions
-        assert!(
-            effective_src1_dims.len() >= 2 && effective_src2_dims.len() >= 2,
-            "After adjustment, tensors must have at least 2 dimensions for MatMul"
-        );
-
-        let src1_matrix_dims = &effective_src1_dims[effective_src1_dims.len() - 2..];
-        let src2_matrix_dims = &effective_src2_dims[effective_src2_dims.len() - 2..];
-
-        // Check inner dimensions match
-        let m = src1_matrix_dims[0];
-        let k1 = src1_matrix_dims[1];
-        let k2 = src2_matrix_dims[0];
-        let n = src2_matrix_dims[1];
-
-        assert_eq!(
-            k1, k2,
-            "Inner dimensions don't match for matrix multiplication: {} vs {}",
-            k1, k2
-        );
-
-        // Extract batch dimensions
-        let src1_batch_dims = &effective_src1_dims[..effective_src1_dims.len() - 2];
-        let src2_batch_dims = &effective_src2_dims[..effective_src2_dims.len() - 2];
-
-        // Validate batch dimensions compatibility (must be either identical or one is empty)
-        let batch_dims = if src1_batch_dims.is_empty() {
-            src2_batch_dims.to_vec()
-        } else if src2_batch_dims.is_empty() {
-            src1_batch_dims.to_vec()
-        } else if src1_batch_dims == src2_batch_dims {
-            src1_batch_dims.to_vec()
-        } else {
-            panic!(
-                "Incompatible batch dimensions: {:?} vs {:?}",
-                src1_batch_dims, src2_batch_dims
-            );
-        };
-
-        // Calculate expected output dims
-        let mut expected_output_dims = batch_dims.clone();
-        expected_output_dims.push(m);
-        expected_output_dims.push(n);
-
-        // Handle the case of 1D output for vector-vector result
-        let expected_output_dims = match (src1_dims.len(), src2_dims.len()) {
-            (1, _) => {
-                // For [k] × [batch,k,n] → [batch,n]
-                expected_output_dims[expected_output_dims.len() - 2..].to_vec()
-            }
-            (_, 1) => {
-                // For [batch,m,k] × [k] → [batch,m]
-                let mut dims = batch_dims.clone();
-                dims.push(m);
-                dims
-            }
-            _ => expected_output_dims,
-        };
-
-        // Validate output dimensions
-        assert_eq!(
-            dst_dims, expected_output_dims,
-            "Output dimensions mismatch: expected {:?}, got {:?}",
-            expected_output_dims, dst_dims
-        );
-
-        // Calculate strides for each tensor
-        let calculate_strides = |dims: &[usize]| -> Vec<usize> {
-            let mut strides = vec![1; dims.len()];
-            let mut stride = 1;
-            for i in (0..dims.len()).rev() {
-                strides[i] = stride;
-                stride *= dims[i];
-            }
-            strides
-        };
-
-        let src1_strides = calculate_strides(&effective_src1_dims);
-        let src2_strides = calculate_strides(&effective_src2_dims);
-        let dst_strides = calculate_strides(&dst_dims);
-
-        // Calculate total number of batches
-        let total_batches = batch_dims.iter().product::<usize>().max(1);
-
-        // Get multi-dimensional indices from flat index
-        let get_indices = |flat_idx: usize, dims: &[usize]| -> Vec<usize> {
-            let mut indices = vec![0; dims.len()];
-            let mut remaining = flat_idx;
-
-            for i in (0..dims.len()).rev() {
-                indices[i] = remaining % dims[i];
-                remaining /= dims[i];
-            }
-
-            indices
-        };
-
-        // Calculate offset from indices and strides
-        let calculate_offset = |indices: &[usize], strides: &[usize]| -> usize {
-            let mut offset = 0;
-            for (i, &idx) in indices.iter().enumerate() {
-                offset += idx * strides[i];
-            }
-            offset
-        };
-
-        // Execute batched matrix multiplication
-        for batch_idx in 0..total_batches {
-            // Calculate batch indices
-            let batch_indices = if !batch_dims.is_empty() {
-                get_indices(batch_idx, &batch_dims)
-            } else {
-                vec![]
-            };
-
-            // Calculate batch offsets
-            let src1_batch_offset = if src1_batch_dims.is_empty() {
-                0
-            } else {
-                calculate_offset(&batch_indices, &src1_strides[..src1_batch_dims.len()])
-            };
-
-            let src2_batch_offset = if src2_batch_dims.is_empty() {
-                0
-            } else {
-                calculate_offset(&batch_indices, &src2_strides[..src2_batch_dims.len()])
-            };
-
-            let dst_batch_offset = if batch_dims.is_empty() {
-                0
-            } else {
-                let effective_dst_batch_dims = dst_dims.len() - 2;
-                calculate_offset(&batch_indices, &dst_strides[..effective_dst_batch_dims])
-            };
-
-            // Matrix multiplication for this batch
-            for i in 0..m {
-                for j in 0..n {
-                    let mut sum = 0.0;
-
-                    for kk in 0..k1 {
-                        // Calculate indices with proper striding
-                        let src1_idx = src1_batch_offset
-                            + i * src1_strides[effective_src1_dims.len() - 2]
-                            + kk * src1_strides[effective_src1_dims.len() - 1];
-
-                        let src2_idx = src2_batch_offset
-                            + kk * src2_strides[effective_src2_dims.len() - 2]
-                            + j * src2_strides[effective_src2_dims.len() - 1];
-
-                        // Handle 1D special cases
-                        let src1_val = if src1_dims.len() == 1 {
-                            src1_data[kk]
-                        } else {
-                            src1_data[src1_idx]
-                        };
-
-                        let src2_val = if src2_dims.len() == 1 {
-                            src2_data[kk]
-                        } else {
-                            src2_data[src2_idx]
-                        };
-
-                        sum += src1_val * src2_val;
-                    }
-
-                    // Handle result placement based on output dimensionality
-                    let dst_idx = if src1_dims.len() == 1 && dst_dims.len() == 1 {
-                        // [k] × [k,n] → [n]
-                        j
-                    } else if src2_dims.len() == 1 && dst_dims.len() == 1 {
-                        // [m,k] × [k] → [m]
-                        i
-                    } else {
-                        dst_batch_offset
-                            + i * dst_strides[dst_dims.len() - 2]
-                            + j * dst_strides[dst_dims.len() - 1]
-                    };
-
-                    dst_data[dst_idx] = sum;
-                }
-            }
+            other => panic!("MatMul: unimplemented CPU for DataType {:?}", other),
         }
     }
 }
 
 fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOperation {
-    match (src1_dims.len(), src2_dims.len()) {
+    const MAX_DIMS: usize = 6;
+
+    let a_rank = src1_dims.len();
+    let b_rank = src2_dims.len();
+
+    if a_rank == 0 || b_rank == 0 {
+        panic!("MatMul: zero-rank tensor not supported (a_rank={}, b_rank={})", a_rank, b_rank);
+    }
+
+    if a_rank > MAX_DIMS || b_rank > MAX_DIMS {
+        panic!(
+            "MatMul: tensor rank too large for push-constant generic path (max {}), got a_rank={}, b_rank={}",
+            MAX_DIMS,
+            a_rank,
+            b_rank
+        );
+    }
+
+    // Prefer specialised kernels for common small-rank combinations for performance.
+    match (a_rank, b_rank) {
         (1, 2) => GPUMemoryOperation::MatMul1D2D_F32,
         (2, 1) => GPUMemoryOperation::MatMul2D1D_F32,
         (2, 2) => GPUMemoryOperation::MatMul2D2D_F32,
@@ -337,14 +147,7 @@ fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOp
         (3, 3) => GPUMemoryOperation::MatMul3D3D_F32,
         (3, 1) => GPUMemoryOperation::MatMul3D1D_F32,
         (1, 3) => GPUMemoryOperation::MatMul1D3D_F32,
-        _ => {
-            // Fallback to generic, or error
-            eprintln!(
-                "Unsupported tensor dimensions for matmul: {:?} x {:?}",
-                src1_dims, src2_dims
-            );
-            GPUMemoryOperation::MatMul_F32
-        }
+        _ => GPUMemoryOperation::MatMul_F32,
     }
 }
 
@@ -608,12 +411,11 @@ fn create_generic_matmul_command_buffer(
         // Get pipeline
         let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::MatMul_F32);
 
-        // Prepare UBO data
+    // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
         let src1_dims = src1_tensor.desc.to_dims();
         let src2_dims = src2_tensor.desc.to_dims();
         let dst_dims = dst_tensor.desc.to_dims();
 
-        // convert to usize vectors for UBO packing
         let src1_dims_usize: Vec<usize> = src1_dims.iter().map(|&d| d as usize).collect();
         let src2_dims_usize: Vec<usize> = src2_dims.iter().map(|&d| d as usize).collect();
         let dst_dims_usize: Vec<usize> = dst_dims.iter().map(|&d| d as usize).collect();
@@ -622,84 +424,51 @@ fn create_generic_matmul_command_buffer(
         let src2_strides = src2_tensor.desc.strides();
         let dst_strides = dst_tensor.desc.strides();
 
-        const MAX_DIMS: usize = 8; // Must match shader
-
         let (m, k, n, a_m_axis, a_k_axis, b_k_axis, b_n_axis) =
             analyze_matmul_dimensions(&src1_dims_usize, &src2_dims_usize, &dst_dims_usize)?;
 
-        let mut ubo_data = Vec::<u32>::new();
-        // Dimension counts
-        ubo_data.push(src1_dims_usize.len() as u32);
-        ubo_data.push(src2_dims_usize.len() as u32);
-        ubo_data.push(dst_dims_usize.len() as u32);
-        // Key dimensions
-        ubo_data.push(m as u32);
-        ubo_data.push(k as u32);
-        ubo_data.push(n as u32);
-        // batch_dims (count of batch dimensions in C tensor)
-        let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
-        ubo_data.push(batch_dims_count as u32);
-        // Contraction axis information (matching shader struct order)
-        ubo_data.push(a_k_axis as u32); // a_k_axis
-        ubo_data.push(b_k_axis as u32); // b_k_axis
-        ubo_data.push(a_m_axis as u32); // a_m_axis
-        ubo_data.push(b_n_axis as u32); // b_n_axis
-
-        let pad_dims_or_strides = |values: &[usize]| -> [u32; MAX_DIMS] {
-            let mut padded = [0u32; MAX_DIMS];
-            for (i, &val) in values.iter().enumerate().take(MAX_DIMS) {
-                padded[i] = val as u32;
+        let pack_pairs = |vals: &[usize]| -> [u32; 3] {
+            let mut out = [0u32; 3];
+            for i in 0..3 {
+                let lo_idx = i * 2;
+                let hi_idx = lo_idx + 1;
+                let lo = if lo_idx < vals.len() { vals[lo_idx] as u32 } else { 0u32 } & 0xFFFFu32;
+                let hi = if hi_idx < vals.len() { vals[hi_idx] as u32 } else { 0u32 } & 0xFFFFu32;
+                out[i] = (hi << 16) | lo;
             }
-            padded
+            out
         };
-        // Tensor shapes
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src1_dims_usize));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src2_dims_usize));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&dst_dims_usize));
-        // Tensor strides
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src1_strides));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&src2_strides));
-        ubo_data.extend_from_slice(&pad_dims_or_strides(&dst_strides));
 
-        let ubo_data_bytes: Vec<u8> = ubo_data.iter().flat_map(|val| val.to_ne_bytes()).collect();
+        let a_shape_packed = pack_pairs(&src1_dims_usize);
+        let b_shape_packed = pack_pairs(&src2_dims_usize);
+        let c_shape_packed = pack_pairs(&dst_dims_usize);
+        let a_strides_packed = pack_pairs(&src1_strides);
+        let b_strides_packed = pack_pairs(&src2_strides);
+        let c_strides_packed = pack_pairs(&dst_strides);
 
-        let ubo_buffer_info = vk::BufferCreateInfo {
-            size: ubo_data_bytes.len() as vk::DeviceSize,
-            usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let ubo_buffer = gpu.get_device().create_buffer(&ubo_buffer_info, None)?;
+        // Build push-constant array in the same order as GLSL struct (packed arrays)
+        let mut pc: Vec<u32> = Vec::new();
+        pc.push(src1_dims_usize.len() as u32);
+        pc.push(src2_dims_usize.len() as u32);
+        pc.push(dst_dims_usize.len() as u32);
+        pc.push(m as u32);
+        pc.push(k as u32);
+        pc.push(n as u32);
+        let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
+        pc.push(batch_dims_count as u32);
+        pc.push(a_k_axis as u32);
+        pc.push(b_k_axis as u32);
+        pc.push(a_m_axis as u32);
+        pc.push(b_n_axis as u32);
 
-        let ubo_mem_req = gpu.get_device().get_buffer_memory_requirements(ubo_buffer);
-        let ubo_memory_type_index = gpu.find_memory_type(
-            ubo_mem_req.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        );
+        pc.extend_from_slice(&a_shape_packed);
+        pc.extend_from_slice(&b_shape_packed);
+        pc.extend_from_slice(&c_shape_packed);
+        pc.extend_from_slice(&a_strides_packed);
+        pc.extend_from_slice(&b_strides_packed);
+        pc.extend_from_slice(&c_strides_packed);
 
-        let ubo_alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: ubo_mem_req.size,
-            memory_type_index: ubo_memory_type_index,
-            ..Default::default()
-        };
-        let ubo_memory = gpu.get_device().allocate_memory(&ubo_alloc_info, None)?;
-        gpu.get_device()
-            .bind_buffer_memory(ubo_buffer, ubo_memory, 0)?;
-
-        let ubo_ptr = gpu.get_device().map_memory(
-            ubo_memory,
-            0,
-            ubo_mem_req.size,
-            vk::MemoryMapFlags::empty(),
-        )?;
-        std::ptr::copy_nonoverlapping(
-            ubo_data_bytes.as_ptr(),
-            ubo_ptr as *mut u8,
-            ubo_data_bytes.len(),
-        );
-        gpu.get_device().unmap_memory(ubo_memory);
-
-        // Descriptor sets
+        // Prepare descriptor set for buffers 0..2
         let set_layouts = [*gpu.get_descriptor_set_layout()];
         let alloc_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool: *gpu.get_descriptor_pool(),
@@ -723,11 +492,6 @@ fn create_generic_matmul_command_buffer(
             buffer: dst_gpu_mem.buffer,
             offset: 0,
             range: dst_gpu_mem.size,
-        };
-        let ubo_descriptor_buffer_info = vk::DescriptorBufferInfo {
-            buffer: ubo_buffer,
-            offset: 0,
-            range: ubo_data_bytes.len() as vk::DeviceSize,
         };
 
         let write_descriptor_sets = [
@@ -755,14 +519,6 @@ fn create_generic_matmul_command_buffer(
                 buffer_info: &dst_buffer_info,
                 ..Default::default()
             },
-            vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
-                dst_binding: 3, // UBO binding
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-                buffer_info: &ubo_descriptor_buffer_info,
-                ..Default::default()
-            },
         ];
         gpu.get_device()
             .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
@@ -779,6 +535,19 @@ fn create_generic_matmul_command_buffer(
             0,
             &[descriptor_set],
             &[],
+        );
+
+        // push constants (u32 array as bytes in native-endian)
+        let mut pc_bytes: Vec<u8> = Vec::with_capacity(pc.len() * 4);
+        for v in &pc {
+            pc_bytes.extend_from_slice(&v.to_ne_bytes());
+        }
+        gpu.get_device().cmd_push_constants(
+            command_buffer,
+            gpu.get_layout(),
+            vk::ShaderStageFlags::COMPUTE,
+            0,
+            pc_bytes.as_slice(),
         );
 
         // Calculate batch size for dispatch (product of C's batch dimensions)
@@ -801,12 +570,6 @@ fn create_generic_matmul_command_buffer(
             .cmd_dispatch(command_buffer, num_groups_x, num_groups_y, num_groups_z);
 
         gpu.get_device().end_command_buffer(command_buffer)?;
-
-        // IMPORTANT: The ubo_buffer and ubo_memory allocated here need to be freed
-        // after the command buffer has finished execution. This should be managed
-        // by your GPU resource system (e.g., add to a cleanup queue associated
-        // with the command buffer's fence).
-        // Example: gpu.defer_cleanup(ubo_buffer, ubo_memory);
 
         Ok(())
     }

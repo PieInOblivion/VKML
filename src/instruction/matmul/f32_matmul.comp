@@ -6,8 +6,10 @@ layout(std430, binding = 0) buffer InBufferA { float a[]; };
 layout(std430, binding = 1) buffer InBufferB { float b[]; };
 layout(std430, binding = 2) buffer OutBuffer { float c[]; };
 
-// Move shapes and strides into a uniform buffer (UBO instead of push-constants)
-layout(std140, binding = 3) uniform TensorMetadata {
+// Use push constants for metadata to avoid UBO allocations. We pack dimensions
+// as u16 pairs into u32 words so we can support up to 6 dims while staying
+// within push-constant size limits.
+layout(push_constant) uniform PushConstants {
     uint dim_count_a;
     uint dim_count_b;
     uint dim_count_c;
@@ -25,26 +27,36 @@ layout(std140, binding = 3) uniform TensorMetadata {
     uint a_m_axis;       // Which axis in A is the m dimension
     uint b_n_axis;       // Which axis in B is the n dimension
 
-    // Tensor shapes and strides
-    uint shape_a[8];
-    uint shape_b[8];
-    uint shape_c[8];
-    uint strides_a[8];
-    uint strides_b[8];
-    uint strides_c[8];
-} meta;
+    // Tensor shapes and strides packed as u16 pairs (support up to 6 dims -> 3 u32s)
+    uint shape_a_packed[3];
+    uint shape_b_packed[3];
+    uint shape_c_packed[3];
+    uint strides_a_packed[3];
+    uint strides_b_packed[3];
+    uint strides_c_packed[3];
+} dims;
 
 // Shared-memory tiles
 shared float tileA[16][16];
 shared float tileB[16][16];
 
 // Broadcast-safe indexing: only treat size==1 as broadcast
-uint idx_broadcast(const uint idxs[8], uint dim_count,
-                   const uint shape[8], const uint strides[8]) {
-    uint off = 0;
-    for (uint d = 0; d < dim_count; ++d) {
-        uint dimIdx = (shape[d] == 1u) ? 0u : idxs[d];
-        off += dimIdx * strides[d];
+// Support up to 6 dims packed as two u16 per u32 word
+const uint MAX_DIMS = 6u;
+
+// Indexing helper that operates on pre-unpacked shapes/strides. Unpacking
+// the packed push-constant words once at the start of the shader reduces
+// repeated bit ops and division in the hot loops.
+uint idx_broadcast_unpacked(const uint idxs[6], uint dim_count,
+                            const uint shape_unpacked[6], const uint strides_unpacked[6]) {
+    uint off = 0u;
+    uint loop_limit = dim_count;
+    if (loop_limit > MAX_DIMS) loop_limit = MAX_DIMS;
+    for (uint d = 0u; d < loop_limit; ++d) {
+        uint shape_val = shape_unpacked[d];
+        uint stride_val = strides_unpacked[d];
+        uint dimIdx = (shape_val == 1u) ? 0u : idxs[d];
+        off += dimIdx * stride_val;
     }
     return off;
 }
@@ -54,63 +66,100 @@ void main() {
     uint col = gl_GlobalInvocationID.x;
     uint batchID = gl_GlobalInvocationID.z;
 
-    if (row >= meta.m || col >= meta.n) return;
+
+    if (row >= dims.m || col >= dims.n) return;
+
+    // Pre-unpack all packed shape/stride words into small arrays for faster
+    // repeated indexing inside the tiled matmul loops. Do this before any use
+    // (e.g., computing batch size) so we don't have to unpack repeatedly.
+    uint shape_a[6];
+    uint shape_b[6];
+    uint shape_c[6];
+    uint strides_a[6];
+    uint strides_b[6];
+    uint strides_c[6];
+    // Unpack helper: each packed word contains two u16 dims
+    for (uint d = 0u; d < MAX_DIMS; ++d) {
+        uint wi = d / 2u;
+        uint packed;
+        // shapes
+        packed = dims.shape_a_packed[wi];
+        shape_a[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+        packed = dims.shape_b_packed[wi];
+        shape_b[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+        packed = dims.shape_c_packed[wi];
+        shape_c[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+        // strides
+        packed = dims.strides_a_packed[wi];
+        strides_a[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+        packed = dims.strides_b_packed[wi];
+        strides_b[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+        packed = dims.strides_c_packed[wi];
+        strides_c[d] = ((d & 1u) == 0u) ? (packed & 0xFFFFu) : ((packed >> 16) & 0xFFFFu);
+    }
 
     // Compute total batch size
-    uint batch_size = 1;
-    for (uint d = 0; d < meta.batch_dims; ++d)
-        batch_size *= meta.shape_c[d];
+    uint batch_size = 1u;
+    uint loop_limit = dims.batch_dims;
+    if (loop_limit > MAX_DIMS) loop_limit = MAX_DIMS;
+    for (uint d = 0u; d < loop_limit; ++d) {
+        uint sh = shape_c[d];
+        batch_size *= sh;
+    }
     if (batchID >= batch_size) return;
 
     // Decode batch indices
     uint rem = batchID;
-    uint batch_idxs[8];
-    for (uint d = 0; d < meta.batch_dims; ++d) {
-        batch_idxs[d] = rem % meta.shape_c[d];
-        rem /= meta.shape_c[d];
+    uint batch_idxs[6];
+    for (uint d = 0u; d < dims.batch_dims && d < MAX_DIMS; ++d) {
+        uint wi = d / 2u;
+        // unpack on demand for batch decoding
+        uint sh = ((d & 1u) == 0u) ? (dims.shape_c_packed[wi] & 0xFFFFu) : ((dims.shape_c_packed[wi] >> 16) & 0xFFFFu);
+        batch_idxs[d] = rem % sh;
+        rem /= sh;
     }
 
     // Build base c_indices
-    uint c_idxs[8];
-    for (uint d = 0; d < meta.batch_dims; ++d)
+    uint c_idxs[6];
+    for (uint d = 0u; d < dims.batch_dims && d < MAX_DIMS; ++d)
         c_idxs[d] = batch_idxs[d];
-    c_idxs[meta.dim_count_c-2] = row;
-    c_idxs[meta.dim_count_c-1] = col;
-    uint c_index = idx_broadcast(c_idxs, meta.dim_count_c, meta.shape_c, meta.strides_c);
+    c_idxs[dims.dim_count_c-2u] = row;
+    c_idxs[dims.dim_count_c-1u] = col;
+    uint c_index = idx_broadcast_unpacked(c_idxs, dims.dim_count_c, shape_c, strides_c);
 
     float sum = 0.0;
-    uint numTiles = (meta.k + 16 - 1) / 16;
+    uint numTiles = (dims.k + 16 - 1) / 16;
 
     // Temporary index arrays
-    uint a_idxs[8];
-    uint b_idxs[8];
+    uint a_idxs[6];
+    uint b_idxs[6];
 
     // Loop over tiles in k dimension
     for (uint t = 0; t < numTiles; ++t) {
         // Each thread loads one element of A and B into shared memory
         uint kGlobal = t * 16 + gl_LocalInvocationID.x;
         // Prepare A indices for broadcast
-        for (uint d = 0; d < meta.batch_dims; ++d) a_idxs[d] = batch_idxs[d];
+        for (uint d = 0u; d < dims.batch_dims && d < MAX_DIMS; ++d) a_idxs[d] = batch_idxs[d];
         // Set matrix dims in A
-        for (uint d = meta.batch_dims; d < meta.dim_count_a; ++d) {
-            if (d == meta.a_m_axis) a_idxs[d] = row;
-            else if (d == meta.a_k_axis) a_idxs[d] = (kGlobal < meta.k ? kGlobal : 0u);
+        for (uint d = dims.batch_dims; d < dims.dim_count_a; ++d) {
+            if (d == dims.a_m_axis) a_idxs[d] = row;
+            else if (d == dims.a_k_axis) a_idxs[d] = (kGlobal < dims.k ? kGlobal : 0u);
             else a_idxs[d] = 0u;
         }
-        uint aIndex = idx_broadcast(a_idxs, meta.dim_count_a, meta.shape_a, meta.strides_a);
+    uint aIndex = idx_broadcast_unpacked(a_idxs, dims.dim_count_a, shape_a, strides_a);
         tileA[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
-            (kGlobal < meta.k ? a[aIndex] : 0.0);
+            (kGlobal < dims.k ? a[aIndex] : 0.0);
 
         // Prepare B indices
-        for (uint d = 0; d < meta.batch_dims; ++d) b_idxs[d] = batch_idxs[d];
-        for (uint d = meta.batch_dims; d < meta.dim_count_b; ++d) {
-            if (d == meta.b_k_axis) b_idxs[d] = (kGlobal < meta.k ? kGlobal : 0u);
-            else if (d == meta.b_n_axis) b_idxs[d] = col;
+        for (uint d = 0u; d < dims.batch_dims && d < MAX_DIMS; ++d) b_idxs[d] = batch_idxs[d];
+        for (uint d = dims.batch_dims; d < dims.dim_count_b; ++d) {
+            if (d == dims.b_k_axis) b_idxs[d] = (kGlobal < dims.k ? kGlobal : 0u);
+            else if (d == dims.b_n_axis) b_idxs[d] = col;
             else b_idxs[d] = 0u;
         }
-        uint bIndex = idx_broadcast(b_idxs, meta.dim_count_b, meta.shape_b, meta.strides_b);
+    uint bIndex = idx_broadcast_unpacked(b_idxs, dims.dim_count_b, shape_b, strides_b);
         tileB[gl_LocalInvocationID.y][gl_LocalInvocationID.x] =
-            (kGlobal < meta.k ? b[bIndex] : 0.0);
+            (kGlobal < dims.k ? b[bIndex] : 0.0);
 
         // Wait for all loads
         barrier();
