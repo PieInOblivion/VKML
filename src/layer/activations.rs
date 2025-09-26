@@ -4,7 +4,6 @@ use super::{execution::LayerExecution, layer::Layer};
 
 pub trait ActivationFunction: Clone {
     fn name(&self) -> String;
-    fn to_string(&self) -> String;
 }
 
 #[derive(Clone)]
@@ -16,14 +15,6 @@ pub enum ActivationType {
 
 impl ActivationFunction for ActivationType {
     fn name(&self) -> String {
-        match self {
-            ActivationType::ReLU => "ReLU".to_string(),
-            ActivationType::Sigmoid => "Sigmoid".to_string(),
-            ActivationType::Softmax(_) => "Softmax".to_string(),
-        }
-    }
-
-    fn to_string(&self) -> String {
         match self {
             ActivationType::ReLU => "ReLU".to_string(),
             ActivationType::Sigmoid => "Sigmoid".to_string(),

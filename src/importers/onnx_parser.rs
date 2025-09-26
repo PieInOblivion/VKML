@@ -104,7 +104,7 @@ impl OnnxParser {
     fn convert_onnx_operation_to_instruction(
         onnx_op: &OnnxOperation,
         tensor_map: &HashMap<String, TensorId>,
-        tensors: &Vec<Option<Box<[u8]>>>,
+        tensors: &[Option<Box<[u8]>>],
     ) -> Result<Box<dyn Instruction>, VKMLError> {
         // Resolve tensor names to IDs
         let input_ids = onnx_op
@@ -197,7 +197,7 @@ impl OnnxParser {
                     shape_vec.push(i64::from_le_bytes(a));
                 }
 
-                let allowzero = attributes.get("allowzero").and_then(|a| attr_to_int(a));
+                let allowzero = attributes.get("allowzero").and_then(attr_to_int);
                 Ok(instruction::reshape(
                     input_ids[0],
                     output_ids[0],
