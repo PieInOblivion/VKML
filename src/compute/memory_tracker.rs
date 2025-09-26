@@ -49,4 +49,8 @@ impl MemoryTracker {
     pub fn get_available(&self) -> u64 {
         self.maximum - self.get_current()
     }
+
+    pub fn get_maximum(&self) -> u64 {
+        self.maximum
+    }
 }

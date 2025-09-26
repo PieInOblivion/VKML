@@ -42,6 +42,7 @@ pub struct VkExtensions {
     pub shader_float16_int8: bool,
     pub timeline_semaphore: bool,
     pub synchronization2: bool,
+    pub memory_budget: bool,
 }
 
 impl VkExtensions {
@@ -50,6 +51,7 @@ impl VkExtensions {
     pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
     pub const VK_KHR_TIMELINE_SEMAPHORE: &'static str = "VK_KHR_timeline_semaphore";
     pub const VK_KHR_SYNCHRONIZATION2: &'static str = "VK_KHR_synchronization2";
+    pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
 
     // build from vk::ExtensionProperties returned by Vulkan
     pub fn from_extension_properties(props: &[vk::ExtensionProperties]) -> Self {
@@ -65,6 +67,7 @@ impl VkExtensions {
                 Self::VK_KHR_SHADER_FLOAT16_INT8 => res.shader_float16_int8 = true,
                 Self::VK_KHR_TIMELINE_SEMAPHORE => res.timeline_semaphore = true,
                 Self::VK_KHR_SYNCHRONIZATION2 => res.synchronization2 = true,
+                Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
                 _ => {}
             }
         }
@@ -88,6 +91,9 @@ impl VkExtensions {
         if self.synchronization2 {
             v.push(CString::new(Self::VK_KHR_SYNCHRONIZATION2).unwrap());
         }
+        if self.memory_budget {
+            v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
+        }
 
         v
     }
@@ -103,6 +109,7 @@ impl VkExtensions {
             && !self.synchronization2
             && !self.shader_float16_int8
             && !self.cooperative_matrix
+            && !self.memory_budget
         {
             return DeviceCreateExtras {
                 names,
@@ -166,6 +173,8 @@ impl VkExtensions {
             head = (&*feat) as *const _ as *mut c_void;
             holders.push(feat);
         }
+
+        // TODO: Does memory_budget need to be enabled? probably. to test later.
 
         DeviceCreateExtras {
             names,

@@ -1,4 +1,4 @@
-use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
+use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -51,7 +51,7 @@ impl Layer for ActivationLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Activation layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -82,7 +82,7 @@ impl Layer for ActivationLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanLoadError(
+            return Err(VKMLError::VulkanError(
                 "Activation layer requires an input".to_string(),
             ));
         }

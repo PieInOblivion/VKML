@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    dataloader::error::VKMLError, tensor::desc::TensorDesc, tensor_graph::tensor_graph::TensorId,
+    tensor::desc::TensorDesc, tensor_graph::tensor_graph::TensorId, utils::error::VKMLError,
 };
 
 use super::execution::LayerExecution;

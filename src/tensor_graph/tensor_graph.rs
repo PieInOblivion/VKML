@@ -1,9 +1,9 @@
 use crate::{
-    dataloader::error::VKMLError,
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
+    utils::error::VKMLError,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +39,7 @@ pub struct TensorGraph {
 impl TensorGraph {
     pub fn from_graph_model(model: &GraphModel) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
-            return Err(VKMLError::VulkanLoadError("Model not verified".into()));
+            return Err(VKMLError::VulkanError("Model not verified".into()));
         }
 
         let execution_order = &model.verified.as_ref().unwrap().execution_order;
@@ -56,7 +56,7 @@ impl TensorGraph {
         // --- Pass 1: Build LayerExecutions (determines local tensor descs and ops for each layer) ---
         for &layer_id in execution_order {
             let layer_wrapper = model.layers.get(&layer_id).ok_or_else(|| {
-                VKMLError::VulkanLoadError(format!("Layer {} not found in model", layer_id))
+                VKMLError::VulkanError(format!("Layer {} not found in model", layer_id))
             })?;
 
             let input_descs: Vec<TensorDesc> = layer_wrapper
@@ -66,7 +66,7 @@ impl TensorGraph {
                     let src_layer_id = conn.get_layerid();
                     let src_output_idx = conn.get_outputidx();
                     let src_exec = layer_executions.get(&src_layer_id).ok_or_else(|| {
-                        VKMLError::VulkanLoadError(format!(
+                        VKMLError::VulkanError(format!(
                             // Changed to InternalError
                             "Source LayerExecution for {} not found when building layer {}",
                             src_layer_id, layer_id

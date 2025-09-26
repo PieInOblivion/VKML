@@ -1,4 +1,4 @@
-use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
+use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -33,7 +33,7 @@ impl Layer for LinearLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Linear layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -43,7 +43,7 @@ impl Layer for LinearLayer {
 
         // Check if it's a 2D tensor (batch, features)
         if input_shape.ndim() != 2 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Linear layer requires matrix input, got tensor with {} dimensions",
                 input_shape.ndim()
             )));
@@ -51,7 +51,7 @@ impl Layer for LinearLayer {
 
         let cols = input_shape.to_dims()[1];
         if cols != self.in_features {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Linear layer expected {} input features, got {}",
                 self.in_features, cols
             )));
@@ -105,7 +105,7 @@ impl Layer for LinearLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanLoadError(
+            return Err(VKMLError::VulkanError(
                 "LinearLayer requires at least one input".to_string(),
             ));
         }
@@ -113,14 +113,14 @@ impl Layer for LinearLayer {
         let input_shape = input_shapes[0]; // Use the first input shape
 
         if input_shape.ndim() != 2 {
-            return Err(VKMLError::VulkanLoadError(
+            return Err(VKMLError::VulkanError(
                 "Linear layer expects matrix input".into(),
             ));
         }
 
         let cols = input_shape.to_dims()[1];
         if cols != self.in_features {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Linear layer expects {} input features, got {}",
                 self.in_features, cols
             )));

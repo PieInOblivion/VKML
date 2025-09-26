@@ -1,4 +1,4 @@
-use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
+use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -39,7 +39,7 @@ impl Layer for ConcatLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Concat layer requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -49,7 +49,7 @@ impl Layer for ConcatLayer {
         let ndim = input_shapes[0].to_dims().len();
         for shape in input_shapes.iter().skip(1) {
             if shape.to_dims().len() != ndim {
-                return Err(VKMLError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanError(format!(
                     "All inputs to Concat must have same number of dimensions"
                 )));
             }
@@ -57,7 +57,7 @@ impl Layer for ConcatLayer {
 
         // Check that concatenation dimension is valid
         if self.dim >= ndim {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Concat dimension {} out of range for {}-dimensional tensors",
                 self.dim, ndim
             )));
@@ -72,7 +72,7 @@ impl Layer for ConcatLayer {
             let size = input_shapes[0].to_dims()[d];
             for shape in input_shapes.iter().skip(1) {
                 if shape.to_dims()[d] != size {
-                    return Err(VKMLError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanError(format!(
                         "Dimension {} must have same size for all inputs to Concat",
                         d
                     )));
@@ -101,7 +101,7 @@ impl Layer for ConcatLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Concat layer requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));

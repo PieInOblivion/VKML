@@ -1,4 +1,4 @@
-use crate::{dataloader::error::VKMLError, instruction, tensor::desc::TensorDesc};
+use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -33,7 +33,7 @@ impl Layer for ReshapeLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Reshape layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -45,7 +45,7 @@ impl Layer for ReshapeLayer {
         // Handle flatten specially
         if self.is_flatten() {
             if input_elements % batch_size != 0 {
-                return Err(VKMLError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanError(format!(
                     "Cannot flatten {} elements into batches of size {}, not evenly divisible",
                     input_elements, batch_size
                 )));
@@ -67,7 +67,7 @@ impl Layer for ReshapeLayer {
             // No inference needed, just check total elements
             let total_new = target_dims.iter().copied().product::<i64>();
             if total_new != input_elements {
-                return Err(VKMLError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanError(format!(
                     "Cannot reshape {} elements into shape with {} elements",
                     input_elements, total_new
                 )));
@@ -83,7 +83,7 @@ impl Layer for ReshapeLayer {
                 let known_product: i64 = new_dims.iter().copied().filter(|d| *d != 0).product();
 
                 if input_elements % known_product != 0 {
-                    return Err(VKMLError::VulkanLoadError(format!(
+                    return Err(VKMLError::VulkanError(format!(
                         "Cannot reshape {} elements: not divisible by product of known dimensions ({})",
                         input_elements, known_product
                     )));
@@ -101,7 +101,7 @@ impl Layer for ReshapeLayer {
 
                 Ok(vec![TensorDesc::new(new_dims)])
             } else {
-                return Err(VKMLError::VulkanLoadError(
+                return Err(VKMLError::VulkanError(
                     "At most one dimension can be inferred (set to 0) in reshape".to_string(),
                 ));
             }
@@ -146,7 +146,7 @@ impl Layer for ReshapeLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanLoadError(
+            return Err(VKMLError::VulkanError(
                 "Reshape layer requires an input".to_string(),
             ));
         }

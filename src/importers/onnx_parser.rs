@@ -1,8 +1,8 @@
 use crate::{
-    dataloader::error::VKMLError,
     instruction::{self, conv::conv::AutoPad, instruction::Instruction},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    utils::error::VKMLError,
 };
 use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, OnnxTensor};
 use std::collections::HashMap;

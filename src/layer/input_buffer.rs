@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{dataloader::error::VKMLError, tensor::desc::TensorDesc};
+use crate::{tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 
@@ -34,7 +34,7 @@ impl Layer for InputLayer {
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         // Input layers ignore input_shapes since they're entry points
         if !input_shapes.is_empty() {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "InputBuffer expects 0 inputs, got {}",
                 input_shapes.len()
             )));

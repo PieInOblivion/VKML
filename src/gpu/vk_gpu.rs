@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::CString,
     ptr,
     sync::{Arc, RwLock},
@@ -11,45 +11,27 @@ use vulkanalia::{
 };
 
 use crate::{
-    compute::memory_tracker::MemoryTracker, instruction::gpu_operations::GPUMemoryOperation,
-    utils::expect_msg::ExpectMsg,
+    compute::memory_tracker::MemoryTracker,
+    gpu::raw_formats::RAW_FORMATS,
+    instruction::gpu_operations::GPUMemoryOperation,
+    utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
 
+use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
-use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 
-// TODO: Performance gains when needing to multiple tasks in sequence
-// TODO: Generalise the usage a little bit more
-// NOTE: Get it working, then simplify
-
-// TODO: Look at VK_KHR_device_group. I Think we want to stick with individually managed GPUs though
-// NOTE: Count pipelines be a vec of oncelock?
-
-pub struct GPU {
-    _entry: Arc<Entry>,
-
-    physical_device: vk::PhysicalDevice,
-    compute_queues: Vec<vk::Queue>,
-    _queue_family_index: u32,
-    descriptor_set_layout: vk::DescriptorSetLayout,
-    memory_tracker: MemoryTracker,
-    extensions: VkExtensions,
-
-    // These must be dropped in this order
-    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
-    pipeline_layout: vk::PipelineLayout,
-    descriptor_pool: vk::DescriptorPool,
-    command_pool: vk::CommandPool,
-    device: Device,
-    instance: Instance,
+pub struct GPUS {
+    gpus: Vec<GPU>,
+    entry: Entry,
+    instance: Arc<Instance>,
 }
 
-impl GPU {
-    pub fn new(device_index: usize) -> Result<Self, Box<dyn std::error::Error>> {
+impl GPUS {
+    pub fn new(selected: Option<HashSet<usize>>) -> Result<Self, VKMLError> {
         unsafe {
             let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
-            let entry =
-                Arc::new(Entry::new(loader).expect_msg("Failed to create Vulkan entry point"));
+            let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
+
             let aname = CString::new("vkml").unwrap();
 
             let appinfo = vk::ApplicationInfo {
@@ -73,26 +55,138 @@ impl GPU {
                 enabled_extension_names: ptr::null(),
             };
 
-            let instance = entry
-                .create_instance(&create_info, None)
-                .expect_msg("Failed to create Vulkan instance");
+            let instance = Arc::new(
+                entry
+                    .create_instance(&create_info, None)
+                    .expect_msg("Failed to create Vulkan instance"),
+            );
 
+            // Get all gpus
             let physical_devices = instance
                 .enumerate_physical_devices()
                 .expect_msg("Failed to enumerate physical devices");
-            let physical_device = *physical_devices
-                .get(device_index)
-                .ok_or("GPU index out of range")?;
 
-            // Enumerate device extensions and populate extension flags
+            let mut init_gpus = Vec::new();
+
+            // If `selected` is Some, iterate over those indices and validate them.
+            // Otherwise initialise every physical device found.
+            if let Some(selected_set) = selected {
+                for &idx in selected_set.iter() {
+                    if idx >= physical_devices.len() {
+                        return Err(VKMLError::Generic(format!(
+                            "Selected GPU index {} out of range",
+                            idx
+                        )));
+                    }
+
+                    let gpu = GPU::new_shared(instance.clone(), physical_devices[idx])?;
+                    init_gpus.push(gpu);
+                }
+            } else {
+                for (idx, _) in physical_devices.iter().enumerate() {
+                    let gpu = GPU::new_shared(instance.clone(), physical_devices[idx])?;
+                    init_gpus.push(gpu);
+                }
+            }
+
+            let gpus = Self {
+                gpus: init_gpus,
+                entry,
+                instance,
+            };
+
+            Ok(gpus)
+        }
+    }
+
+    pub fn gpus(&self) -> &Vec<GPU> {
+        &self.gpus
+    }
+
+    pub fn get_gpu(&self, idx: usize) -> &GPU {
+        self.gpus().get(idx).unwrap()
+    }
+}
+
+// TODO: Performance gains when needing to multiple tasks in sequence
+// TODO: Generalise the usage a little bit more
+// NOTE: Get it working, then simplify
+
+// TODO: Look at VK_KHR_device_group. I Think we want to stick with individually managed GPUs though
+// NOTE: Can pipelines be a vec of oncelock?
+
+pub struct GPU {
+    name: String,
+    device_type: vk::PhysicalDeviceType,
+    has_compute: bool,
+
+    supported_formats: Vec<vk::Format>,
+    max_workgroup_count: [u32; 3],
+    max_workgroup_size: [u32; 3],
+    max_workgroup_invocations: u32,
+    max_shared_memory_size: u32,
+    compute_queue_count: u32,
+
+    physical_device: vk::PhysicalDevice,
+    compute_queues: Vec<vk::Queue>,
+    _queue_family_index: u32,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    memory_tracker: MemoryTracker,
+    extensions: VkExtensions,
+
+    // These must be dropped in this order
+    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_pool: vk::DescriptorPool,
+    command_pool: vk::CommandPool,
+    device: Device,
+    instance: Arc<Instance>,
+}
+
+impl GPU {
+    pub fn new_shared(
+        instance: Arc<Instance>,
+        physical_device: vk::PhysicalDevice,
+    ) -> Result<Self, VKMLError> {
+        unsafe {
+            let properties = instance.get_physical_device_properties(physical_device);
+            let queue_families =
+                instance.get_physical_device_queue_family_properties(physical_device);
+
+            let name = String::from_utf8_lossy(
+                &properties
+                    .device_name
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .map(|&c| c as u8)
+                    .collect::<Vec<u8>>(),
+            )
+            .to_string();
+
+            let (has_compute, compute_queue_count) = queue_families
+                .iter()
+                .find(|props| props.queue_flags.contains(vk::QueueFlags::COMPUTE))
+                .map(|props| (true, props.queue_count))
+                .unwrap_or((false, 0));
+
+            let supported_formats = RAW_FORMATS
+                .iter()
+                .cloned()
+                .filter(|&format| {
+                    let props =
+                        instance.get_physical_device_format_properties(physical_device, format);
+                    props
+                        .buffer_features
+                        .contains(vk::FormatFeatureFlags::STORAGE_TEXEL_BUFFER)
+                })
+                .collect();
+
             let device_extensions = instance
                 .enumerate_device_extension_properties(physical_device, None)
                 .expect_msg("Failed to enumerate device extension properties");
-
             let vk_extensions = VkExtensions::from_extension_properties(&device_extensions);
 
-            let queue_family_index = instance
-                .get_physical_device_queue_family_properties(physical_device)
+            let queue_family_index = queue_families
                 .iter()
                 .enumerate()
                 .find(|(_, properties)| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
@@ -229,10 +323,11 @@ impl GPU {
                 .create_descriptor_pool(&descriptor_pool_info, None)
                 .expect_msg("Failed to create descriptor pool");
 
+            // 128 bytes is the minimum guaranteed push constant space for the vulkan spec
             let push_constant_range = vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::COMPUTE,
                 offset: 0,
-                size: 128, // TODO: For now, have 128 bytes of push constant space
+                size: 128,
             };
 
             let pipeline_layout = {
@@ -264,17 +359,25 @@ impl GPU {
                 memory_properties.memory_heaps[device_local_heap_index as usize].size
             };
 
-            // TODO: Attempt to figure out why intel iGPU layer shape limit is 8000*8000
-            // Set limit as property of the gpu
-
             Ok(Self {
-                _entry: entry,
+                name,
+                device_type: properties.device_type,
+                has_compute,
+
+                supported_formats,
+                max_workgroup_count: properties.limits.max_compute_work_group_count,
+                max_workgroup_size: properties.limits.max_compute_work_group_size,
+                max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
+                max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
+                compute_queue_count,
+
                 physical_device,
                 compute_queues,
                 _queue_family_index: queue_family_index,
                 descriptor_set_layout,
-                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, Kept for for testing at the moment
+                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, kept low for testing
                 extensions: vk_extensions,
+
                 pipelines: RwLock::new(HashMap::new()),
                 pipeline_layout,
                 descriptor_pool,
@@ -282,88 +385,6 @@ impl GPU {
                 device,
                 instance,
             })
-        }
-    }
-
-    unsafe fn create_instance(entry: &Entry) -> Instance {
-        let aname = CString::new("vkml").unwrap();
-        let appinfo = vk::ApplicationInfo {
-            s_type: vk::StructureType::APPLICATION_INFO,
-            next: ptr::null(),
-            application_name: aname.as_ptr(),
-            application_version: vk::make_version(1, 0, 0),
-            engine_name: aname.as_ptr(),
-            engine_version: vk::make_version(1, 0, 0),
-            api_version: vk::make_version(1, 0, 0),
-        };
-
-        let create_info = vk::InstanceCreateInfo {
-            s_type: vk::StructureType::INSTANCE_CREATE_INFO,
-            next: ptr::null(),
-            flags: vk::InstanceCreateFlags::empty(),
-            application_info: &appinfo,
-            enabled_layer_count: 0,
-            enabled_layer_names: ptr::null(),
-            enabled_extension_count: 0,
-            enabled_extension_names: ptr::null(),
-        };
-
-        unsafe {
-            entry
-                .create_instance(&create_info, None)
-                .expect_msg("Failed to create Vulkan instance")
-        }
-    }
-
-    pub fn total_memory(&self) -> u64 {
-        unsafe {
-            let memory_properties = self
-                .instance
-                .get_physical_device_memory_properties(self.physical_device);
-
-            let device_local_heap_index = (0..memory_properties.memory_type_count)
-                .find(|&i| {
-                    let memory_type = memory_properties.memory_types[i as usize];
-                    memory_type
-                        .property_flags
-                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
-                })
-                .map(|i| memory_properties.memory_types[i as usize].heap_index)
-                .unwrap_or(0);
-
-            memory_properties.memory_heaps[device_local_heap_index as usize].size
-        }
-    }
-
-    pub fn available_gpus() -> Vec<GPUInfo> {
-        unsafe {
-            let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
-            let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
-
-            let instance = Self::create_instance(&entry);
-
-            let physical_devices = instance
-                .enumerate_physical_devices()
-                .expect_msg("Failed to enumerate physical devices");
-
-            // Create GPUInfo for each device and filter for compute support
-            let mut gpu_infos: Vec<_> = physical_devices
-                .iter()
-                .enumerate()
-                .map(|(idx, &device)| GPUInfo::new(&instance, device, idx))
-                .filter(|info| info.has_compute)
-                .collect();
-
-            // Sort GPUs: discrete first, then by memory size
-            gpu_infos.sort_by_key(|gpu| {
-                (
-                    gpu.device_type != vk::PhysicalDeviceType::DISCRETE_GPU,
-                    std::cmp::Reverse(gpu.total_memory),
-                )
-            });
-
-            instance.destroy_instance(None);
-            gpu_infos
         }
     }
 
@@ -466,10 +487,7 @@ impl GPU {
         }
     }
 
-    pub fn allocate_uninitialised_gpu_memory(
-        &self,
-        bytes: usize,
-    ) -> Result<GPUMemory, Box<dyn std::error::Error>> {
+    pub fn allocate_uninitialised_gpu_memory(&self, bytes: usize) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
 
         unsafe {
@@ -485,6 +503,7 @@ impl GPU {
             };
 
             let buffer = self.device.create_buffer(&buffer_info, None)?;
+
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
             let memory_type = self.find_memory_type(
@@ -500,6 +519,7 @@ impl GPU {
             };
 
             let memory = self.device.allocate_memory(&alloc_info, None)?;
+
             self.device.bind_buffer_memory(buffer, memory, 0)?;
 
             // dont initialise the memory, it will be filled. eg, GPU weight init shaders
@@ -582,7 +602,7 @@ impl GPU {
     pub fn submit_command_buffers_and_wait(
         &self,
         command_buffers: &[vk::CommandBuffer],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         if command_buffers.is_empty() {
             return Ok(());
         }
@@ -646,10 +666,7 @@ impl GPU {
         }
     }
 
-    fn create_pipeline(
-        &self,
-        shader_code: &[u8],
-    ) -> Result<vk::Pipeline, Box<dyn std::error::Error>> {
+    fn create_pipeline(&self, shader_code: &[u8]) -> Result<vk::Pipeline, VKMLError> {
         unsafe {
             let aligned_code: Vec<u32>;
             if shader_code.as_ptr().align_offset(4) != 0 {
@@ -701,8 +718,7 @@ impl GPU {
 
             let pipeline = self
                 .device
-                .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                .map_err(|e| format!("Failed to create compute pipeline: {:?}", e))?
+                .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)?
                 .0[0];
 
             self.device.destroy_shader_module(shader_module, None);
@@ -757,5 +773,9 @@ impl GPU {
 
     pub fn get_command_pool(&self) -> vk::CommandPool {
         self.command_pool
+    }
+
+    pub fn total_memory(&self) -> u64 {
+        self.memory_tracker.get_maximum()
     }
 }

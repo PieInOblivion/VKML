@@ -3,18 +3,18 @@ use std::ptr;
 use std::sync::Arc;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
+use crate::gpu::vk_gpu::GPUS;
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
 use crate::tensor::cell::TensorCell;
 use crate::tensor::tensor::{DeviceId, Tensor};
+use crate::utils::error::VKMLError;
 use onnx_extractor::OnnxModel;
 use zero_pool::{ZeroPool, zp_define_task_fn};
 
 use crate::instruction::instruction::Instruction;
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
-    dataloader::error::VKMLError,
-    gpu::vk_gpu::GPU,
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
 };
@@ -34,21 +34,21 @@ pub struct ComputeManager {
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
 
-    gpus: Arc<Vec<GPU>>,
+    gpus: Arc<GPUS>,
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 }
 
 impl ComputeManager {
     pub fn new(model: GraphModel, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
-        let gpus = Self::available_gpus()?;
+        let gpus = GPUS::new(None)?;
         Self::new_with(model, thread_pool, gpus, None)
     }
 
     pub fn new_with(
         mut model: GraphModel,
         thread_pool: Arc<ZeroPool>,
-        gpus: Vec<GPU>,
+        gpus: GPUS,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
@@ -71,6 +71,7 @@ impl ComputeManager {
         let total_memory = manager.tensor_graph.memory_requirements as u64;
         let total_available: u64 = manager
             .gpus
+            .gpus()
             .iter()
             .map(|gpu| gpu.available_memory())
             .sum::<u64>()
@@ -98,7 +99,7 @@ impl ComputeManager {
 
         let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
 
-        let gpus = Self::available_gpus()?;
+        let gpus = GPUS::new(None)?;
         Self::new_from_tensor_graph_with(tensor_graph, tensor_bytes, thread_pool, gpus, None)
     }
 
@@ -106,7 +107,7 @@ impl ComputeManager {
     pub fn new_onnx_with(
         onnx_path: &str,
         thread_pool: Arc<ZeroPool>,
-        gpus: Vec<GPU>,
+        gpus: GPUS,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
@@ -131,7 +132,7 @@ impl ComputeManager {
         tensor_graph: TensorGraph,
         tensor_bytes: Vec<Option<Box<[u8]>>>,
         thread_pool: Arc<ZeroPool>,
-        gpus: Vec<GPU>,
+        gpus: GPUS,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         let cpu = CPUCompute::new(cpu_memory_limit_bytes);
@@ -152,6 +153,7 @@ impl ComputeManager {
         let total_memory = manager.tensor_graph.memory_requirements as u64;
         let total_available: u64 = manager
             .gpus
+            .gpus()
             .iter()
             .map(|gpu| gpu.available_memory())
             .sum::<u64>()
@@ -166,19 +168,6 @@ impl ComputeManager {
 
         manager.allocate_tensor_graph(tensor_bytes)?;
         Ok(manager)
-    }
-
-    fn available_gpus() -> Result<Vec<GPU>, VKMLError> {
-        let gpu_info = GPU::available_gpus();
-        let mut gpus = Vec::with_capacity(gpu_info.len());
-
-        for info in gpu_info {
-            if let Ok(gpu) = GPU::new(info.device_index) {
-                gpus.push(gpu);
-            }
-        }
-
-        Ok(gpus)
     }
 
     // This is essentially a graph partitioning problem.
@@ -235,7 +224,7 @@ impl ComputeManager {
 
         // Track available memory per device in the desired order (GPUs then CPU)
         let mut available_memory: Vec<(DeviceLocation, u64)> = Vec::new();
-        for (idx, gpu) in self.gpus.iter().enumerate() {
+        for (idx, gpu) in self.gpus.gpus().iter().enumerate() {
             available_memory.push((DeviceLocation::GPU(idx), gpu.available_memory()));
         }
         available_memory.push((
@@ -540,7 +529,7 @@ impl ComputeManager {
             }
             DeviceLocation::GPU(idx) => {
                 let gpu_idx = *idx;
-                let gpu = &self.gpus[gpu_idx];
+                let gpu = &self.gpus.get_gpu(gpu_idx);
 
                 gpu.allocate_memory(size_in_bytes);
 
@@ -557,7 +546,7 @@ impl ComputeManager {
                 } else {
                     let gpu_mem = gpu
                         .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
-                        .map_err(|e| VKMLError::VulkanLoadError(e.to_string()))?;
+                        .map_err(|e| VKMLError::VulkanError(e.to_string()))?;
                     Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
                 }
             }
@@ -570,7 +559,7 @@ impl ComputeManager {
 
         // Validate input batch count
         if batches.len() != input_tensor_ids.len() {
-            return Err(VKMLError::VulkanLoadError(format!(
+            return Err(VKMLError::VulkanError(format!(
                 "Expected {} input batches, got {}",
                 input_tensor_ids.len(),
                 batches.len()
@@ -588,7 +577,7 @@ impl ComputeManager {
             };
 
             if batch.buffer.len_bytes() != expected_bytes {
-                return Err(VKMLError::VulkanLoadError(format!(
+                return Err(VKMLError::VulkanError(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
                     batch_idx,
                     batch.buffer.len_bytes(),
@@ -752,7 +741,7 @@ impl ComputeManager {
             }
         }
 
-        Err(VKMLError::VulkanLoadError(format!(
+        Err(VKMLError::VulkanError(format!(
             "Operation {:?} has no tensors allocated to a device",
             op_id
         )))
@@ -771,7 +760,7 @@ impl ComputeManager {
             self.format_memory_mb(self.cpu.memory_tracking.get_available()),
         ));
 
-        for (i, gpu) in self.gpus.iter().enumerate() {
+        for (i, gpu) in self.gpus.gpus().iter().enumerate() {
             result.push((
                 format!("GPU {}", i),
                 self.format_memory_mb(gpu.total_memory() - gpu.available_memory()),
@@ -860,7 +849,7 @@ zp_define_task_fn!(
     gpu_batch_operations_task,
     GpuBatchOperationsParams,
     |params| {
-        let gpu = &params.compute_manager.gpus[params.gpu_idx];
+        let gpu = &params.compute_manager.gpus.get_gpu(params.gpu_idx);
 
         if params.operations.is_empty() {
             return;

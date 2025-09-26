@@ -1,9 +1,9 @@
 use crate::{
     compute::compute_manager::ComputeManager,
-    dataloader::error::VKMLError,
     model::layer_connection::{LayerConnection, LayerId},
     tensor::tensor::DeviceId,
     tensor_graph::tensor_graph::TensorId,
+    utils::error::VKMLError,
 };
 use onnx_extractor::DataType;
 
@@ -253,7 +253,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         .model
         .layers
         .get(&layer_id)
-        .ok_or(VKMLError::VulkanLoadError(format!(
+        .ok_or(VKMLError::VulkanError(format!(
             "Layer ID {} not found",
             layer_id
         )))?;
