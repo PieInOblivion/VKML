@@ -125,15 +125,16 @@ fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOp
     let b_rank = src2_dims.len();
 
     if a_rank == 0 || b_rank == 0 {
-        panic!("MatMul: zero-rank tensor not supported (a_rank={}, b_rank={})", a_rank, b_rank);
+        panic!(
+            "MatMul: zero-rank tensor not supported (a_rank={}, b_rank={})",
+            a_rank, b_rank
+        );
     }
 
     if a_rank > MAX_DIMS || b_rank > MAX_DIMS {
         panic!(
             "MatMul: tensor rank too large for push-constant generic path (max {}), got a_rank={}, b_rank={}",
-            MAX_DIMS,
-            a_rank,
-            b_rank
+            MAX_DIMS, a_rank, b_rank
         );
     }
 
@@ -411,7 +412,7 @@ fn create_generic_matmul_command_buffer(
         // Get pipeline
         let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::MatMul_F32);
 
-    // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
+        // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
         let src1_dims = src1_tensor.desc.to_dims();
         let src2_dims = src2_tensor.desc.to_dims();
         let dst_dims = dst_tensor.desc.to_dims();
@@ -432,8 +433,16 @@ fn create_generic_matmul_command_buffer(
             for i in 0..3 {
                 let lo_idx = i * 2;
                 let hi_idx = lo_idx + 1;
-                let lo = if lo_idx < vals.len() { vals[lo_idx] as u32 } else { 0u32 } & 0xFFFFu32;
-                let hi = if hi_idx < vals.len() { vals[hi_idx] as u32 } else { 0u32 } & 0xFFFFu32;
+                let lo = if lo_idx < vals.len() {
+                    vals[lo_idx] as u32
+                } else {
+                    0u32
+                } & 0xFFFFu32;
+                let hi = if hi_idx < vals.len() {
+                    vals[hi_idx] as u32
+                } else {
+                    0u32
+                } & 0xFFFFu32;
                 out[i] = (hi << 16) | lo;
             }
             out
