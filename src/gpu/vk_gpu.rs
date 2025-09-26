@@ -20,6 +20,8 @@ use crate::{
 use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
+const REQUEST_ALL_COMPUTE_QUEUES: bool = false;
+
 pub struct GpuPool {
     gpus: Vec<Gpu>,
     _entry: Entry,
@@ -143,16 +145,21 @@ impl Gpu {
                 instance.get_physical_device_queue_family_properties(physical_device);
 
             let queue_count = queue_family_props[queue_family_index as usize].queue_count;
+            let requested_queue_count: u32 = if REQUEST_ALL_COMPUTE_QUEUES {
+                queue_count
+            } else {
+                1
+            };
 
             // Create queue info with priorities for all queues
-            let queue_priorities = vec![1.0; queue_count as usize];
+            let queue_priorities = vec![1.0; requested_queue_count as usize];
 
             let queue_info = vk::DeviceQueueCreateInfo {
                 s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
                 next: std::ptr::null(),
                 flags: vk::DeviceQueueCreateFlags::empty(),
                 queue_family_index,
-                queue_count,
+                queue_count: requested_queue_count,
                 queue_priorities: queue_priorities.as_ptr(),
             };
 
@@ -186,8 +193,8 @@ impl Gpu {
             let device = instance.create_device(physical_device, &device_create_info, None)?;
 
             // Get all compute queues
-            let mut compute_queues = Vec::with_capacity(queue_count as usize);
-            for i in 0..queue_count {
+            let mut compute_queues = Vec::with_capacity(requested_queue_count as usize);
+            for i in 0..requested_queue_count {
                 compute_queues.push(device.get_device_queue(queue_family_index, i));
             }
 
@@ -530,10 +537,6 @@ impl Gpu {
         &self,
         command_buffers: &[vk::CommandBuffer],
     ) -> Result<(), VKMLError> {
-        if command_buffers.is_empty() {
-            return Ok(());
-        }
-
         unsafe {
             // Split command buffers evenly across queues
             // No idea what happens per device vendor implementation
@@ -547,10 +550,6 @@ impl Gpu {
 
             // For each queue, create a batch of command buffers
             for (queue_idx, chunk) in command_buffers.chunks(buffers_per_queue).enumerate() {
-                if chunk.is_empty() {
-                    continue;
-                }
-
                 // Create a fence for this submission to track completion
                 let fence_info = vk::FenceCreateInfo {
                     s_type: vk::StructureType::FENCE_CREATE_INFO,
@@ -581,12 +580,10 @@ impl Gpu {
             }
 
             // Wait for all fences to signal completion
-            if !fences.is_empty() {
-                self.device.wait_for_fences(&fences, true, std::u64::MAX)?;
+            self.device.wait_for_fences(&fences, true, std::u64::MAX)?;
 
-                for fence in fences {
-                    self.device.destroy_fence(fence, None);
-                }
+            for fence in fences {
+                self.device.destroy_fence(fence, None);
             }
 
             Ok(())
