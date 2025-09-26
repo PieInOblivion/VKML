@@ -61,7 +61,7 @@ impl GPUS {
 
             let mut init_gpus = Vec::new();
 
-            // If `selected` is Some, iterate over those indices and validate them.
+            // If selected is Some, iterate over those indices and validate them.
             // Otherwise initialise every physical device found.
             if let Some(selected_set) = selected {
                 for &idx in selected_set.iter() {
@@ -100,11 +100,6 @@ impl GPUS {
     }
 }
 
-// TODO: Performance gains when needing to multiple tasks in sequence
-// TODO: Generalise the usage a little bit more
-// NOTE: Get it working, then simplify
-
-// TODO: Look at VK_KHR_device_group. I Think we want to stick with individually managed GPUs though
 // NOTE: Can pipelines be a vec of oncelock?
 
 pub struct GPU {
