@@ -34,7 +34,7 @@ pub struct ComputeManager {
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
 
-    gpus: Arc<GpuPool>,
+    gpus: GpuPool,
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 }
@@ -63,7 +63,7 @@ impl ComputeManager {
             tensors: Vec::new(),
             model,
             tensor_graph: tensor_graph,
-            gpus: Arc::new(gpus),
+            gpus,
             cpu,
             thread_pool,
         };
@@ -142,7 +142,7 @@ impl ComputeManager {
         let model = GraphModel::new(1);
 
         let mut manager = Self {
-            gpus: Arc::new(gpus),
+            gpus,
             cpu,
             thread_pool,
             tensors: Vec::new(),
