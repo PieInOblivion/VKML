@@ -23,21 +23,25 @@ use super::{gpu_memory::GPUMemory, vk_gpu_info::GPUInfo};
 // NOTE: Get it working, then simplify
 
 // TODO: Look at VK_KHR_device_group. I Think we want to stick with individually managed GPUs though
+// NOTE: Count pipelines be a vec of oncelock?
 
 pub struct GPU {
     _entry: Arc<Entry>,
-    instance: Instance,
-    device: Device,
+    
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
-    command_pool: vk::CommandPool,
     _queue_family_index: u32,
-    descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
-    pipeline_layout: vk::PipelineLayout,
     memory_tracker: MemoryTracker,
     extensions: VkExtensions,
+
+    // These must be dropped in this order
+    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_pool: vk::DescriptorPool,
+    command_pool: vk::CommandPool,
+    device: Device,
+    instance: Instance,
 }
 
 impl GPU {
@@ -265,18 +269,18 @@ impl GPU {
 
             Ok(Self {
                 _entry: entry,
-                instance,
-                device,
                 physical_device,
                 compute_queues,
-                command_pool,
                 _queue_family_index: queue_family_index,
-                descriptor_pool,
                 descriptor_set_layout,
-                pipelines: RwLock::new(HashMap::new()),
-                pipeline_layout,
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, Kept for for testing at the moment
                 extensions: vk_extensions,
+                pipelines: RwLock::new(HashMap::new()),
+                pipeline_layout,
+                descriptor_pool,
+                command_pool,
+                device,
+                instance,
             })
         }
     }
@@ -753,25 +757,5 @@ impl GPU {
 
     pub fn get_command_pool(&self) -> vk::CommandPool {
         self.command_pool
-    }
-}
-
-impl Drop for GPU {
-    fn drop(&mut self) {
-        unsafe {
-            let pipelines = self.pipelines.write().unwrap();
-            for pipeline in pipelines.values() {
-                self.device.destroy_pipeline(*pipeline, None);
-            }
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_device(None);
-            self.instance.destroy_instance(None);
-        }
     }
 }
