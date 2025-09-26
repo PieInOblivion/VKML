@@ -830,11 +830,11 @@ zp_define_task_fn!(
     single_cpu_operation_task,
     SingleCpuOperationParams,
     |params| {
-        let instruction = &params
+        let instruction = params
             .compute_manager
             .tensor_graph
             .get_instruction_or_panic(params.operation_id);
-        instruction.execute_cpu(&params.compute_manager);
+        instruction.execute_cpu(params.compute_manager);
     }
 );
 
@@ -849,7 +849,7 @@ zp_define_task_fn!(
     gpu_batch_operations_task,
     GpuBatchOperationsParams,
     |params| {
-        let gpu = &params.compute_manager.gpus.get_gpu(params.gpu_idx);
+        let gpu = params.compute_manager.gpus.get_gpu(params.gpu_idx);
 
         if params.operations.is_empty() {
             return;
