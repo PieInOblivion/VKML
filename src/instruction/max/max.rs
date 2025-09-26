@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::max::push_constants::MaxPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, max::f32_cpu::f32_cpu,
     },
@@ -52,7 +52,7 @@ impl Instruction for MaxInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

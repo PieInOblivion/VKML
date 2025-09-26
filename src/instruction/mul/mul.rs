@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::mul::push_constants::MulPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, mul::f32_cpu::f32_cpu,
     },
@@ -52,7 +52,7 @@ impl Instruction for MulInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

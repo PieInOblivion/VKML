@@ -1,5 +1,5 @@
 use crate::{
-    ComputeManager, gpu::vk_gpu::GPU, tensor_graph::tensor_graph::TensorId, utils::error::VKMLError,
+    ComputeManager, gpu::vk_gpu::Gpu, tensor_graph::tensor_graph::TensorId, utils::error::VKMLError,
 };
 use std::fmt::Debug;
 use vulkanalia::vk;
@@ -17,7 +17,7 @@ pub trait Instruction: Debug {
     // Create a Vulkan command buffer for this instruction
     fn create_command_buffer(
         &self,
-        _gpu: &GPU,
+        _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
         _cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

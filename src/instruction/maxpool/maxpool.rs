@@ -5,7 +5,7 @@ use crate::instruction::maxpool::push_constants::{
 };
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{instruction::Instruction, maxpool::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
@@ -124,7 +124,7 @@ impl Instruction for MaxPoolInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

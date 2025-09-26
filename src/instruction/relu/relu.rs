@@ -1,6 +1,6 @@
 use crate::{
     ComputeManager,
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, relu::f32_cpu::f32_cpu,
     },
@@ -47,7 +47,7 @@ impl Instruction for ReLUInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

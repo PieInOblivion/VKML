@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::init_constant::push_constants::InitConstantPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
     tensor_graph::tensor_graph::TensorId,
 };
@@ -43,7 +43,7 @@ impl Instruction for InitConstantInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

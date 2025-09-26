@@ -1,5 +1,5 @@
 use crate::{
-    ComputeManager, gpu::vk_gpu::GPU, instruction::instruction::Instruction,
+    ComputeManager, gpu::vk_gpu::Gpu, instruction::instruction::Instruction,
     tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -38,7 +38,7 @@ impl Instruction for IdentityInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

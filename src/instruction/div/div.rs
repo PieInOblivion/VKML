@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::div::push_constants::DivPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         div::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
     },
@@ -52,7 +52,7 @@ impl Instruction for DivInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

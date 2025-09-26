@@ -1,5 +1,5 @@
 use crate::{
-    ComputeManager, compute::compute_manager::DeviceLocation, gpu::vk_gpu::GPU,
+    ComputeManager, compute::compute_manager::DeviceLocation, gpu::vk_gpu::Gpu,
     instruction::instruction::Instruction, tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -44,7 +44,7 @@ impl Instruction for TransferToDeviceInstruction {
 
     fn create_command_buffer(
         &self,
-        _gpu: &GPU,
+        _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

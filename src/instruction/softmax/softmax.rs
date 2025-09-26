@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::softmax::push_constants::SoftmaxPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         gpu_operations::GPUMemoryOperation, instruction::Instruction, softmax::f32_cpu::f32_cpu,
     },
@@ -53,7 +53,7 @@ impl Instruction for SoftmaxInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

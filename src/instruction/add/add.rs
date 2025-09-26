@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::add::push_constants::AddPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         add::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
     },
@@ -52,7 +52,7 @@ impl Instruction for AddInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

@@ -20,12 +20,12 @@ use crate::{
 use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
-pub struct GPUS {
-    gpus: Vec<GPU>,
+pub struct GpuPool {
+    gpus: Vec<Gpu>,
     _entry: Entry,
 }
 
-impl GPUS {
+impl GpuPool {
     pub fn new(selected: Option<HashSet<usize>>) -> Result<Self, VKMLError> {
         unsafe {
             let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
@@ -72,12 +72,12 @@ impl GPUS {
                         )));
                     }
 
-                    let gpu = GPU::new_shared(instance.clone(), physical_devices[idx])?;
+                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
                     init_gpus.push(gpu);
                 }
             } else {
                 for (idx, _) in physical_devices.iter().enumerate() {
-                    let gpu = GPU::new_shared(instance.clone(), physical_devices[idx])?;
+                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
                     init_gpus.push(gpu);
                 }
             }
@@ -91,18 +91,18 @@ impl GPUS {
         }
     }
 
-    pub fn gpus(&self) -> &Vec<GPU> {
+    pub fn gpus(&self) -> &Vec<Gpu> {
         &self.gpus
     }
 
-    pub fn get_gpu(&self, idx: usize) -> &GPU {
+    pub fn get_gpu(&self, idx: usize) -> &Gpu {
         self.gpus().get(idx).unwrap()
     }
 }
 
 // NOTE: Can pipelines be a vec of oncelock?
 
-pub struct GPU {
+pub struct Gpu {
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -118,7 +118,7 @@ pub struct GPU {
     instance: Arc<Instance>,
 }
 
-impl GPU {
+impl Gpu {
     pub fn new_shared(
         instance: Arc<Instance>,
         physical_device: vk::PhysicalDevice,
@@ -127,8 +127,8 @@ impl GPU {
             let queue_families =
                 instance.get_physical_device_queue_family_properties(physical_device);
 
-            let device_extensions = instance
-                .enumerate_device_extension_properties(physical_device, None)?;
+            let device_extensions =
+                instance.enumerate_device_extension_properties(physical_device, None)?;
             let vk_extensions = VkExtensions::from_extension_properties(&device_extensions);
 
             let queue_family_index = queue_families
@@ -183,8 +183,7 @@ impl GPU {
             };
             // Note: keep 'extras' alive until after device creation so its CStrings and
             // p_next owners remain valid for the call.
-            let device = instance
-                .create_device(physical_device, &device_create_info, None)?;
+            let device = instance.create_device(physical_device, &device_create_info, None)?;
 
             // Get all compute queues
             let mut compute_queues = Vec::with_capacity(queue_count as usize);
@@ -199,8 +198,7 @@ impl GPU {
                 queue_family_index,
             };
 
-            let command_pool = device
-                .create_command_pool(&command_pool_info, None)?;
+            let command_pool = device.create_command_pool(&command_pool_info, None)?;
 
             let bindings = [
                 // Input buffer 1 (used by all operations)
@@ -250,20 +248,19 @@ impl GPU {
 
             let pool_sizes = [vk::DescriptorPoolSize {
                 type_: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1000, // TODO: check how high this actually needs to be
+                descriptor_count: 128, // TODO: check how high this actually needs to be
             }];
 
             let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 next: ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 500, // TODO: check how high this actually needs to be
+                max_sets: 128, // TODO: check how high this actually needs to be
                 pool_size_count: pool_sizes.len() as u32,
                 pool_sizes: pool_sizes.as_ptr(),
             };
 
-            let descriptor_pool = device
-                .create_descriptor_pool(&descriptor_pool_info, None)?;
+            let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_info, None)?;
 
             // 128 bytes is the minimum guaranteed push constant space for the vulkan spec
             let push_constant_range = vk::PushConstantRange {
@@ -709,12 +706,12 @@ impl GPU {
         self.memory_tracker.get_maximum()
     }
 
-    pub fn get_info(&self) -> GPUInfo {
-        GPUInfo::new(&self)
+    pub fn get_info(&self) -> GpuInfo {
+        GpuInfo::new(&self)
     }
 }
 
-struct GPUInfo {
+pub struct GpuInfo {
     name: String,
     device_type: vk::PhysicalDeviceType,
     has_compute: bool,
@@ -724,11 +721,10 @@ struct GPUInfo {
     max_workgroup_invocations: u32,
     max_shared_memory_size: u32,
     compute_queue_count: u32,
-    queue_family_index: u32,
 }
 
-impl GPUInfo {
-    fn new(gpu: &GPU) -> GPUInfo {
+impl GpuInfo {
+    fn new(gpu: &Gpu) -> GpuInfo {
         unsafe {
             let properties = gpu
                 .instance
@@ -766,14 +762,7 @@ impl GPUInfo {
                 })
                 .collect();
 
-            let queue_family_index = queue_families
-                .iter()
-                .enumerate()
-                .find(|(_, properties)| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
-                .map(|(index, _)| index as u32)
-                .expect("No compute queue family found on device");
-
-            GPUInfo {
+            GpuInfo {
                 name,
                 device_type: properties.device_type,
                 has_compute,
@@ -783,8 +772,15 @@ impl GPUInfo {
                 max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
                 max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
                 compute_queue_count,
-                queue_family_index,
             }
         }
+    }
+
+    pub fn system_gpus_info() -> Result<Vec<GpuInfo>, VKMLError> {
+        let pool = GpuPool::new(None)?;
+
+        let info: Vec<GpuInfo> = pool.gpus().iter().map(|gpu| GpuInfo::new(gpu)).collect();
+
+        Ok(info)
     }
 }

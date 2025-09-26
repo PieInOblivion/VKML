@@ -2,7 +2,7 @@ use crate::ComputeManager;
 use crate::instruction::init_uniform::push_constants::InitUniformPushConstants;
 use crate::utils::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         gpu_operations::GPUMemoryOperation, init_uniform::f32_cpu::f32_cpu,
         instruction::Instruction,
@@ -45,7 +45,7 @@ impl Instruction for InitUniformInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

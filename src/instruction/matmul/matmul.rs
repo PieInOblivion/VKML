@@ -1,7 +1,7 @@
 use crate::instruction::matmul::f32_cpu::f32_cpu;
 use crate::{
     ComputeManager,
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
     tensor::tensor::Tensor,
     tensor_graph::tensor_graph::TensorId,
@@ -49,7 +49,7 @@ impl Instruction for MatMulInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -390,7 +390,7 @@ fn configure_matmul_operation(
 }
 
 fn create_generic_matmul_command_buffer(
-    gpu: &GPU,
+    gpu: &Gpu,
     command_buffer: vk::CommandBuffer,
     src1_tensor: &Tensor,
     src2_tensor: &Tensor,
@@ -667,7 +667,7 @@ fn analyze_matmul_dimensions(
 }
 
 fn create_specialized_matmul_command_buffer(
-    gpu: &GPU,
+    gpu: &Gpu,
     command_buffer: vk::CommandBuffer,
     src1_tensor: &Tensor,
     src2_tensor: &Tensor,

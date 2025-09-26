@@ -5,7 +5,7 @@ use crate::instruction::conv::push_constants::{
 use crate::tensor::desc::TensorDesc;
 use crate::utils::bytes::as_bytes;
 use crate::{
-    gpu::vk_gpu::GPU,
+    gpu::vk_gpu::Gpu,
     instruction::{
         conv::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
     },
@@ -154,7 +154,7 @@ impl Instruction for ConvInstruction {
 
     fn create_command_buffer(
         &self,
-        gpu: &GPU,
+        gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,5 +1,5 @@
 use crate::{
-    ComputeManager, gpu::vk_gpu::GPU, instruction::instruction::Instruction,
+    ComputeManager, gpu::vk_gpu::Gpu, instruction::instruction::Instruction,
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
@@ -44,7 +44,7 @@ impl Instruction for ConcatInstruction {
 
     fn create_command_buffer(
         &self,
-        _gpu: &GPU,
+        _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
         _cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {

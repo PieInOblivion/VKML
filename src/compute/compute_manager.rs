@@ -3,7 +3,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
-use crate::gpu::vk_gpu::GPUS;
+use crate::gpu::vk_gpu::GpuPool;
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
 use crate::tensor::cell::TensorCell;
@@ -34,21 +34,21 @@ pub struct ComputeManager {
     pub model: GraphModel,
     pub tensor_graph: TensorGraph,
 
-    gpus: Arc<GPUS>,
+    gpus: Arc<GpuPool>,
     cpu: CPUCompute,
     thread_pool: Arc<ZeroPool>,
 }
 
 impl ComputeManager {
     pub fn new(model: GraphModel, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
-        let gpus = GPUS::new(None)?;
+        let gpus = GpuPool::new(None)?;
         Self::new_with(model, thread_pool, gpus, None)
     }
 
     pub fn new_with(
         mut model: GraphModel,
         thread_pool: Arc<ZeroPool>,
-        gpus: GPUS,
+        gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
@@ -99,7 +99,7 @@ impl ComputeManager {
 
         let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
 
-        let gpus = GPUS::new(None)?;
+        let gpus = GpuPool::new(None)?;
         Self::new_from_tensor_graph_with(tensor_graph, tensor_bytes, thread_pool, gpus, None)
     }
 
@@ -107,7 +107,7 @@ impl ComputeManager {
     pub fn new_onnx_with(
         onnx_path: &str,
         thread_pool: Arc<ZeroPool>,
-        gpus: GPUS,
+        gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
@@ -132,7 +132,7 @@ impl ComputeManager {
         tensor_graph: TensorGraph,
         tensor_bytes: Vec<Option<Box<[u8]>>>,
         thread_pool: Arc<ZeroPool>,
-        gpus: GPUS,
+        gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         let cpu = CPUCompute::new(cpu_memory_limit_bytes);
