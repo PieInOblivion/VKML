@@ -28,7 +28,7 @@ pub struct GpuPool {
 }
 
 impl GpuPool {
-    pub fn new(selected: Option<HashSet<usize>>) -> Result<Self, VKMLError> {
+    pub fn new(selected: Option<Vec<usize>>) -> Result<Self, VKMLError> {
         unsafe {
             let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
             let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
@@ -66,10 +66,19 @@ impl GpuPool {
             // If selected is Some, iterate over those indices and validate them.
             // Otherwise initialise every physical device found.
             if let Some(selected_set) = selected {
+                let mut seen = HashSet::new();
+
                 for &idx in selected_set.iter() {
                     if idx >= physical_devices.len() {
                         return Err(VKMLError::Generic(format!(
                             "Selected GPU index {} out of range",
+                            idx
+                        )));
+                    }
+
+                    if !seen.insert(idx) {
+                        return Err(VKMLError::Generic(format!(
+                            "Duplicate GPU index {} in selection",
                             idx
                         )));
                     }
