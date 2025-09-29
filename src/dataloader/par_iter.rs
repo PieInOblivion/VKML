@@ -120,7 +120,7 @@ impl<T: DataLoader> ParallelDataIterator<T> {
         let elem_size = pending.data_type.size_in_bytes().unwrap_or(4); // fallback; matches previous behaviour
         let num_elems = pending.data.len() / elem_size;
 
-        let desc = TensorDesc::new_with_type(vec![num_elems as i64], pending.data_type);
+        let desc = TensorDesc::new(vec![num_elems as i64], pending.data_type);
 
         Some(Tensor::new_cpu(desc, pending.data.into()))
     }

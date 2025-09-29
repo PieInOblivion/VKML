@@ -1,3 +1,5 @@
+use onnx_extractor::DataType;
+
 use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
@@ -15,7 +17,7 @@ impl ReshapeLayer {
     pub fn flatten() -> Self {
         // Create a special shape [0, 0] that indicates flatten
         Self {
-            target_shape: TensorDesc::new(vec![0, 0]),
+            target_shape: TensorDesc::new(vec![0, 0], DataType::Float),
         }
     }
 
@@ -51,10 +53,10 @@ impl Layer for ReshapeLayer {
                 )));
             }
 
-            return Ok(vec![TensorDesc::new(vec![
-                batch_size,
-                input_elements / batch_size,
-            ])]);
+            return Ok(vec![TensorDesc::new(
+                vec![batch_size, input_elements / batch_size],
+                DataType::Float,
+            )]);
         }
 
         // Get target dimensions
@@ -99,7 +101,7 @@ impl Layer for ReshapeLayer {
                     }
                 }
 
-                Ok(vec![TensorDesc::new(new_dims)])
+                Ok(vec![TensorDesc::new(new_dims, DataType::Float)])
             } else {
                 return Err(VKMLError::VulkanError(
                     "At most one dimension can be inferred (set to 0) in reshape".to_string(),

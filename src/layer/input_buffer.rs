@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use onnx_extractor::DataType;
+
 use crate::{tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
@@ -40,7 +42,10 @@ impl Layer for InputLayer {
             )));
         }
 
-        Ok(vec![TensorDesc::new(vec![batch_size, self.out_features])])
+        Ok(vec![TensorDesc::new(
+            vec![batch_size, self.out_features],
+            DataType::Float,
+        )])
     }
 
     fn input_requirements(&self) -> (usize, Option<usize>) {
@@ -72,12 +77,18 @@ impl Layer for InputLayer {
         let mut tensors = Vec::new();
 
         // output = 0
-        tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
+        tensors.push(TensorDesc::new(
+            vec![batch_size, self.out_features],
+            DataType::Float,
+        ));
 
         // Add gradient tensor if tracking gradients
         if self.track_gradients {
             // gradients = 1
-            tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
+            tensors.push(TensorDesc::new(
+                vec![batch_size, self.out_features],
+                DataType::Float,
+            ));
         }
 
         Ok(LayerExecution {

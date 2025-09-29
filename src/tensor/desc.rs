@@ -7,11 +7,7 @@ pub struct TensorDesc {
 }
 
 impl TensorDesc {
-    pub fn new(dims: Vec<i64>) -> Self {
-        Self::new_with_type(dims, DataType::Float)
-    }
-
-    pub fn new_with_type(dims: Vec<i64>, data_type: DataType) -> Self {
+    pub fn new(dims: Vec<i64>, data_type: DataType) -> Self {
         assert!(!dims.is_empty(), "Tensor dimensions cannot be empty");
         Self { dims, data_type }
     }

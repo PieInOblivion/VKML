@@ -98,7 +98,7 @@ impl OnnxParser {
             )));
         }
 
-        Ok(TensorDesc::new_with_type(dims, onnx_tensor.data_type))
+        Ok(TensorDesc::new(dims, onnx_tensor.data_type))
     }
 
     fn convert_onnx_operation_to_instruction(

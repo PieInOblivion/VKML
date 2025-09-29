@@ -1,3 +1,5 @@
+use onnx_extractor::DataType;
+
 use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
@@ -90,7 +92,7 @@ impl Layer for ConcatLayer {
             .sum();
 
         // Create output tensor descriptor of the appropriate type
-        let output_shape = TensorDesc::new(output_dims);
+        let output_shape = TensorDesc::new(output_dims, DataType::Float);
 
         Ok(vec![output_shape])
     }

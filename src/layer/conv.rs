@@ -1,3 +1,5 @@
+use onnx_extractor::DataType;
+
 use crate::{
     instruction::{self, conv::conv::AutoPad},
     tensor::desc::TensorDesc,
@@ -174,7 +176,7 @@ impl Layer for ConvLayer {
         out_dims.push(self.out_features);
         out_dims.extend(out_spatial.iter());
 
-        Ok(vec![TensorDesc::new(out_dims)])
+        Ok(vec![TensorDesc::new(out_dims, DataType::Float)])
     }
 
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
@@ -186,8 +188,8 @@ impl Layer for ConvLayer {
             w_dims.push(k as i64);
         }
 
-        let weights = TensorDesc::new(w_dims);
-        let biases = TensorDesc::new(vec![self.out_features]);
+        let weights = TensorDesc::new(w_dims, DataType::Float);
+        let biases = TensorDesc::new(vec![self.out_features], DataType::Float);
 
         Some((weights, biases))
     }
@@ -392,20 +394,20 @@ impl Layer for ConvLayer {
         for &k in &self.kernel_shape {
             w_dims.push(k as i64);
         }
-        tensors.push(TensorDesc::new(w_dims));
+        tensors.push(TensorDesc::new(w_dims, DataType::Float));
 
         // output = 2: shape [batch, out_channels, spatial...]
         let mut out_dims: Vec<i64> = Vec::with_capacity(2 + out_spatial.len());
         out_dims.push(batch_size);
         out_dims.push(self.out_features);
         out_dims.extend(out_spatial.iter());
-        tensors.push(TensorDesc::new(out_dims));
+        tensors.push(TensorDesc::new(out_dims, DataType::Float));
 
         let mut bias_idx = None;
         if self.bias {
             // bias = 3
             bias_idx = Some(tensors.len());
-            tensors.push(TensorDesc::new(vec![self.out_features]));
+            tensors.push(TensorDesc::new(vec![self.out_features], DataType::Float));
         }
 
         // Create Conv instruction

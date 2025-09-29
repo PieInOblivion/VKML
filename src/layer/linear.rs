@@ -1,3 +1,5 @@
+use onnx_extractor::DataType;
+
 use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
@@ -58,12 +60,15 @@ impl Layer for LinearLayer {
         }
 
         // Output shape is [batch_size, out_features]
-        Ok(vec![TensorDesc::new(vec![batch_size, self.out_features])])
+        Ok(vec![TensorDesc::new(
+            vec![batch_size, self.out_features],
+            DataType::Float,
+        )])
     }
 
     fn parameter_shapes(&self, _input_shapes: &[&TensorDesc]) -> Option<(TensorDesc, TensorDesc)> {
-        let weights = TensorDesc::new(vec![self.out_features, self.in_features]);
-        let biases = TensorDesc::new(vec![self.out_features]);
+        let weights = TensorDesc::new(vec![self.out_features, self.in_features], DataType::Float);
+        let biases = TensorDesc::new(vec![self.out_features], DataType::Float);
 
         Some((weights, biases))
     }
@@ -133,10 +138,16 @@ impl Layer for LinearLayer {
         tensors.push(input_shape.clone());
 
         // weights = 1
-        tensors.push(TensorDesc::new(vec![self.out_features, self.in_features]));
+        tensors.push(TensorDesc::new(
+            vec![self.out_features, self.in_features],
+            DataType::Float,
+        ));
 
         // output = 2
-        tensors.push(TensorDesc::new(vec![batch_size, self.out_features]));
+        tensors.push(TensorDesc::new(
+            vec![batch_size, self.out_features],
+            DataType::Float,
+        ));
 
         // Create MatMul instruction
         instructions.push(instruction::matmul(0, 1, 2));
@@ -144,7 +155,7 @@ impl Layer for LinearLayer {
         // If using bias, add it
         if self.bias {
             // bias = 3
-            tensors.push(TensorDesc::new(vec![self.out_features]));
+            tensors.push(TensorDesc::new(vec![self.out_features], DataType::Float));
 
             // TODO: Add back add_inplace instruction
             //instructions.push(instruction::add_inplace(2, 3));
