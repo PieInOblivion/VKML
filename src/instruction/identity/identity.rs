@@ -48,12 +48,7 @@ impl Instruction for IdentityInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                next: std::ptr::null(),
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                inheritance_info: std::ptr::null(),
-            };
+            let begin_info = vk::CommandBufferBeginInfo::default();
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;

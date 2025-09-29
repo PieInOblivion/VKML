@@ -10,6 +10,8 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk::Handle;
+use vulkanalia::vk::KhrPushDescriptorExtension;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -46,22 +48,9 @@ impl Instruction for InitHeInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                ..Default::default()
-            };
+            let begin_info = vk::CommandBufferBeginInfo::default();
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;
-
-            let set_layouts = [*gpu.get_descriptor_set_layout()];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                descriptor_pool: *gpu.get_descriptor_pool(),
-                descriptor_set_count: 1,
-                set_layouts: set_layouts.as_ptr(),
-                ..Default::default()
-            };
-            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: dst_mem.buffer,
@@ -70,15 +59,16 @@ impl Instruction for InitHeInstruction {
             };
             let write_descriptor_set = vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                dst_set: descriptor_set,
+                next: std::ptr::null(),
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 0,
+                dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 buffer_info: &buffer_info,
-                ..Default::default()
+                image_info: std::ptr::null(),
+                texel_buffer_view: std::ptr::null(),
             };
-            gpu.get_device()
-                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
             let op_datatype = dst_tensor.desc.data_type();
             let gpu_op = match op_datatype {
@@ -96,13 +86,12 @@ impl Instruction for InitHeInstruction {
                 vk::PipelineBindPoint::COMPUTE,
                 pipeline,
             );
-            gpu.get_device().cmd_bind_descriptor_sets(
+            gpu.get_device().cmd_push_descriptor_set_khr(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
                 gpu.get_layout(),
                 0,
-                &[descriptor_set],
-                &[],
+                &[write_descriptor_set],
             );
 
             let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;

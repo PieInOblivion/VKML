@@ -7,6 +7,8 @@ use crate::{
     tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk::Handle;
+use vulkanalia::vk::KhrPushDescriptorExtension;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -52,24 +54,10 @@ impl Instruction for InitConstantInstruction {
 
         // Use generic constant-init compute shader that writes elements up to 8 bytes
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                ..Default::default()
-            };
+            let begin_info = vk::CommandBufferBeginInfo::default();
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;
-
-            let set_layouts = [*gpu.get_descriptor_set_layout()];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                descriptor_pool: *gpu.get_descriptor_pool(),
-                descriptor_set_count: 1,
-                set_layouts: set_layouts.as_ptr(),
-                ..Default::default()
-            };
-
-            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: dst_mem.buffer,
@@ -79,16 +67,16 @@ impl Instruction for InitConstantInstruction {
 
             let write_descriptor_set = vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                dst_set: descriptor_set,
+                next: std::ptr::null(),
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 0,
+                dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 buffer_info: &buffer_info,
-                ..Default::default()
+                image_info: std::ptr::null(),
+                texel_buffer_view: std::ptr::null(),
             };
-
-            gpu.get_device()
-                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
 
             // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
             let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::InitConstant);
@@ -99,13 +87,12 @@ impl Instruction for InitConstantInstruction {
                 pipeline,
             );
 
-            gpu.get_device().cmd_bind_descriptor_sets(
+            gpu.get_device().cmd_push_descriptor_set_khr(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
                 gpu.get_layout(),
                 0,
-                &[descriptor_set],
-                &[],
+                &[write_descriptor_set],
             );
 
             // Determine element size for this tensor and pass it to the GPU so the shader

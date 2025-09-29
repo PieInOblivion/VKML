@@ -14,6 +14,7 @@ use crate::{
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk::Handle;
+use vulkanalia::vk::KhrPushDescriptorExtension;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -192,26 +193,10 @@ impl Instruction for ConvInstruction {
 
         // Prepare push constants and descriptor set
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                next: std::ptr::null(),
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                inheritance_info: std::ptr::null(),
-            };
+            let begin_info = vk::CommandBufferBeginInfo::default();
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;
-
-            let set_layouts = [*gpu.get_descriptor_set_layout()];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                next: std::ptr::null(),
-                descriptor_pool: *gpu.get_descriptor_pool(),
-                descriptor_set_count: 1,
-                set_layouts: set_layouts.as_ptr(),
-            };
-
-            let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
             // Prepare buffer infos for bindings: src(0), weights(1), dst(2), bias(3)
             let buffer_infos = [
@@ -245,7 +230,7 @@ impl Instruction for ConvInstruction {
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
-                    dst_set: descriptor_set,
+                    dst_set: vk::DescriptorSet::null(),
                     dst_binding: 0,
                     dst_array_element: 0,
                     descriptor_count: 1,
@@ -257,7 +242,7 @@ impl Instruction for ConvInstruction {
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
-                    dst_set: descriptor_set,
+                    dst_set: vk::DescriptorSet::null(),
                     dst_binding: 1,
                     dst_array_element: 0,
                     descriptor_count: 1,
@@ -269,7 +254,7 @@ impl Instruction for ConvInstruction {
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
-                    dst_set: descriptor_set,
+                    dst_set: vk::DescriptorSet::null(),
                     dst_binding: 2,
                     dst_array_element: 0,
                     descriptor_count: 1,
@@ -281,7 +266,7 @@ impl Instruction for ConvInstruction {
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     next: std::ptr::null(),
-                    dst_set: descriptor_set,
+                    dst_set: vk::DescriptorSet::null(),
                     dst_binding: 3,
                     dst_array_element: 0,
                     descriptor_count: 1,
@@ -291,9 +276,6 @@ impl Instruction for ConvInstruction {
                     texel_buffer_view: std::ptr::null(),
                 },
             ];
-
-            gpu.get_device()
-                .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
 
             // Decide which shader/pipeline to use based on spatial rank
             let src_desc = &src_tensor.desc;
@@ -348,14 +330,12 @@ impl Instruction for ConvInstruction {
                         vk::PipelineBindPoint::COMPUTE,
                         pipeline,
                     );
-
-                    gpu.get_device().cmd_bind_descriptor_sets(
+                    gpu.get_device().cmd_push_descriptor_set_khr(
                         command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         gpu.get_layout(),
                         0,
-                        &[descriptor_set],
-                        &[],
+                        &write_descriptor_sets,
                     );
 
                     gpu.get_device().cmd_push_constants(
@@ -411,13 +391,12 @@ impl Instruction for ConvInstruction {
                         pipeline,
                     );
 
-                    gpu.get_device().cmd_bind_descriptor_sets(
+                    gpu.get_device().cmd_push_descriptor_set_khr(
                         command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         gpu.get_layout(),
                         0,
-                        &[descriptor_set],
-                        &[],
+                        &write_descriptor_sets,
                     );
 
                     gpu.get_device().cmd_push_constants(
@@ -488,13 +467,12 @@ impl Instruction for ConvInstruction {
                         pipeline,
                     );
 
-                    gpu.get_device().cmd_bind_descriptor_sets(
+                    gpu.get_device().cmd_push_descriptor_set_khr(
                         command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         gpu.get_layout(),
                         0,
-                        &[descriptor_set],
-                        &[],
+                        &write_descriptor_sets,
                     );
 
                     gpu.get_device().cmd_push_constants(

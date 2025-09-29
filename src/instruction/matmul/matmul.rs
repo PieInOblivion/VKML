@@ -8,6 +8,8 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk::Handle;
+use vulkanalia::vk::KhrPushDescriptorExtension;
 use vulkanalia::{vk, vk::DeviceV1_0};
 
 #[derive(Clone)]
@@ -57,7 +59,7 @@ impl Instruction for MatMulInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_read(self.dst);
 
-        // Avoid borrowing temporaries returned by to_dims(); collect dims first
+        // Collect dims first to avoid borrowing temporaries returned by to_dims()
         let src1_dims_vec = src1_tensor.desc.to_dims();
         let src2_dims_vec = src2_tensor.desc.to_dims();
         let operation = determine_matmul_variant(&src1_dims_vec, &src2_dims_vec);
@@ -402,10 +404,7 @@ fn create_generic_matmul_command_buffer(
         let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Begin command buffer
-        let begin_info = vk::CommandBufferBeginInfo {
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            ..Default::default()
-        };
+        let begin_info = vk::CommandBufferBeginInfo::default();
         gpu.get_device()
             .begin_command_buffer(command_buffer, &begin_info)?;
 
@@ -477,16 +476,6 @@ fn create_generic_matmul_command_buffer(
         pc.extend_from_slice(&b_strides_packed);
         pc.extend_from_slice(&c_strides_packed);
 
-        // Prepare descriptor set for buffers 0..2
-        let set_layouts = [*gpu.get_descriptor_set_layout()];
-        let alloc_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: *gpu.get_descriptor_pool(),
-            descriptor_set_count: 1,
-            set_layouts: set_layouts.as_ptr(),
-            ..Default::default()
-        };
-        let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
-
         let src1_buffer_info = vk::DescriptorBufferInfo {
             buffer: src1_gpu_mem.buffer,
             offset: 0,
@@ -505,7 +494,7 @@ fn create_generic_matmul_command_buffer(
 
         let write_descriptor_sets = [
             vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 0,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
@@ -513,7 +502,7 @@ fn create_generic_matmul_command_buffer(
                 ..Default::default()
             },
             vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 1,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
@@ -521,7 +510,7 @@ fn create_generic_matmul_command_buffer(
                 ..Default::default()
             },
             vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 2,
                 descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: 1,
@@ -529,21 +518,17 @@ fn create_generic_matmul_command_buffer(
                 ..Default::default()
             },
         ];
-        gpu.get_device()
-            .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
-
         gpu.get_device().cmd_bind_pipeline(
             command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             pipeline,
         );
-        gpu.get_device().cmd_bind_descriptor_sets(
+        gpu.get_device().cmd_push_descriptor_set_khr(
             command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             gpu.get_layout(),
             0,
-            &[descriptor_set],
-            &[],
+            &write_descriptor_sets,
         );
 
         // push constants (u32 array as bytes in native-endian)
@@ -679,25 +664,9 @@ fn create_specialized_matmul_command_buffer(
         let src2_mem = src2_tensor.get_gpu_memory_or_panic();
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let begin_info = vk::CommandBufferBeginInfo {
-            s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-            next: std::ptr::null(),
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            inheritance_info: std::ptr::null(),
-        };
+        let begin_info = vk::CommandBufferBeginInfo::default();
         gpu.get_device()
             .begin_command_buffer(command_buffer, &begin_info)?;
-
-        let set_layouts = [*gpu.get_descriptor_set_layout()];
-        let alloc_info = vk::DescriptorSetAllocateInfo {
-            s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-            next: std::ptr::null(),
-            descriptor_pool: *gpu.get_descriptor_pool(),
-            descriptor_set_count: 1,
-            set_layouts: set_layouts.as_ptr(),
-        };
-
-        let descriptor_set = gpu.get_device().allocate_descriptor_sets(&alloc_info)?[0];
 
         let buffer_infos = [
             vk::DescriptorBufferInfo {
@@ -721,7 +690,7 @@ fn create_specialized_matmul_command_buffer(
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                 next: std::ptr::null(),
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
@@ -733,7 +702,7 @@ fn create_specialized_matmul_command_buffer(
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                 next: std::ptr::null(),
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 1,
                 dst_array_element: 0,
                 descriptor_count: 1,
@@ -745,7 +714,7 @@ fn create_specialized_matmul_command_buffer(
             vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                 next: std::ptr::null(),
-                dst_set: descriptor_set,
+                dst_set: vk::DescriptorSet::null(),
                 dst_binding: 2,
                 dst_array_element: 0,
                 descriptor_count: 1,
@@ -756,9 +725,6 @@ fn create_specialized_matmul_command_buffer(
             },
         ];
 
-        gpu.get_device()
-            .update_descriptor_sets(&write_descriptor_sets, &[] as &[vk::CopyDescriptorSet]);
-
         let pipeline = gpu.get_or_create_pipeline(operation);
 
         gpu.get_device().cmd_bind_pipeline(
@@ -767,13 +733,12 @@ fn create_specialized_matmul_command_buffer(
             pipeline,
         );
 
-        gpu.get_device().cmd_bind_descriptor_sets(
+        gpu.get_device().cmd_push_descriptor_set_khr(
             command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             gpu.get_layout(),
             0,
-            &[descriptor_set],
-            &[],
+            &write_descriptor_sets,
         );
 
         // Configure operation-specific parameters and dispatch dimensions

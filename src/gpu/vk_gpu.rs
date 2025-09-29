@@ -123,7 +123,6 @@ pub struct Gpu {
     // These must be dropped in this order
     pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
-    descriptor_pool: vk::DescriptorPool,
     command_pool: vk::CommandPool,
     device: Device,
     instance: Arc<Instance>,
@@ -254,29 +253,13 @@ impl Gpu {
             let descriptor_layout_info = vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 next: ptr::null(),
-                flags: vk::DescriptorSetLayoutCreateFlags::empty(),
+                flags: vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR,
                 binding_count: bindings.len() as u32,
                 bindings: bindings.as_ptr(),
             };
 
             let descriptor_set_layout =
                 device.create_descriptor_set_layout(&descriptor_layout_info, None)?;
-
-            let pool_sizes = [vk::DescriptorPoolSize {
-                type_: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 128, // TODO: check how high this actually needs to be
-            }];
-
-            let descriptor_pool_info = vk::DescriptorPoolCreateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-                next: ptr::null(),
-                flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 128, // TODO: check how high this actually needs to be
-                pool_size_count: pool_sizes.len() as u32,
-                pool_sizes: pool_sizes.as_ptr(),
-            };
-
-            let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_info, None)?;
 
             // 128 bytes is the minimum guaranteed push constant space for the vulkan spec
             let push_constant_range = vk::PushConstantRange {
@@ -323,7 +306,6 @@ impl Gpu {
 
                 pipelines: RwLock::new(HashMap::new()),
                 pipeline_layout,
-                descriptor_pool,
                 command_pool,
                 device,
                 instance,
@@ -384,49 +366,7 @@ impl Gpu {
 
             self.device.unmap_memory(memory);
 
-            let set_layouts = [self.descriptor_set_layout];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                next: ptr::null(),
-                descriptor_pool: self.descriptor_pool,
-                descriptor_set_count: 1,
-                set_layouts: set_layouts.as_ptr(),
-            };
-
-            let descriptor_set = self
-                .device
-                .allocate_descriptor_sets(&alloc_info)
-                .expect_msg("Failed to allocate descriptor set")[0];
-
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer,
-                offset: 0,
-                range: size_in_bytes,
-            };
-
-            let write_descriptor_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: ptr::null(),
-                dst_set: descriptor_set,
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_info,
-                image_info: ptr::null(),
-                texel_buffer_view: ptr::null(),
-            };
-
-            self.device
-                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
-
-            GPUMemory {
-                buffer,
-                memory,
-                size: size_in_bytes,
-                device: Arc::new(self.device.clone()),
-                descriptor_set,
-            }
+            GPUMemory::new(buffer, memory, size_in_bytes, Arc::new(self.device.clone()))
         }
     }
 
@@ -465,48 +405,12 @@ impl Gpu {
 
             self.device.bind_buffer_memory(buffer, memory, 0)?;
 
-            // dont initialise the memory, it will be filled. eg, GPU weight init shaders
-
-            let set_layouts = [self.descriptor_set_layout];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                next: ptr::null(),
-                descriptor_pool: self.descriptor_pool,
-                descriptor_set_count: 1,
-                set_layouts: set_layouts.as_ptr(),
-            };
-
-            let descriptor_set = self.device.allocate_descriptor_sets(&alloc_info)?[0];
-
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer,
-                offset: 0,
-                range: size_in_bytes,
-            };
-
-            let write_descriptor_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: ptr::null(),
-                dst_set: descriptor_set,
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_info,
-                image_info: ptr::null(),
-                texel_buffer_view: ptr::null(),
-            };
-
-            self.device
-                .update_descriptor_sets(&[write_descriptor_set], &[] as &[vk::CopyDescriptorSet]);
-
-            Ok(GPUMemory {
+            Ok(GPUMemory::new(
                 buffer,
                 memory,
-                size: size_in_bytes,
-                device: Arc::new(self.device.clone()),
-                descriptor_set,
-            })
+                size_in_bytes,
+                Arc::new(self.device.clone()),
+            ))
         }
     }
 
@@ -694,10 +598,6 @@ impl Gpu {
 
     pub fn get_device(&self) -> &Device {
         &self.device
-    }
-
-    pub fn get_descriptor_pool(&self) -> &vk::DescriptorPool {
-        &self.descriptor_pool
     }
 
     pub fn get_descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {

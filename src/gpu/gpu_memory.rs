@@ -7,7 +7,6 @@ pub struct GPUMemory {
     pub memory: vk::DeviceMemory,
     pub size: vk::DeviceSize,
     pub device: Arc<Device>,
-    pub descriptor_set: vk::DescriptorSet,
 }
 
 impl GPUMemory {
@@ -16,14 +15,12 @@ impl GPUMemory {
         memory: vk::DeviceMemory,
         size: vk::DeviceSize,
         device: Arc<Device>,
-        descriptor_set: vk::DescriptorSet,
     ) -> Self {
         Self {
             buffer,
             memory,
             size,
             device,
-            descriptor_set,
         }
     }
 
