@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::CString,
     ptr,
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 use vulkanalia::{
     Device, Entry, Instance,
@@ -114,6 +114,8 @@ impl GpuPool {
 // NOTE: Can pipelines be a vec of oncelock?
 
 pub struct Gpu {
+    info: OnceLock<GpuInfo>,
+
     physical_device: vk::PhysicalDevice,
     compute_queues: Vec<vk::Queue>,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -299,6 +301,8 @@ impl Gpu {
             };
 
             Ok(Self {
+                info: OnceLock::new(),
+
                 physical_device,
                 compute_queues,
                 descriptor_set_layout,
@@ -615,10 +619,12 @@ impl Gpu {
     }
 
     pub fn get_info(&self) -> GpuInfo {
-        GpuInfo::new(&self)
+        let info_ref = self.info.get_or_init(|| GpuInfo::new(&self));
+        info_ref.clone()
     }
 }
 
+#[derive(Clone)]
 pub struct GpuInfo {
     name: String,
     device_type: vk::PhysicalDeviceType,
