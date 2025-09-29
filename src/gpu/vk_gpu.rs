@@ -497,7 +497,7 @@ impl Gpu {
             }
 
             // Wait for all fences to signal completion
-            self.device.wait_for_fences(&fences, true, std::u64::MAX)?;
+            self.device.wait_for_fences(&fences, true, u64::MAX)?;
 
             for fence in fences {
                 self.device.destroy_fence(fence, None);
@@ -509,31 +509,19 @@ impl Gpu {
 
     fn create_pipeline(&self, shader_code: &[u8]) -> Result<vk::Pipeline, VKMLError> {
         unsafe {
-            let aligned_code: Vec<u32>;
-            if shader_code.as_ptr().align_offset(4) != 0 {
-                let mut padded = Vec::with_capacity(shader_code.len().div_ceil(4) * 4);
-                padded.extend_from_slice(shader_code);
-                while padded.len() % 4 != 0 {
-                    padded.push(0);
-                }
-                aligned_code = padded
-                    .chunks_exact(4)
-                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
-            } else {
-                // shader_code is 4-byte aligned; convert bytes -> u32 words safely
-                aligned_code = shader_code
-                    .chunks_exact(4)
-                    .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
+            // ensure the shader byte length is a multiple of 4 (SPIR-V is in 32-bit words)
+            if !shader_code.len().is_multiple_of(4) {
+                return Err(VKMLError::Generic(
+                    "shader byte length must be a multiple of 4".to_string(),
+                ));
             }
 
             let shader_info = vk::ShaderModuleCreateInfo {
                 s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
                 next: std::ptr::null(),
                 flags: vk::ShaderModuleCreateFlags::empty(),
-                code_size: aligned_code.len() * 4,
-                code: aligned_code.as_ptr(),
+                code_size: shader_code.len(),
+                code: shader_code.as_ptr() as *const u32,
             };
 
             let shader_module = self.device.create_shader_module(&shader_info, None)?;

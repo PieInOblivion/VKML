@@ -50,15 +50,12 @@ impl MaxPoolInstruction {
         let mut pads_end: Vec<usize> = vec![0; spatial_rank];
 
         if self.pads.len() >= spatial_rank * 2 {
-            for i in 0..spatial_rank {
-                pads_begin[i] = self.pads[i];
-                pads_end[i] = self.pads[spatial_rank + i];
-            }
+            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
+            pads_end[..spatial_rank]
+                .copy_from_slice(&self.pads[spatial_rank..(spatial_rank + spatial_rank)]);
         } else if self.pads.len() == spatial_rank {
-            for i in 0..spatial_rank {
-                pads_begin[i] = self.pads[i];
-                pads_end[i] = self.pads[i];
-            }
+            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
+            pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
         } else if self.auto_pad != AutoPad::NotSet {
             let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
