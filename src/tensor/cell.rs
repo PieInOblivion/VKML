@@ -19,6 +19,8 @@ impl TensorCell {
         unsafe { &*self.tensor.get() }
     }
 
+    // safety: returns mutable ref via UnsafeCell; caller must ensure exclusive access
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn as_mut(&self) -> &mut Tensor {
         unsafe { &mut *self.tensor.get() }
     }

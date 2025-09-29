@@ -786,6 +786,8 @@ impl ComputeManager {
         unsafe { self.tensors[tensor_id].as_ref() }
     }
 
+    // safety: uses UnsafeCell; scheduler guarantees exclusive mutable access
+    #[allow(clippy::mut_from_ref)]
     pub fn tensor_write(&self, tensor_id: usize) -> &mut Tensor {
         unsafe { self.tensors[tensor_id].as_mut() }
     }
