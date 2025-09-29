@@ -554,16 +554,13 @@ impl Instruction for ConvInstruction {
 
         if self.pads.len() >= spatial_rank * 2 {
             // ONNX style [b1..bn, e1..en]
-            for i in 0..spatial_rank {
-                pads_begin[i] = self.pads[i];
-                pads_end[i] = self.pads[spatial_rank + i];
-            }
+            // copy_from_slice is clearer and lets the optimizer/memcpy do the work
+            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
+            pads_end[..spatial_rank].copy_from_slice(&self.pads[spatial_rank..(spatial_rank * 2)]);
         } else if self.pads.len() == spatial_rank {
             // symmetric
-            for i in 0..spatial_rank {
-                pads_begin[i] = self.pads[i];
-                pads_end[i] = self.pads[i];
-            }
+            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
+            pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
         } else if self.auto_pad != AutoPad::NotSet {
             // Compute SAME_UPPER / SAME_LOWER / VALID pads following ONNX semantics
             // Need input spatial sizes
