@@ -140,7 +140,7 @@ impl Gpu {
 
             let device_extensions =
                 instance.enumerate_device_extension_properties(physical_device, None)?;
-            let vk_extensions = VkExtensions::from_extension_properties(&device_extensions);
+            let vk_extensions = VkExtensions::from_extension_properties(&device_extensions)?;
 
             let queue_family_index = queue_families
                 .iter()

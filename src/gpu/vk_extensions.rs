@@ -1,3 +1,4 @@
+use crate::utils::error::VKMLError;
 use std::any::Any;
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -43,6 +44,7 @@ pub struct VkExtensions {
     pub timeline_semaphore: bool,
     pub synchronization2: bool,
     pub memory_budget: bool,
+    pub push_descriptor: bool,
 }
 
 impl VkExtensions {
@@ -52,9 +54,10 @@ impl VkExtensions {
     pub const VK_KHR_TIMELINE_SEMAPHORE: &'static str = "VK_KHR_timeline_semaphore";
     pub const VK_KHR_SYNCHRONIZATION2: &'static str = "VK_KHR_synchronization2";
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
+    pub const VK_KHR_PUSH_DESCRIPTOR: &'static str = "VK_KHR_push_descriptor";
 
     // build from vk::ExtensionProperties returned by Vulkan
-    pub fn from_extension_properties(props: &[vk::ExtensionProperties]) -> Self {
+    pub fn from_extension_properties(props: &[vk::ExtensionProperties]) -> Result<Self, VKMLError> {
         let mut res = VkExtensions::default();
 
         for p in props {
@@ -68,11 +71,18 @@ impl VkExtensions {
                 Self::VK_KHR_TIMELINE_SEMAPHORE => res.timeline_semaphore = true,
                 Self::VK_KHR_SYNCHRONIZATION2 => res.synchronization2 = true,
                 Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
+                Self::VK_KHR_PUSH_DESCRIPTOR => res.push_descriptor = true,
                 _ => {}
             }
         }
 
-        res
+        if !res.push_descriptor {
+            return Err(VKMLError::Generic(
+                "Required device extension VK_KHR_push_descriptor not present".to_string(),
+            ));
+        }
+
+        Ok(res)
     }
 
     // return owned CStrings for extensions we want to enable
@@ -93,6 +103,9 @@ impl VkExtensions {
         }
         if self.memory_budget {
             v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
+        }
+        if self.push_descriptor {
+            v.push(CString::new(Self::VK_KHR_PUSH_DESCRIPTOR).unwrap());
         }
 
         v
@@ -173,8 +186,6 @@ impl VkExtensions {
             head = (&*feat) as *const _ as *mut c_void;
             holders.push(feat);
         }
-
-        // TODO: Does memory_budget need to be enabled? probably. to test later.
 
         DeviceCreateExtras {
             names,
