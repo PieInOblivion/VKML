@@ -58,7 +58,10 @@ impl Instruction for ReshapeInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo::default();
+            let begin_info = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                ..Default::default()
+            };
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;

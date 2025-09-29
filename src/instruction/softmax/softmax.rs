@@ -73,7 +73,10 @@ impl Instruction for SoftmaxInstruction {
         );
 
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo::default();
+            let begin_info = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                ..Default::default()
+            };
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;

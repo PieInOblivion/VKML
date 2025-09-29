@@ -404,7 +404,10 @@ fn create_generic_matmul_command_buffer(
         let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Begin command buffer
-        let begin_info = vk::CommandBufferBeginInfo::default();
+        let begin_info = vk::CommandBufferBeginInfo {
+            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+            ..Default::default()
+        };
         gpu.get_device()
             .begin_command_buffer(command_buffer, &begin_info)?;
 
@@ -664,7 +667,10 @@ fn create_specialized_matmul_command_buffer(
         let src2_mem = src2_tensor.get_gpu_memory_or_panic();
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let begin_info = vk::CommandBufferBeginInfo::default();
+        let begin_info = vk::CommandBufferBeginInfo {
+            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+            ..Default::default()
+        };
         gpu.get_device()
             .begin_command_buffer(command_buffer, &begin_info)?;
 

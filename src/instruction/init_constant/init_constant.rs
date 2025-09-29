@@ -54,7 +54,10 @@ impl Instruction for InitConstantInstruction {
 
         // Use generic constant-init compute shader that writes elements up to 8 bytes
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo::default();
+            let begin_info = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                ..Default::default()
+            };
 
             gpu.get_device()
                 .begin_command_buffer(command_buffer, &begin_info)?;

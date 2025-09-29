@@ -7,7 +7,7 @@ use std::{
 use vulkanalia::{
     Device, Entry, Instance,
     loader::{LIBRARY, LibloadingLoader},
-    vk::{self, DeviceV1_0, Handle, InstanceV1_0},
+    vk::{self, DeviceV1_0, Handle, InstanceV1_0, InstanceV1_1},
 };
 
 use crate::{
@@ -39,10 +39,10 @@ impl GpuPool {
                 s_type: vk::StructureType::APPLICATION_INFO,
                 next: ptr::null(),
                 application_name: aname.as_ptr(),
-                application_version: vk::make_version(1, 0, 0),
+                application_version: vk::make_version(1, 1, 0),
                 engine_name: aname.as_ptr(),
-                engine_version: vk::make_version(1, 0, 0),
-                api_version: vk::make_version(1, 0, 0),
+                engine_version: vk::make_version(1, 1, 0),
+                api_version: vk::make_version(1, 1, 0),
             };
 
             let create_info = vk::InstanceCreateInfo {
@@ -635,14 +635,29 @@ pub struct GpuInfo {
     max_workgroup_invocations: u32,
     max_shared_memory_size: u32,
     compute_queue_count: u32,
+    max_push_descriptors: u32,
 }
 
 impl GpuInfo {
     fn new(gpu: &Gpu) -> GpuInfo {
         unsafe {
-            let properties = gpu
-                .instance
-                .get_physical_device_properties(gpu.physical_device);
+            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
+                next: ptr::null_mut(),
+                max_push_descriptors: 0,
+            };
+
+            let mut props2 = vk::PhysicalDeviceProperties2 {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PROPERTIES_2,
+                next: &mut push_props as *mut _ as *mut std::ffi::c_void,
+                properties: Default::default(),
+            };
+
+            gpu.instance
+                .get_physical_device_properties2(gpu.physical_device, &mut props2);
+
+            let properties = props2.properties;
+
             let queue_families = gpu
                 .instance
                 .get_physical_device_queue_family_properties(gpu.physical_device);
@@ -686,6 +701,7 @@ impl GpuInfo {
                 max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
                 max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
                 compute_queue_count,
+                max_push_descriptors: push_props.max_push_descriptors,
             }
         }
     }
