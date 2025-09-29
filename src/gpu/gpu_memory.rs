@@ -68,12 +68,3 @@ impl GPUMemory {
         Ok(output_data)
     }
 }
-
-impl Drop for GPUMemory {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_buffer(self.buffer, None);
-            self.device.free_memory(self.memory, None);
-        }
-    }
-}

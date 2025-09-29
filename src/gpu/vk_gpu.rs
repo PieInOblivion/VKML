@@ -124,7 +124,7 @@ pub struct Gpu {
     pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
-    device: Device,
+    device: Arc<Device>,
     instance: Arc<Instance>,
 }
 
@@ -198,7 +198,8 @@ impl Gpu {
             };
             // Note: keep 'extras' alive until after device creation so its CStrings and
             // p_next owners remain valid for the call.
-            let device = instance.create_device(physical_device, &device_create_info, None)?;
+            let device =
+                Arc::new(instance.create_device(physical_device, &device_create_info, None)?);
 
             // Get all compute queues
             let mut compute_queues = Vec::with_capacity(requested_queue_count as usize);
@@ -366,7 +367,7 @@ impl Gpu {
 
             self.device.unmap_memory(memory);
 
-            GPUMemory::new(buffer, memory, size_in_bytes, Arc::new(self.device.clone()))
+            GPUMemory::new(buffer, memory, size_in_bytes, self.device.clone())
         }
     }
 
@@ -409,7 +410,7 @@ impl Gpu {
                 buffer,
                 memory,
                 size_in_bytes,
-                Arc::new(self.device.clone()),
+                self.device.clone(),
             ))
         }
     }
@@ -597,7 +598,8 @@ impl Gpu {
     }
 
     pub fn get_device(&self) -> &Device {
-        &self.device
+        // Arc<Device> derefs to Device, return a reference to the inner Device
+        &*self.device
     }
 
     pub fn get_descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {
