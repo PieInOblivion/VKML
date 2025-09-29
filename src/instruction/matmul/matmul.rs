@@ -69,18 +69,18 @@ impl Instruction for MatMulInstruction {
             create_generic_matmul_command_buffer(
                 gpu,
                 command_buffer,
-                &*src1_tensor,
-                &*src2_tensor,
-                &*dst_tensor,
+                src1_tensor,
+                src2_tensor,
+                dst_tensor,
             )
         } else {
             // Use specialised implementation for supported dimensions
             create_specialized_matmul_command_buffer(
                 gpu,
                 command_buffer,
-                &*src1_tensor,
-                &*src2_tensor,
-                &*dst_tensor,
+                src1_tensor,
+                src2_tensor,
+                dst_tensor,
                 operation,
             )
         }
@@ -183,7 +183,7 @@ fn configure_matmul_operation(
             ];
 
             let workgroup_size = 256;
-            let num_groups_x = (n as u32 + workgroup_size - 1) / workgroup_size;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size);
 
             Ok((push_constants, num_groups_x, 1, 1))
         }
@@ -203,7 +203,7 @@ fn configure_matmul_operation(
             ];
 
             let workgroup_size = 256;
-            let num_groups_x = (m as u32 + workgroup_size - 1) / workgroup_size;
+            let num_groups_x = (m as u32).div_ceil(workgroup_size);
 
             Ok((push_constants, num_groups_x, 1, 1))
         }
@@ -228,8 +228,8 @@ fn configure_matmul_operation(
 
             // Calculate workgroup dimensions - 16×16 threads per workgroup
             let workgroup_size = 16;
-            let num_groups_x = (n as u32 + workgroup_size - 1) / workgroup_size;
-            let num_groups_y = (m as u32 + workgroup_size - 1) / workgroup_size;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size);
+            let num_groups_y = (m as u32).div_ceil(workgroup_size);
 
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
@@ -259,9 +259,9 @@ fn configure_matmul_operation(
             // Calculate workgroup dimensions - 8×8×4 threads per workgroup
             let workgroup_size_xy = 8;
             let workgroup_size_z = 4;
-            let num_groups_x = (n as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_y = (m as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_z = (batch as u32 + workgroup_size_z - 1) / workgroup_size_z;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size_xy);
+            let num_groups_y = (m as u32).div_ceil(workgroup_size_xy);
+            let num_groups_z = (batch as u32).div_ceil(workgroup_size_z);
 
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
@@ -291,9 +291,9 @@ fn configure_matmul_operation(
             // Calculate workgroup dimensions - 8×8×4 threads per workgroup
             let workgroup_size_xy = 8;
             let workgroup_size_z = 4;
-            let num_groups_x = (n as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_y = (m as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_z = (batch as u32 + workgroup_size_z - 1) / workgroup_size_z;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size_xy);
+            let num_groups_y = (m as u32).div_ceil(workgroup_size_xy);
+            let num_groups_z = (batch as u32).div_ceil(workgroup_size_z);
 
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
@@ -324,9 +324,9 @@ fn configure_matmul_operation(
             // Calculate workgroup dimensions - 8×8×4 threads per workgroup
             let workgroup_size_xy = 8;
             let workgroup_size_z = 4;
-            let num_groups_x = (n as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_y = (m as u32 + workgroup_size_xy - 1) / workgroup_size_xy;
-            let num_groups_z = (batch as u32 + workgroup_size_z - 1) / workgroup_size_z;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size_xy);
+            let num_groups_y = (m as u32).div_ceil(workgroup_size_xy);
+            let num_groups_z = (batch as u32).div_ceil(workgroup_size_z);
 
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
@@ -351,8 +351,8 @@ fn configure_matmul_operation(
 
             // Calculate workgroup dimensions - 16×16 threads per workgroup
             let workgroup_size = 16;
-            let num_groups_x = (m as u32 + workgroup_size - 1) / workgroup_size;
-            let num_groups_y = (batch as u32 + workgroup_size - 1) / workgroup_size;
+            let num_groups_x = (m as u32).div_ceil(workgroup_size);
+            let num_groups_y = (batch as u32).div_ceil(workgroup_size);
 
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
@@ -377,8 +377,8 @@ fn configure_matmul_operation(
 
             // Calculate workgroup dimensions - 16×16 threads per workgroup
             let workgroup_size = 16;
-            let num_groups_x = (n as u32 + workgroup_size - 1) / workgroup_size;
-            let num_groups_y = (batch as u32 + workgroup_size - 1) / workgroup_size;
+            let num_groups_x = (n as u32).div_ceil(workgroup_size);
+            let num_groups_y = (batch as u32).div_ceil(workgroup_size);
 
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
@@ -559,9 +559,9 @@ fn create_generic_matmul_command_buffer(
         let workgroup_size_y = 16; // from shader
         let workgroup_size_z = 1; // from shader layout(local_size_z = 1)
 
-        let num_groups_x = (n as u32 + workgroup_size_x - 1) / workgroup_size_x;
-        let num_groups_y = (m as u32 + workgroup_size_y - 1) / workgroup_size_y;
-        let num_groups_z = (batch_size_val as u32 + workgroup_size_z - 1) / workgroup_size_z; // if workgroup_size_z is 1, this is just batch_size_val
+        let num_groups_x = (n as u32).div_ceil(workgroup_size_x);
+        let num_groups_y = (m as u32).div_ceil(workgroup_size_y);
+        let num_groups_z = (batch_size_val as u32).div_ceil(workgroup_size_z); // if workgroup_size_z is 1, this is just batch_size_val
 
         gpu.get_device()
             .cmd_dispatch(command_buffer, num_groups_x, num_groups_y, num_groups_z);

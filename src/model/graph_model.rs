@@ -315,13 +315,13 @@ impl GraphModel {
                 )));
             }
 
-            if let Some(max) = max_inputs {
-                if actual_inputs > max {
-                    return Err(VKMLError::VulkanError(format!(
-                        "Layer {} requires at most {} inputs, but has {}",
-                        layer.id, max, actual_inputs
-                    )));
-                }
+            if let Some(max) = max_inputs
+                && actual_inputs > max
+            {
+                return Err(VKMLError::VulkanError(format!(
+                    "Layer {} requires at most {} inputs, but has {}",
+                    layer.id, max, actual_inputs
+                )));
             }
         }
 
@@ -373,10 +373,8 @@ impl GraphModel {
         let mut rec_stack = HashSet::new();
 
         for &id in self.layers.keys() {
-            if !visited.contains(&id) {
-                if self.is_cyclic_util(id, &mut visited, &mut rec_stack) {
-                    return true;
-                }
+            if !visited.contains(&id) && self.is_cyclic_util(id, &mut visited, &mut rec_stack) {
+                return true;
             }
         }
         false

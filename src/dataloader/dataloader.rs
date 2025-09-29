@@ -67,7 +67,7 @@ pub trait DataLoader {
         if self.get_config().drop_last {
             split_size / batch_size
         } else {
-            (split_size + batch_size - 1) / batch_size
+            split_size.div_ceil(batch_size)
         }
     }
 

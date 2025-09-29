@@ -120,7 +120,7 @@ impl Instruction for InitHeInstruction {
             );
 
             let workgroup_size = 256u32;
-            let num_workgroups = ((dst_elems as u32) + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = (dst_elems as u32).div_ceil(workgroup_size);
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups, 1, 1);
 

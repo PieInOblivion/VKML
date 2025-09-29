@@ -462,8 +462,7 @@ impl Gpu {
             // But, is the queue maximum equal across all queues in total, or can one queue use it all if the others are empty?
             // Also what if a device can benefit from using the multiple queues in hardware?
             // Is it better for sequential operations to be in the same queue?
-            let buffers_per_queue =
-                (command_buffers.len() + self.compute_queues.len() - 1) / self.compute_queues.len();
+            let buffers_per_queue = command_buffers.len().div_ceil(self.compute_queues.len());
             let mut fences = Vec::with_capacity(self.compute_queues.len());
 
             // For each queue, create a batch of command buffers
@@ -512,7 +511,7 @@ impl Gpu {
         unsafe {
             let aligned_code: Vec<u32>;
             if shader_code.as_ptr().align_offset(4) != 0 {
-                let mut padded = Vec::with_capacity((shader_code.len() + 3) / 4 * 4);
+                let mut padded = Vec::with_capacity(shader_code.len().div_ceil(4) * 4);
                 padded.extend_from_slice(shader_code);
                 while padded.len() % 4 != 0 {
                     padded.push(0);
@@ -587,9 +586,9 @@ impl Gpu {
 
     pub fn get_or_create_pipeline(&self, op: GPUMemoryOperation) -> vk::Pipeline {
         if let Some(pipeline) = self.get_pipeline_for_op(op) {
-            return pipeline;
+            pipeline
         } else {
-            return self.create_and_get_pipeline(op, op.get_shader_bytes());
+            self.create_and_get_pipeline(op, op.get_shader_bytes())
         }
     }
 
@@ -603,7 +602,7 @@ impl Gpu {
 
     pub fn get_device(&self) -> &Device {
         // Arc<Device> derefs to Device, return a reference to the inner Device
-        &*self.device
+        &self.device
     }
 
     pub fn get_descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {
@@ -619,7 +618,7 @@ impl Gpu {
     }
 
     pub fn get_info(&self) -> GpuInfo {
-        let info_ref = self.info.get_or_init(|| GpuInfo::new(&self));
+        let info_ref = self.info.get_or_init(|| GpuInfo::new(self));
         info_ref.clone()
     }
 }
@@ -709,7 +708,7 @@ impl GpuInfo {
     pub fn system_gpus_info() -> Result<Vec<GpuInfo>, VKMLError> {
         let pool = GpuPool::new(None)?;
 
-        let info: Vec<GpuInfo> = pool.gpus().iter().map(|gpu| GpuInfo::new(gpu)).collect();
+        let info: Vec<GpuInfo> = pool.gpus().iter().map(GpuInfo::new).collect();
 
         Ok(info)
     }

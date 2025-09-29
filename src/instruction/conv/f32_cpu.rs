@@ -28,7 +28,7 @@ pub fn f32_cpu(
     let m = weight_dims[0];
 
     // Validate group configuration
-    if group == 0 || c % group != 0 || m % group != 0 {
+    if group == 0 || !c.is_multiple_of(group) || !m.is_multiple_of(group) {
         panic!(
             "f32_cpu: unsupported group configuration: group={}, C={}, M={}",
             group, c, m

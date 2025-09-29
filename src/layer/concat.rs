@@ -51,9 +51,9 @@ impl Layer for ConcatLayer {
         let ndim = input_shapes[0].to_dims().len();
         for shape in input_shapes.iter().skip(1) {
             if shape.to_dims().len() != ndim {
-                return Err(VKMLError::VulkanError(format!(
-                    "All inputs to Concat must have same number of dimensions"
-                )));
+                return Err(VKMLError::VulkanError(
+                    "All inputs to Concat must have same number of dimensions".to_string(),
+                ));
             }
         }
 

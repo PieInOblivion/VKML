@@ -175,10 +175,10 @@ impl TensorGraph {
         for &layer_id in &model.verified.as_ref().unwrap().exit_points {
             let layer_exec = layer_executions.get(&layer_id).unwrap();
             for &local_output_idx in &layer_exec.outputs {
-                if let Some(global_id) = global_tensor_map.get(&(layer_id, local_output_idx)) {
-                    if seen_outputs.insert(*global_id) {
-                        output_tensors_model.push(*global_id);
-                    }
+                if let Some(global_id) = global_tensor_map.get(&(layer_id, local_output_idx))
+                    && seen_outputs.insert(*global_id)
+                {
+                    output_tensors_model.push(*global_id);
                 }
             }
         }

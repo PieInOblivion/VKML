@@ -122,13 +122,13 @@ impl Instruction for ConcatInstruction {
         let op_datatype = dst_tensor.desc.data_type();
         match op_datatype {
             DataType::Float => {
-                let mut dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+                let dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
                 crate::instruction::concat::f32_cpu::f32_cpu(
                     &src_bytes_vec,
                     &src_dims_vec,
                     self.dim,
                     &dst_desc,
-                    &mut dst_bytes,
+                    dst_bytes,
                 );
             }
             _ => unimplemented!(

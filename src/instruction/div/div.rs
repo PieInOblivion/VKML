@@ -89,10 +89,12 @@ impl Instruction for DivInstruction {
         }
 
         let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
-            .expect(&format!(
-                "GPU Div: Can't broadcast {:?} vs {:?}",
-                src1_dims_usize, src2_dims_usize
-            ));
+            .unwrap_or_else(|| {
+                panic!(
+                    "GPU Div: Can't broadcast {:?} vs {:?}",
+                    src1_dims_usize, src2_dims_usize
+                )
+            });
 
         assert_eq!(
             broadcast_dims, dst_dims_usize,
@@ -234,7 +236,7 @@ impl Instruction for DivInstruction {
 
             let workgroup_size = 256;
             let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
-            let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
+            let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
 
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
@@ -265,7 +267,7 @@ impl Instruction for DivInstruction {
 
         // 1) compute broadcast shape
         let bc = TensorDesc::broadcast_shape(&a, &b)
-            .expect(&format!("Can't broadcast {:?} vs {:?}", a, b));
+            .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);

@@ -67,7 +67,7 @@ impl ConvInstruction {
         } else if self.auto_pad != AutoPad::NotSet {
             let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i] as i64;
+                let in_i = input_spatial[i];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;
@@ -166,9 +166,9 @@ impl Instruction for ConvInstruction {
 
         // Basic sanity checks for group before doing GPU work
         let src_desc_tmp = src_tensor.desc.clone();
-        let c_val = src_desc_tmp.to_dims()[1] as i64;
+        let c_val = src_desc_tmp.to_dims()[1];
         let dst_desc_tmp = dst_tensor.desc.clone();
-        let m_val = dst_desc_tmp.to_dims()[1] as i64;
+        let m_val = dst_desc_tmp.to_dims()[1];
         if self.group < 1 || c_val % self.group != 0 || m_val % self.group != 0 {
             panic!(
                 "ConvInstruction.create_command_buffer: invalid group configuration: group={}, C={}, M={}",
@@ -181,11 +181,7 @@ impl Instruction for ConvInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Optional bias read guard (kept in scope)
-        let bias_tensor_opt = if let Some(bid) = self.bias {
-            Some(cm.tensor_read(bid))
-        } else {
-            None
-        };
+        let bias_tensor_opt = self.bias.map(|bid| cm.tensor_read(bid));
 
         let bias_mem = bias_tensor_opt
             .as_ref()
@@ -314,11 +310,11 @@ impl Instruction for ConvInstruction {
                         m: dst_dims[1] as u32,
                         input_len,
                         output_len,
-                        kernel: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
-                        stride: self.strides.get(0).copied().unwrap_or(1) as u32,
-                        dilation: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                        stride: self.strides.first().copied().unwrap_or(1) as u32,
+                        dilation: self.dilations.first().copied().unwrap_or(1) as u32,
                         // compute pads using the same helper as CPU path
-                        pad_begin: self.compute_pads(src_desc).0.get(0).copied().unwrap_or(0)
+                        pad_begin: self.compute_pads(src_desc).0.first().copied().unwrap_or(0)
                             as u32,
                         group: self.group as u32,
                         has_bias: if self.bias.is_some() { 1 } else { 0 },
@@ -353,7 +349,7 @@ impl Instruction for ConvInstruction {
                     let total: u64 =
                         (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
                     let workgroup_size = 256u64;
-                    let num_groups = ((total + workgroup_size - 1) / workgroup_size) as u32;
+                    let num_groups = total.div_ceil(workgroup_size) as u32;
                     gpu.get_device()
                         .cmd_dispatch(command_buffer, num_groups, 1, 1);
                 }
@@ -371,14 +367,14 @@ impl Instruction for ConvInstruction {
                         in_w: src_dims[3] as u32,
                         out_h: dst_dims[2] as u32,
                         out_w: dst_dims[3] as u32,
-                        k_h: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
+                        k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                         k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        s_h: self.strides.get(0).copied().unwrap_or(1) as u32,
+                        s_h: self.strides.first().copied().unwrap_or(1) as u32,
                         s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        d_h: self.dilations.first().copied().unwrap_or(1) as u32,
                         d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
                         // compute pads using the same helper as CPU path
-                        pad_h: self.compute_pads(src_desc).0.get(0).copied().unwrap_or(0) as u32,
+                        pad_h: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
                         pad_w: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
                         group: self.group as u32,
                         has_bias: if self.bias.is_some() { 1 } else { 0 },
@@ -413,8 +409,8 @@ impl Instruction for ConvInstruction {
                     // dispatch: out_w x out_h workgroups, z dimension encodes (m * n)
                     let out_w = dst_dims[3] as u32;
                     let out_h = dst_dims[2] as u32;
-                    let groups_x = (out_w + 16 - 1) / 16;
-                    let groups_y = (out_h + 16 - 1) / 16;
+                    let groups_x = out_w.div_ceil(16);
+                    let groups_y = out_h.div_ceil(16);
                     let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * m
 
                     gpu.get_device()
@@ -436,16 +432,16 @@ impl Instruction for ConvInstruction {
                         out_d: dst_dims[2] as u32,
                         out_h: dst_dims[3] as u32,
                         out_w: dst_dims[4] as u32,
-                        k_d: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
+                        k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                         k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
                         k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
-                        s_d: self.strides.get(0).copied().unwrap_or(1) as u32,
+                        s_d: self.strides.first().copied().unwrap_or(1) as u32,
                         s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
                         s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
-                        d_d: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        d_d: self.dilations.first().copied().unwrap_or(1) as u32,
                         d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
                         d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
-                        pad_d: self.compute_pads(src_desc).0.get(0).copied().unwrap_or(0) as u32,
+                        pad_d: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
                         pad_h: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
                         pad_w: self.compute_pads(src_desc).0.get(2).copied().unwrap_or(0) as u32,
                         group: {
@@ -487,12 +483,12 @@ impl Instruction for ConvInstruction {
                     );
 
                     // dispatch: x=ceil(out_w/8), y=ceil(out_h/8), z=ceil((out_d * n * m) / local_z)
-                    let groups_x = (dst_dims[4] as u32 + 8 - 1) / 8;
-                    let groups_y = (dst_dims[3] as u32 + 8 - 1) / 8;
+                    let groups_x = (dst_dims[4] as u32).div_ceil(8);
+                    let groups_y = (dst_dims[3] as u32).div_ceil(8);
                     let local_z = 4u32; // shader local size z
                     let total_z =
                         (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                    let groups_z = (total_z + local_z - 1) / local_z;
+                    let groups_z = total_z.div_ceil(local_z);
 
                     gpu.get_device()
                         .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
@@ -511,11 +507,7 @@ impl Instruction for ConvInstruction {
         // drop the read guards before taking a mutable write guard on dst.
         let src_guard = cm.tensor_read(self.src);
         let weights_guard = cm.tensor_read(self.weights);
-        let bias_guard_opt = if let Some(bid) = self.bias {
-            Some(cm.tensor_read(bid))
-        } else {
-            None
-        };
+        let bias_guard_opt = self.bias.map(|bid| cm.tensor_read(bid));
 
         // Clone descriptors (cheap) and copy input bytes (so we can release read locks)
         let src_desc = src_guard.desc.clone();
@@ -538,7 +530,7 @@ impl Instruction for ConvInstruction {
         // Get raw bytes as slices referencing our copied vecs
         let src_bytes: &[u8] = src_bytes_vec.as_slice();
         let weight_bytes: &[u8] = weight_bytes_vec.as_slice();
-        let bias_bytes_opt: Option<&[u8]> = bias_bytes_vec_opt.as_ref().map(|v| v.as_slice());
+        let bias_bytes_opt: Option<&[u8]> = bias_bytes_vec_opt.as_deref();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
         // Spatial rank and normalize kernel/stride/dilation
@@ -580,7 +572,7 @@ impl Instruction for ConvInstruction {
             // Need input spatial sizes
             let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i] as i64;
+                let in_i = input_spatial[i];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;

@@ -106,7 +106,7 @@ impl<T: DataLoader> ParallelDataIterator<T> {
 
         PendingBatch {
             data: buffer,
-            data_type: data_type,
+            data_type,
             future,
         }
     }

@@ -16,8 +16,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
     println!("\nLayer Details:");
     println!("{:-<125}", "");
     println!(
-        "{:<4} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} {}",
-        "ID", "Type", "Memory", "Input Shape", "Output Shape", "Device", "Connections", "Config"
+        "{:<4} {:<12} {:<10} {:<18} {:<18} {:<12} {:<20} Config",
+        "ID", "Type", "Memory", "Input Shape", "Output Shape", "Device", "Connections"
     );
     println!("{:-<125}", "");
 
@@ -308,7 +308,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
             DataType::Uint8 => Some(raw.iter().map(|&b| b as f32).collect()),
             DataType::Int8 => Some(raw.iter().map(|&b| (b as i8) as f32).collect()),
             DataType::Uint16 => {
-                if raw.len() % 2 != 0 {
+                if !raw.len().is_multiple_of(2) {
                     return None;
                 }
                 Some(
@@ -318,7 +318,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Int16 => {
-                if raw.len() % 2 != 0 {
+                if !raw.len().is_multiple_of(2) {
                     return None;
                 }
                 Some(
@@ -328,7 +328,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Uint32 => {
-                if raw.len() % 4 != 0 {
+                if !raw.len().is_multiple_of(4) {
                     return None;
                 }
                 Some(
@@ -338,7 +338,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Int32 => {
-                if raw.len() % 4 != 0 {
+                if !raw.len().is_multiple_of(4) {
                     return None;
                 }
                 Some(
@@ -348,7 +348,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Uint64 => {
-                if raw.len() % 8 != 0 {
+                if !raw.len().is_multiple_of(8) {
                     return None;
                 }
                 Some(
@@ -361,7 +361,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Int64 => {
-                if raw.len() % 8 != 0 {
+                if !raw.len().is_multiple_of(8) {
                     return None;
                 }
                 Some(
@@ -374,7 +374,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Float => {
-                if raw.len() % 4 != 0 {
+                if !raw.len().is_multiple_of(4) {
                     return None;
                 }
                 Some(
@@ -384,7 +384,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 )
             }
             DataType::Double => {
-                if raw.len() % 8 != 0 {
+                if !raw.len().is_multiple_of(8) {
                     return None;
                 }
                 Some(
@@ -513,7 +513,7 @@ fn format_layer_connections(inputs: &[LayerConnection], outputs: &[LayerConnecti
 
     if !out_ids.is_empty() {
         if !result.is_empty() {
-            result.push_str(" ");
+            result.push(' ');
         }
         result.push_str(&format!("out:[{}]", out_ids.join(",")));
     }

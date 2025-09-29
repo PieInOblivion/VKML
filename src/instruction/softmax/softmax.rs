@@ -173,7 +173,7 @@ impl Instruction for SoftmaxInstruction {
             );
 
             // Calculate dispatch size based on batch size (one workgroup per batch)
-            let num_workgroups = (batch_size as u64 + 255) / 256;
+            let num_workgroups = (batch_size as u64).div_ceil(256);
 
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);

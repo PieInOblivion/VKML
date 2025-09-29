@@ -103,9 +103,9 @@ impl Layer for ReshapeLayer {
 
                 Ok(vec![TensorDesc::new(new_dims, DataType::Float)])
             } else {
-                return Err(VKMLError::VulkanError(
+                Err(VKMLError::VulkanError(
                     "At most one dimension can be inferred (set to 0) in reshape".to_string(),
-                ));
+                ))
             }
         }
     }

@@ -62,7 +62,7 @@ impl MaxPoolInstruction {
         } else if self.auto_pad != AutoPad::NotSet {
             let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i] as i64;
+                let in_i = input_spatial[i];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;
@@ -216,12 +216,12 @@ impl Instruction for MaxPoolInstruction {
                         c: src_dims[1] as u32,
                         input_len,
                         output_len,
-                        kernel: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
-                        stride: self.strides.get(0).copied().unwrap_or(1) as u32,
-                        dilation: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                        stride: self.strides.first().copied().unwrap_or(1) as u32,
+                        dilation: self.dilations.first().copied().unwrap_or(1) as u32,
                         pad_begin: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
-                            pb.get(0).copied().unwrap_or(0) as u32
+                            let (pb, _pe) = self.compute_pads(src_desc);
+                            pb.first().copied().unwrap_or(0) as u32
                         },
                     };
 
@@ -254,7 +254,7 @@ impl Instruction for MaxPoolInstruction {
                     let total: u64 =
                         (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
                     let workgroup_size = 256u64;
-                    let num_groups = ((total + workgroup_size - 1) / workgroup_size) as u32;
+                    let num_groups = total.div_ceil(workgroup_size) as u32;
                     gpu.get_device()
                         .cmd_dispatch(command_buffer, num_groups, 1, 1);
                 }
@@ -270,18 +270,18 @@ impl Instruction for MaxPoolInstruction {
                         in_w: src_dims[3] as u32,
                         out_h: dst_dims[2] as u32,
                         out_w: dst_dims[3] as u32,
-                        k_h: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
+                        k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                         k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        s_h: self.strides.get(0).copied().unwrap_or(1) as u32,
+                        s_h: self.strides.first().copied().unwrap_or(1) as u32,
                         s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        d_h: self.dilations.first().copied().unwrap_or(1) as u32,
                         d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
                         pad_h: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
-                            pb.get(0).copied().unwrap_or(0) as u32
+                            let (pb, _pe) = self.compute_pads(src_desc);
+                            pb.first().copied().unwrap_or(0) as u32
                         },
                         pad_w: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
+                            let (pb, _pe) = self.compute_pads(src_desc);
                             pb.get(1).copied().unwrap_or(0) as u32
                         },
                     };
@@ -314,8 +314,8 @@ impl Instruction for MaxPoolInstruction {
 
                     let out_w = dst_dims[3] as u32;
                     let out_h = dst_dims[2] as u32;
-                    let groups_x = (out_w + 16 - 1) / 16;
-                    let groups_y = (out_h + 16 - 1) / 16;
+                    let groups_x = out_w.div_ceil(16);
+                    let groups_y = out_h.div_ceil(16);
                     let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * c
 
                     gpu.get_device()
@@ -335,25 +335,25 @@ impl Instruction for MaxPoolInstruction {
                         out_d: dst_dims[2] as u32,
                         out_h: dst_dims[3] as u32,
                         out_w: dst_dims[4] as u32,
-                        k_d: self.kernel_shape.get(0).copied().unwrap_or(1) as u32,
+                        k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                         k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
                         k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
-                        s_d: self.strides.get(0).copied().unwrap_or(1) as u32,
+                        s_d: self.strides.first().copied().unwrap_or(1) as u32,
                         s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
                         s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
-                        d_d: self.dilations.get(0).copied().unwrap_or(1) as u32,
+                        d_d: self.dilations.first().copied().unwrap_or(1) as u32,
                         d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
                         d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
                         pad_d: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
-                            pb.get(0).copied().unwrap_or(0) as u32
+                            let (pb, _pe) = self.compute_pads(src_desc);
+                            pb.first().copied().unwrap_or(0) as u32
                         },
                         pad_h: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
+                            let (pb, _pe) = self.compute_pads(src_desc);
                             pb.get(1).copied().unwrap_or(0) as u32
                         },
                         pad_w: {
-                            let (pb, _pe) = self.compute_pads(&src_desc);
+                            let (pb, _pe) = self.compute_pads(src_desc);
                             pb.get(2).copied().unwrap_or(0) as u32
                         },
                     };
@@ -384,12 +384,12 @@ impl Instruction for MaxPoolInstruction {
                         push_constant_bytes,
                     );
 
-                    let groups_x = (dst_dims[4] as u32 + 8 - 1) / 8;
-                    let groups_y = (dst_dims[3] as u32 + 8 - 1) / 8;
+                    let groups_x = (dst_dims[4] as u32).div_ceil(8);
+                    let groups_y = (dst_dims[3] as u32).div_ceil(8);
                     let local_z = 4u32;
                     let total_z =
                         (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                    let groups_z = (total_z + local_z - 1) / local_z;
+                    let groups_z = total_z.div_ceil(local_z);
 
                     gpu.get_device()
                         .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
@@ -450,7 +450,7 @@ impl Instruction for MaxPoolInstruction {
             } else if self.auto_pad != AutoPad::NotSet {
                 let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
                 for i in 0..spatial_rank {
-                    let in_i = input_spatial[i] as i64;
+                    let in_i = input_spatial[i];
                     let k = kernel_vec[i] as i64;
                     let s = stride_vec[i] as i64;
                     let d = dil_vec[i] as i64;

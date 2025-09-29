@@ -140,7 +140,7 @@ impl Instruction for ReLUInstruction {
 
             let workgroup_size = 256;
             let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let num_workgroups = (num_elements + workgroup_size as u64 - 1) / workgroup_size as u64;
+            let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
 
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
@@ -169,7 +169,7 @@ impl Instruction for ReLUInstruction {
         let c = dst_tensor.desc.to_dims();
 
         let bc = TensorDesc::broadcast_shape(&a, &c)
-            .expect(&format!("Can't broadcast {:?} vs {:?}", a, c));
+            .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, c));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);

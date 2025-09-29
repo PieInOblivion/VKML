@@ -183,7 +183,7 @@ impl OnnxParser {
                     .as_ref()
                     .expect("Reshape parameter tensor missing");
 
-                if raw.len() % 8 != 0 {
+                if !raw.len().is_multiple_of(8) {
                     return Err(VKMLError::OnnxImporterError(format!(
                         "Reshape: shape initializer has invalid raw byte length {}",
                         raw.len()
@@ -229,45 +229,45 @@ impl OnnxParser {
                 let mut auto_pad = AutoPad::NotSet;
                 let mut ceil_mode = false;
 
-                if let Some(val) = attributes.get("strides") {
-                    if let Some(v) = attr_to_vec(val) {
-                        strides = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("strides")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    strides = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("dilations") {
-                    if let Some(v) = attr_to_vec(val) {
-                        dilations = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("dilations")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    dilations = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("kernel_shape") {
-                    if let Some(v) = attr_to_vec(val) {
-                        kernel_shape = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("kernel_shape")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    kernel_shape = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("pads") {
-                    if let Some(v) = attr_to_vec(val) {
-                        pads = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("pads")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    pads = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("auto_pad") {
-                    if let Some(s) = attr_to_string(val) {
-                        auto_pad = match s.as_str() {
-                            "VALID" => AutoPad::Valid,
-                            "SAME_UPPER" => AutoPad::SameUpper,
-                            "SAME_LOWER" => AutoPad::SameLower,
-                            _ => AutoPad::NotSet,
-                        };
-                    }
+                if let Some(val) = attributes.get("auto_pad")
+                    && let Some(s) = attr_to_string(val)
+                {
+                    auto_pad = match s.as_str() {
+                        "VALID" => AutoPad::Valid,
+                        "SAME_UPPER" => AutoPad::SameUpper,
+                        "SAME_LOWER" => AutoPad::SameLower,
+                        _ => AutoPad::NotSet,
+                    };
                 }
 
-                if let Some(val) = attributes.get("ceil_mode") {
-                    if let Some(i) = attr_to_int(val) {
-                        ceil_mode = i != 0;
-                    }
+                if let Some(val) = attributes.get("ceil_mode")
+                    && let Some(i) = attr_to_int(val)
+                {
+                    ceil_mode = i != 0;
                 }
 
                 Ok(instruction::maxpool(
@@ -302,36 +302,36 @@ impl OnnxParser {
                 let mut pads: Vec<usize> = Vec::new();
                 let mut groups = 1;
 
-                if let Some(val) = attributes.get("strides") {
-                    if let Some(v) = attr_to_vec(val) {
-                        strides = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("strides")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    strides = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("dilations") {
-                    if let Some(v) = attr_to_vec(val) {
-                        dilations = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("dilations")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    dilations = v.iter().map(|x| *x as usize).collect();
                 }
 
-                if let Some(val) = attributes.get("kernel_shape") {
-                    if let Some(v) = attr_to_vec(val) {
-                        kernel_shape = v.iter().map(|x| *x as usize).collect();
-                    }
+                if let Some(val) = attributes.get("kernel_shape")
+                    && let Some(v) = attr_to_vec(val)
+                {
+                    kernel_shape = v.iter().map(|x| *x as usize).collect();
                 }
 
                 // Parse auto_pad per ONNX (default NOTSET)
                 let mut auto_pad: Option<AutoPad> = None;
-                if let Some(val) = attributes.get("auto_pad") {
-                    if let AttributeValue::String(s) = val {
-                        auto_pad = match s.as_str() {
-                            "VALID" => Some(AutoPad::Valid),
-                            "SAME_UPPER" => Some(AutoPad::SameUpper),
-                            "SAME_LOWER" => Some(AutoPad::SameLower),
-                            "NOTSET" | "" => Some(AutoPad::NotSet),
-                            _ => None,
-                        };
-                    }
+                if let Some(val) = attributes.get("auto_pad")
+                    && let AttributeValue::String(s) = val
+                {
+                    auto_pad = match s.as_str() {
+                        "VALID" => Some(AutoPad::Valid),
+                        "SAME_UPPER" => Some(AutoPad::SameUpper),
+                        "SAME_LOWER" => Some(AutoPad::SameLower),
+                        "NOTSET" | "" => Some(AutoPad::NotSet),
+                        _ => None,
+                    };
                 }
                 let auto_pad_val = auto_pad.unwrap_or(AutoPad::NotSet);
 
@@ -357,10 +357,10 @@ impl OnnxParser {
                     }
                 }
 
-                if let Some(val) = attributes.get("group") {
-                    if let AttributeValue::Int(g) = val {
-                        groups = *g;
-                    }
+                if let Some(val) = attributes.get("group")
+                    && let AttributeValue::Int(g) = val
+                {
+                    groups = *g;
                 }
 
                 Ok(instruction::conv(

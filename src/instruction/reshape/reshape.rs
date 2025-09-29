@@ -107,7 +107,7 @@ impl Instruction for ReshapeInstruction {
             }
         } else {
             // allowzero==1: mixing -1 and 0 is invalid per ONNX. Check and error.
-            if new_dims.iter().any(|&d| d == 0) && new_dims.iter().any(|&d| d == -1) {
+            if new_dims.contains(&0) && new_dims.contains(&(-1)) {
                 panic!("Reshape: 'allowzero' set but shape contains both 0 and -1");
             }
         }
@@ -130,7 +130,7 @@ impl Instruction for ReshapeInstruction {
                 }
                 prod = prod.saturating_mul(d as usize);
             }
-            if prod == 0 || src_num % prod != 0 {
+            if prod == 0 || !src_num.is_multiple_of(prod) {
                 panic!("Reshape: cannot infer -1 dimension at runtime");
             }
             let inferred = (src_num / prod) as i64;

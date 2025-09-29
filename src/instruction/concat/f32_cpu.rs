@@ -31,7 +31,7 @@ pub fn f32_cpu(
     // outer = product of dims[0..axis]
     // inner = product of dims[axis+1..]
     let outer: usize = dst_dims[0..axis].iter().map(|d| *d as usize).product();
-    let inner: usize = if axis + 1 <= rank - 1 {
+    let inner: usize = if axis < rank - 1 {
         dst_dims[axis + 1..].iter().map(|d| *d as usize).product()
     } else {
         1usize

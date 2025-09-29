@@ -125,7 +125,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
     layer_ids.sort();
 
     for layer_id in &layer_ids {
-        if let Some(layer) = cm.model.layers.get(&layer_id) {
+        if let Some(layer) = cm.model.layers.get(layer_id) {
             let layer_name = layer.layer.name();
             let layer_config = layer.layer.config_string().unwrap_or_default();
 

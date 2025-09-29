@@ -62,7 +62,7 @@ impl ComputeManager {
         let mut manager = Self {
             tensors: Vec::new(),
             model,
-            tensor_graph: tensor_graph,
+            tensor_graph,
             gpus,
             cpu,
             thread_pool,
@@ -147,7 +147,7 @@ impl ComputeManager {
             thread_pool,
             tensors: Vec::new(),
             model,
-            tensor_graph: tensor_graph,
+            tensor_graph,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -639,14 +639,13 @@ impl ComputeManager {
 
                 match device {
                     DeviceLocation::GPU(idx) => {
-                        let instruction_indices: Vec<usize> =
-                            per_device_ops.iter().map(|op_id| *op_id).collect();
+                        let instruction_indices: Vec<usize> = per_device_ops.to_vec();
 
                         let boxed_task = Box::new(GpuBatchOperationsParams {
                             operations: per_device_ops,
                             instruction_indices,
                             gpu_idx: idx,
-                            compute_manager: &self,
+                            compute_manager: self,
                         });
 
                         pending_gpu_task_boxes.push(boxed_task);
@@ -666,7 +665,7 @@ impl ComputeManager {
                         for &operation_id in &per_device_ops {
                             let boxed = Box::new(SingleCpuOperationParams {
                                 operation_id,
-                                compute_manager: &self,
+                                compute_manager: self,
                             });
 
                             pending_cpu_task_boxes.push(boxed);
@@ -720,7 +719,7 @@ impl ComputeManager {
         let input_tensor_ids = self.tensor_graph.get_operation_inputs(*op_id);
 
         // Check input tensors to determine device
-        for &tensor_id in &input_tensor_ids {
+        if let Some(&tensor_id) = input_tensor_ids.first() {
             match self.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
@@ -732,7 +731,7 @@ impl ComputeManager {
         // If no inputs have device info, check outputs
         let output_tensor_ids = self.tensor_graph.get_operation_outputs(*op_id);
 
-        for &tensor_id in &output_tensor_ids {
+        if let Some(&tensor_id) = output_tensor_ids.first() {
             match self.tensor_read(tensor_id).device {
                 DeviceId::CPU => return Ok(DeviceLocation::CPU),
                 DeviceId::GPU(gpu_idx) => {
@@ -885,7 +884,7 @@ zp_define_task_fn!(
                     .get_instruction_or_panic(params.instruction_indices[i]);
 
                 if instruction
-                    .create_command_buffer(&gpu, command_buffers[i], &params.compute_manager)
+                    .create_command_buffer(gpu, command_buffers[i], params.compute_manager)
                     .is_ok()
                 {
                     valid_buffers.push(command_buffers[i]);
@@ -897,10 +896,10 @@ zp_define_task_fn!(
                 }
             }
 
-            if !valid_buffers.is_empty() {
-                if let Err(e) = gpu.submit_command_buffers_and_wait(&valid_buffers) {
-                    eprintln!("Failed to submit batch operations: {}", e);
-                }
+            if !valid_buffers.is_empty()
+                && let Err(e) = gpu.submit_command_buffers_and_wait(&valid_buffers)
+            {
+                eprintln!("Failed to submit batch operations: {}", e);
             }
 
             gpu.get_device()

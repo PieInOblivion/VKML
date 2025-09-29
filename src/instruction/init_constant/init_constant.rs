@@ -100,10 +100,8 @@ impl Instruction for InitConstantInstruction {
 
             // Determine element size for this tensor and pass it to the GPU so the shader
             // can write using the correct stride/width. Panic if we don't know the size.
-            let elem_size_usize = dst_tensor.desc.data_type().size_in_bytes().expect(&format!(
-                "InitConstant create_command_buffer: unknown element size for DataType {:?}",
-                dst_tensor.desc.data_type()
-            ));
+            let elem_size_usize = dst_tensor.desc.data_type().size_in_bytes().unwrap_or_else(|| panic!("InitConstant create_command_buffer: unknown element size for DataType {:?}",
+                dst_tensor.desc.data_type()));
             let elem_size = elem_size_usize as u32;
 
             // Validate element size (host-side defense). We support up to 8 bytes per element.
@@ -127,7 +125,7 @@ impl Instruction for InitConstantInstruction {
                 );
             }
 
-            let total_words = ((total_bytes_usize + 3) / 4) as u32;
+            let total_words = total_bytes_usize.div_ceil(4) as u32;
 
             // Build a little-endian u64 from the first up to 8 bytes of `self.constant`.
             // Use `.get()` with a default of 0 so GPU path is tolerant of shorter inputs.
@@ -154,7 +152,7 @@ impl Instruction for InitConstantInstruction {
             );
 
             let workgroup_size = 256u32;
-            let num_workgroups = ((total_words as u32) + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = total_words.div_ceil(workgroup_size);
             gpu.get_device()
                 .cmd_dispatch(command_buffer, num_workgroups, 1, 1);
 
@@ -173,10 +171,12 @@ impl Instruction for InitConstantInstruction {
         let dtype = dst.desc.data_type();
 
         // Use DataType's helper to get element size in bytes; panic if unknown so we don't assume a size.
-        let required_elem_bytes: usize = dtype.size_in_bytes().expect(&format!(
-            "InitConstant execute_cpu: unknown element size for DataType {:?}",
-            dtype
-        ));
+        let required_elem_bytes: usize = dtype.size_in_bytes().unwrap_or_else(|| {
+            panic!(
+                "InitConstant execute_cpu: unknown element size for DataType {:?}",
+                dtype
+            )
+        });
         assert!(required_elem_bytes > 0);
 
         // Require that the provided constant bytes contain at least one element.
@@ -195,7 +195,7 @@ impl Instruction for InitConstantInstruction {
         let out = dst.get_cpu_memory_mut_slice_or_panic();
 
         // Destination length must be a multiple of the element size.
-        if out.len() % required_elem_bytes != 0 {
+        if !out.len().is_multiple_of(required_elem_bytes) {
             panic!(
                 "InitConstant execute_cpu: destination length {} is not a multiple of element size {}",
                 out.len(),
