@@ -39,10 +39,10 @@ impl GpuPool {
                 s_type: vk::StructureType::APPLICATION_INFO,
                 next: ptr::null(),
                 application_name: aname.as_ptr(),
-                application_version: vk::make_version(1, 1, 0),
+                application_version: vk::make_version(1, 3, 0),
                 engine_name: aname.as_ptr(),
-                engine_version: vk::make_version(1, 1, 0),
-                api_version: vk::make_version(1, 1, 0),
+                engine_version: vk::make_version(1, 3, 0),
+                api_version: vk::make_version(1, 3, 0),
             };
 
             let create_info = vk::InstanceCreateInfo {

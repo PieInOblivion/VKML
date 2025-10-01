@@ -40,9 +40,6 @@ pub struct DevicePNext {
 #[derive(Clone, Debug, Default)]
 pub struct VkExtensions {
     pub cooperative_matrix: bool,
-    pub shader_float16_int8: bool,
-    pub timeline_semaphore: bool,
-    pub synchronization2: bool,
     pub memory_budget: bool,
     pub push_descriptor: bool,
 }
@@ -50,9 +47,6 @@ pub struct VkExtensions {
 impl VkExtensions {
     // extension names we care about
     pub const VK_KHR_COOPERATIVE_MATRIX: &'static str = "VK_KHR_cooperative_matrix";
-    pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
-    pub const VK_KHR_TIMELINE_SEMAPHORE: &'static str = "VK_KHR_timeline_semaphore";
-    pub const VK_KHR_SYNCHRONIZATION2: &'static str = "VK_KHR_synchronization2";
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
     pub const VK_KHR_PUSH_DESCRIPTOR: &'static str = "VK_KHR_push_descriptor";
 
@@ -67,9 +61,6 @@ impl VkExtensions {
 
             match name.as_ref() {
                 Self::VK_KHR_COOPERATIVE_MATRIX => res.cooperative_matrix = true,
-                Self::VK_KHR_SHADER_FLOAT16_INT8 => res.shader_float16_int8 = true,
-                Self::VK_KHR_TIMELINE_SEMAPHORE => res.timeline_semaphore = true,
-                Self::VK_KHR_SYNCHRONIZATION2 => res.synchronization2 = true,
                 Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
                 Self::VK_KHR_PUSH_DESCRIPTOR => res.push_descriptor = true,
                 _ => {}
@@ -92,15 +83,6 @@ impl VkExtensions {
         if self.cooperative_matrix {
             v.push(CString::new(Self::VK_KHR_COOPERATIVE_MATRIX).unwrap());
         }
-        if self.shader_float16_int8 {
-            v.push(CString::new(Self::VK_KHR_SHADER_FLOAT16_INT8).unwrap());
-        }
-        if self.timeline_semaphore {
-            v.push(CString::new(Self::VK_KHR_TIMELINE_SEMAPHORE).unwrap());
-        }
-        if self.synchronization2 {
-            v.push(CString::new(Self::VK_KHR_SYNCHRONIZATION2).unwrap());
-        }
         if self.memory_budget {
             v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
         }
@@ -117,24 +99,7 @@ impl VkExtensions {
         let names = self.enabled_extension_names();
         let name_ptrs: Vec<*const c_char> =
             names.iter().map(|s| s.as_ptr() as *const c_char).collect();
-        // if no feature structs needed, return an empty pnext owner
-        if !self.timeline_semaphore
-            && !self.synchronization2
-            && !self.shader_float16_int8
-            && !self.cooperative_matrix
-            && !self.memory_budget
-        {
-            return DeviceCreateExtras {
-                names,
-                name_ptrs,
-                pnext: DevicePNext {
-                    ptr: ptr::null_mut(),
-                    _holders: Vec::new(),
-                },
-            };
-        }
 
-        // build a p_next chain: box each feature struct and link via next
         let mut holders: Vec<Box<dyn Any>> = Vec::new();
         let mut head: *mut c_void = ptr::null_mut();
 
@@ -143,43 +108,6 @@ impl VkExtensions {
                 s_type: vk::StructureType::PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
                 next: ptr::null_mut(),
                 cooperative_matrix: vk::TRUE,
-                ..Default::default()
-            });
-            feat.next = head as *mut _;
-            head = (&*feat) as *const _ as *mut c_void;
-            holders.push(feat);
-        }
-
-        if self.shader_float16_int8 {
-            let mut feat = Box::new(vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
-                next: ptr::null_mut(),
-                shader_float16: vk::TRUE,
-                shader_int8: vk::TRUE,
-                ..Default::default()
-            });
-            feat.next = head as *mut _;
-            head = (&*feat) as *const _ as *mut c_void;
-            holders.push(feat);
-        }
-
-        if self.timeline_semaphore {
-            let mut feat = Box::new(vk::PhysicalDeviceTimelineSemaphoreFeatures {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
-                next: ptr::null_mut(),
-                timeline_semaphore: vk::TRUE,
-                ..Default::default()
-            });
-            feat.next = head as *mut _;
-            head = (&*feat) as *const _ as *mut c_void;
-            holders.push(feat);
-        }
-
-        if self.synchronization2 {
-            let mut feat = Box::new(vk::PhysicalDeviceSynchronization2Features {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-                next: ptr::null_mut(),
-                synchronization2: vk::TRUE,
                 ..Default::default()
             });
             feat.next = head as *mut _;
