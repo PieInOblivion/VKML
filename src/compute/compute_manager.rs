@@ -684,10 +684,6 @@ impl ComputeManager {
             for future in futures {
                 future.wait();
             }
-
-            // Drop boxed tasks for this stage now that futures have completed
-            drop(pending_gpu_task_boxes);
-            drop(pending_cpu_task_boxes);
         }
 
         Ok(())
