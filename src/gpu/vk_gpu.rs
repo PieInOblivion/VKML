@@ -1,8 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     ffi::CString,
     ptr,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, OnceLock},
 };
 use vulkanalia::{
     Device, Entry, Instance,
@@ -123,7 +123,7 @@ pub struct Gpu {
     extensions: VkExtensions,
 
     // These must be dropped in this order
-    pipelines: RwLock<HashMap<GPUMemoryOperation, vk::Pipeline>>,
+    pipelines: Vec<OnceLock<vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
     device: Arc<Device>,
@@ -309,7 +309,9 @@ impl Gpu {
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, kept low for testing
                 extensions: vk_extensions,
 
-                pipelines: RwLock::new(HashMap::new()),
+                pipelines: (0..GPUMemoryOperation::VARIANT_COUNT)
+                    .map(|_| OnceLock::new())
+                    .collect(),
                 pipeline_layout,
                 command_pool,
                 device,
@@ -557,19 +559,16 @@ impl Gpu {
     }
 
     fn create_and_get_pipeline(&self, op: GPUMemoryOperation, shader_code: &[u8]) -> vk::Pipeline {
-        let mut compute_pipeline_write = self.pipelines.write().unwrap();
+        let pipeline_ref = self.pipelines[op as usize].get_or_init(|| {
+            self.create_pipeline(shader_code)
+                .expect_msg(&format!("Pipeline creation failed {:?}", op))
+        });
 
-        let new_pipeline = self
-            .create_pipeline(shader_code)
-            .expect_msg(&format!("Pipeline creation failed {:?}", op));
-
-        compute_pipeline_write.insert(op, new_pipeline);
-
-        new_pipeline
+        *pipeline_ref
     }
 
     fn get_pipeline_for_op(&self, op: GPUMemoryOperation) -> Option<vk::Pipeline> {
-        self.pipelines.read().unwrap().get(&op).copied()
+        self.pipelines[op as usize].get().copied()
     }
 
     pub fn get_or_create_pipeline(&self, op: GPUMemoryOperation) -> vk::Pipeline {

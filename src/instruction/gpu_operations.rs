@@ -74,6 +74,9 @@ pub enum GPUMemoryOperation {
 }
 
 impl GPUMemoryOperation {
+    // NOTE: std::mem::variant_count is currently unstable
+    pub const VARIANT_COUNT: usize = 28;
+
     pub fn get_shader_bytes(&self) -> &[u8] {
         match self {
             GPUMemoryOperation::Addition_F32 => ADD_SHADER_F32,
