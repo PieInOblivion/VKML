@@ -111,8 +111,6 @@ impl GpuPool {
     }
 }
 
-// NOTE: Can pipelines be a vec of oncelock?
-
 pub struct Gpu {
     info: OnceLock<GpuInfo>,
 
