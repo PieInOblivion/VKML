@@ -571,10 +571,7 @@ impl ComputeManager {
             let tensor_id = input_tensor_ids[batch_idx];
 
             // Validate size after conversion
-            let expected_bytes = {
-                let tensor = self.tensor_read(tensor_id);
-                tensor.desc.size_in_bytes()
-            };
+            let expected_bytes = self.tensor_read(tensor_id).desc.size_in_bytes();
 
             if batch.buffer.len_bytes() != expected_bytes {
                 return Err(VKMLError::VulkanError(format!(
@@ -591,7 +588,7 @@ impl ComputeManager {
         // Execute the model
         self.execute()?;
 
-        // Gather output data and convert to DataBatch objects
+        // Gather output data and convert to Tensor objects
         let output_tensor_ids = &self.tensor_graph.get_output_tensor_ids();
         let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
 
@@ -601,7 +598,6 @@ impl ComputeManager {
             // Get data from tensor
             let output_data = tensor.read();
 
-            // Create DataBatch with tensor's data type
             // No conversion - just packaging the tensor's data with its type
             let batch = Tensor::new_cpu(tensor.desc.clone(), output_data);
 
