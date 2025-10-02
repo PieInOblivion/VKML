@@ -598,19 +598,12 @@ impl ComputeManager {
         for &tensor_id in output_tensor_ids.iter() {
             let tensor = self.tensor_read(tensor_id);
 
-            // Get data from tensor (currently returns f32, but will return native type in future)
+            // Get data from tensor
             let output_data = tensor.read();
-
-            // For now, get_data() returns f32, so we need to convert to bytes
-            // In future, get_data() will return bytes in the tensor's native format
-            let mut bytes = Vec::with_capacity(output_data.len() * 4);
-            for &value in &output_data {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
 
             // Create DataBatch with tensor's data type
             // No conversion - just packaging the tensor's data with its type
-            let batch = Tensor::new_cpu(tensor.desc.clone(), bytes.into());
+            let batch = Tensor::new_cpu(tensor.desc.clone(), output_data);
 
             output_batches.push(batch);
         }
