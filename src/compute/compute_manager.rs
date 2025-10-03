@@ -40,12 +40,15 @@ pub struct ComputeManager {
 }
 
 impl ComputeManager {
-    pub fn new(model: GraphModel, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
+    pub fn new_from_graph(
+        model: GraphModel,
+        thread_pool: Arc<ZeroPool>,
+    ) -> Result<Self, VKMLError> {
         let gpus = GpuPool::new(None)?;
-        Self::new_with(model, thread_pool, gpus, None)
+        Self::new_from_graph_with(model, thread_pool, gpus, None)
     }
 
-    pub fn new_with(
+    pub fn new_from_graph_with(
         mut model: GraphModel,
         thread_pool: Arc<ZeroPool>,
         gpus: GpuPool,
@@ -89,27 +92,23 @@ impl ComputeManager {
         Ok(manager)
     }
 
-    pub fn new_onnx(onnx_path: &str, thread_pool: Arc<ZeroPool>) -> Result<Self, VKMLError> {
-        let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
-            VKMLError::OnnxImporterError(format!(
-                "Failed to load ONNX model from '{}': {}",
-                onnx_path, e
-            ))
-        })?;
-
-        let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
-
-        let gpus = GpuPool::new(None)?;
-        Self::new_from_tensor_graph_with(tensor_graph, tensor_bytes, thread_pool, gpus, None)
+    pub fn new_from_onnx_path(
+        onnx_path: &str,
+        thread_pool: Arc<ZeroPool>,
+    ) -> Result<Self, VKMLError> {
+        Self::new_from_onnx_path_with(onnx_path, thread_pool, GpuPool::new(None)?, None, 1)
     }
 
     /// Create ComputeManager from ONNX file with custom settings
-    pub fn new_onnx_with(
+    pub fn new_from_onnx_path_with(
         onnx_path: &str,
         thread_pool: Arc<ZeroPool>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
+        batch_size: usize,
     ) -> Result<Self, VKMLError> {
+        assert!(batch_size > 0, "batch_size must be greater than 0");
+
         let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
             VKMLError::OnnxImporterError(format!(
                 "Failed to load ONNX model from '{}': {}",
@@ -117,9 +116,10 @@ impl ComputeManager {
             ))
         })?;
 
-        let (tensor_graph, tensor_bytes) = OnnxParser::parse_onnx_model(onnx_model)?;
+        let (tensor_graph, tensor_bytes) =
+            OnnxParser::parse_onnx_model(onnx_model, batch_size as i64)?;
 
-        Self::new_from_tensor_graph_with(
+        Self::new_from_tensor_graph(
             tensor_graph,
             tensor_bytes,
             thread_pool,
@@ -128,7 +128,7 @@ impl ComputeManager {
         )
     }
 
-    pub fn new_from_tensor_graph_with(
+    fn new_from_tensor_graph(
         tensor_graph: TensorGraph,
         tensor_bytes: Vec<Option<Box<[u8]>>>,
         thread_pool: Arc<ZeroPool>,

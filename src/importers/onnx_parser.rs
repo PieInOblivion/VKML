@@ -13,6 +13,7 @@ impl OnnxParser {
     /// Convert ONNX model to TensorGraph
     pub fn parse_onnx_model(
         onnx_model: OnnxModel,
+        batch_size: i64,
     ) -> Result<(TensorGraph, Vec<Option<Box<[u8]>>>), VKMLError> {
         let mut tensor_descs = Vec::new();
         let mut tensor_bytes = Vec::new();
@@ -23,7 +24,16 @@ impl OnnxParser {
 
         // Create tensors from ONNX model
         for (name, onnx_tensor) in onnx_model.tensors {
-            let onnx_tensor_desc = Self::convert_onnx_tensor_to_desc(&onnx_tensor)?;
+            let mut dims = onnx_tensor.shape.clone();
+
+            // Replace -1 in first dimension with batch_size
+            if let Some(first) = dims.first_mut() {
+                if *first == -1 {
+                    *first = batch_size;
+                }
+            }
+
+            let onnx_tensor_desc = TensorDesc::new(dims, onnx_tensor.data_type);
             memory_requirements += onnx_tensor_desc.size_in_bytes();
 
             tensor_descs.push(onnx_tensor_desc.clone());
@@ -73,32 +83,6 @@ impl OnnxParser {
             },
             tensor_bytes,
         ))
-    }
-
-    fn convert_onnx_tensor_to_desc(onnx_tensor: &OnnxTensor) -> Result<TensorDesc, VKMLError> {
-        // Convert i64 dimensions to usize, handling dynamic dimensions
-        let dims = onnx_tensor.shape
-        .iter()
-        .map(|&dim| {
-            if dim <= 0 {
-                Err(VKMLError::OnnxImporterError(format!(
-                    "Zero/Dynamic dimension {} in tensor '{}' is not supported. All dimensions must be concrete positive values.",
-                    dim, onnx_tensor.name
-                )))
-            } else {
-                Ok(dim)
-            }
-        })
-        .collect::<Result<Vec<i64>, VKMLError>>()?;
-
-        if dims.is_empty() {
-            return Err(VKMLError::OnnxImporterError(format!(
-                "Tensor '{}' has empty dimensions",
-                onnx_tensor.name
-            )));
-        }
-
-        Ok(TensorDesc::new(dims, onnx_tensor.data_type))
     }
 
     fn convert_onnx_operation_to_instruction(
