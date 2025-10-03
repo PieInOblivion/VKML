@@ -10,7 +10,7 @@ pub trait ActivationFunction: Clone {
 pub enum ActivationType {
     ReLU,
     Sigmoid,
-    Softmax(usize),
+    Softmax(Option<i64>),
 }
 
 impl ActivationFunction for ActivationType {
@@ -18,7 +18,10 @@ impl ActivationFunction for ActivationType {
         match self {
             ActivationType::ReLU => "ReLU".to_string(),
             ActivationType::Sigmoid => "Sigmoid".to_string(),
-            ActivationType::Softmax(dim) => format!("Softmax(dim={})", dim),
+            ActivationType::Softmax(axis) => match axis {
+                Some(a) => format!("Softmax(axis={})", a),
+                None => "Softmax(axis=-1)".to_string(),
+            },
         }
     }
 }
@@ -62,7 +65,10 @@ impl Layer for ActivationLayer {
 
     fn config_string(&self) -> Option<String> {
         match &self.activation_type {
-            ActivationType::Softmax(dim) => Some(format!("dim={}", dim)),
+            ActivationType::Softmax(axis) => Some(match axis {
+                Some(a) => format!("axis={}", a),
+                None => "axis=-1".to_string(),
+            }),
             _ => None,
         }
     }
@@ -90,7 +96,7 @@ impl Layer for ActivationLayer {
         let activation_instruction = match &self.activation_type {
             ActivationType::ReLU => instruction::relu(0, 1),
             ActivationType::Sigmoid => instruction::sigmoid(0, 1),
-            ActivationType::Softmax(dim) => instruction::softmax(0, 1, *dim),
+            ActivationType::Softmax(axis) => instruction::softmax(0, 1, *axis),
         };
 
         // Get input mappings using the trait method

@@ -4,7 +4,7 @@ use crate::{
     tensor_graph::tensor_graph::{TensorGraph, TensorId},
     utils::error::VKMLError,
 };
-use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, OnnxTensor};
+use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation};
 use std::collections::HashMap;
 
 pub struct OnnxParser;
@@ -191,16 +191,7 @@ impl OnnxParser {
             }
             "Sigmoid" => Ok(instruction::sigmoid(input_ids[0], output_ids[0])),
             "Softmax" => {
-                // default axis is usually 1
-                let axis = if let Some(a) = attributes.get("axis") {
-                    attr_to_int(a).ok_or_else(|| {
-                        VKMLError::OnnxImporterError(
-                            "Softmax: 'axis' attribute must be an int".to_string(),
-                        )
-                    })? as usize
-                } else {
-                    1usize
-                };
+                let axis = attributes.get("axis").and_then(attr_to_int);
                 Ok(instruction::softmax(input_ids[0], output_ids[0], axis))
             }
             "Identity" => Ok(instruction::identity(input_ids[0], output_ids[0])),

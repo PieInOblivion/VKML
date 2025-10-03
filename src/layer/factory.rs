@@ -96,7 +96,7 @@ impl Layers {
         Box::new(ActivationLayer::new(ActivationType::Sigmoid))
     }
 
-    pub fn softmax(dim: usize) -> Box<dyn Layer> {
-        Box::new(ActivationLayer::new(ActivationType::Softmax(dim)))
+    pub fn softmax(axis: Option<i64>) -> Box<dyn Layer> {
+        Box::new(ActivationLayer::new(ActivationType::Softmax(axis)))
     }
 }

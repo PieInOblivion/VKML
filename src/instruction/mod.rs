@@ -166,8 +166,8 @@ pub fn sigmoid(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(SigmoidInstruction { src, dst })
 }
 
-pub fn softmax(src: TensorId, dst: TensorId, dim: usize) -> Box<dyn Instruction> {
-    Box::new(SoftmaxInstruction { src, dst, dim })
+pub fn softmax(src: TensorId, dst: TensorId, axis: Option<i64>) -> Box<dyn Instruction> {
+    Box::new(SoftmaxInstruction { src, dst, axis })
 }
 
 pub fn sub(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {

@@ -21,16 +21,27 @@ use vulkanalia::{vk, vk::DeviceV1_0};
 pub struct SoftmaxInstruction {
     pub src: TensorId,
     pub dst: TensorId,
-    pub dim: usize,
+    pub axis: Option<i64>,
 }
 
 impl Debug for SoftmaxInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
-            "Softmax(src={}, dst={}, dim={})",
-            self.src, self.dst, self.dim
+            "Softmax(src={}, dst={}, axis={:?})",
+            self.src, self.dst, self.axis
         )
+    }
+}
+
+impl SoftmaxInstruction {
+    fn resolve_axis(&self, rank: usize) -> usize {
+        let axis = self.axis.unwrap_or(-1);
+        if axis < 0 {
+            (rank as i64 + axis) as usize
+        } else {
+            axis as usize
+        }
     }
 }
 
@@ -64,12 +75,15 @@ impl Instruction for SoftmaxInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
+        let dims = src_tensor.desc.to_dims();
+        let dim = self.resolve_axis(dims.len());
+
         // Currently we only support softmax on the last dimension
         assert_eq!(
-            self.dim,
-            src_tensor.desc.to_dims().len() - 1,
+            dim,
+            dims.len() - 1,
             "Only softmax on the last dimension is currently implemented, requested dimension: {}",
-            self.dim
+            dim
         );
 
         unsafe {
@@ -153,7 +167,7 @@ impl Instruction for SoftmaxInstruction {
                 &write_descriptor_sets,
             );
 
-            let feature_size = src_tensor.desc.to_dims()[self.dim] as usize;
+            let feature_size = dims[dim] as usize;
             let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
 
             // Create push constants struct
@@ -198,8 +212,10 @@ impl Instruction for SoftmaxInstruction {
         let dst_tensor = cm.tensor_write(self.dst);
 
         let dims = src_tensor.desc.to_dims();
+        let dim = self.resolve_axis(dims.len());
+
         assert_eq!(
-            self.dim,
+            dim,
             dims.len() - 1,
             "CPU Softmax currently only supports the last dimension"
         );
@@ -209,7 +225,7 @@ impl Instruction for SoftmaxInstruction {
 
         match src_tensor.desc.data_type() {
             DataType::Float => {
-                f32_cpu(dims, self.dim, src_bytes, dst_ptr);
+                f32_cpu(dims, dim, src_bytes, dst_ptr);
             }
             _ => unimplemented!(
                 "softmax.rs unimplemented cpu instruction for DataType {:?}",
