@@ -11,8 +11,6 @@ mod compute;
 
 mod model;
 
-mod dataloader;
-
 mod layer;
 
 mod tensor;
@@ -24,7 +22,6 @@ mod tensor_graph;
 mod importers;
 
 pub use compute::compute_manager::ComputeManager;
-pub use dataloader::config::DataLoaderConfig;
 pub use gpu::vk_gpu::GpuInfo;
 pub use importers::onnx_parser;
 pub use layer::factory::Layers;
