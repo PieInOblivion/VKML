@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::Arc;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::gpu::vk_gpu::GpuPool;
@@ -10,7 +9,7 @@ use crate::tensor::cell::TensorCell;
 use crate::tensor::tensor::{DeviceId, Tensor};
 use crate::utils::error::VKMLError;
 use onnx_extractor::OnnxModel;
-use zero_pool::{ZeroPool, zp_define_task_fn};
+use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::instruction::instruction::Instruction;
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
@@ -36,21 +35,16 @@ pub struct ComputeManager {
 
     gpus: GpuPool,
     cpu: CPUCompute,
-    thread_pool: Arc<ZeroPool>,
 }
 
 impl ComputeManager {
-    pub fn new_from_graph(
-        model: GraphModel,
-        thread_pool: Arc<ZeroPool>,
-    ) -> Result<Self, VKMLError> {
+    pub fn new_from_graph(model: GraphModel) -> Result<Self, VKMLError> {
         let gpus = GpuPool::new(None)?;
-        Self::new_from_graph_with(model, thread_pool, gpus, None)
+        Self::new_from_graph_with(model, gpus, None)
     }
 
     pub fn new_from_graph_with(
         mut model: GraphModel,
-        thread_pool: Arc<ZeroPool>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
@@ -68,7 +62,6 @@ impl ComputeManager {
             tensor_graph,
             gpus,
             cpu,
-            thread_pool,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -92,17 +85,13 @@ impl ComputeManager {
         Ok(manager)
     }
 
-    pub fn new_from_onnx_path(
-        onnx_path: &str,
-        thread_pool: Arc<ZeroPool>,
-    ) -> Result<Self, VKMLError> {
-        Self::new_from_onnx_path_with(onnx_path, thread_pool, GpuPool::new(None)?, None, 1)
+    pub fn new_from_onnx_path(onnx_path: &str) -> Result<Self, VKMLError> {
+        Self::new_from_onnx_path_with(onnx_path, GpuPool::new(None)?, None, 1)
     }
 
     /// Create ComputeManager from ONNX file with custom settings
     pub fn new_from_onnx_path_with(
         onnx_path: &str,
-        thread_pool: Arc<ZeroPool>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
         batch_size: usize,
@@ -119,19 +108,12 @@ impl ComputeManager {
         let (tensor_graph, tensor_bytes) =
             OnnxParser::parse_onnx_model(onnx_model, batch_size as i64)?;
 
-        Self::new_from_tensor_graph(
-            tensor_graph,
-            tensor_bytes,
-            thread_pool,
-            gpus,
-            cpu_memory_limit_bytes,
-        )
+        Self::new_from_tensor_graph(tensor_graph, tensor_bytes, gpus, cpu_memory_limit_bytes)
     }
 
     fn new_from_tensor_graph(
         tensor_graph: TensorGraph,
         tensor_bytes: Vec<Option<Box<[u8]>>>,
-        thread_pool: Arc<ZeroPool>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
@@ -144,7 +126,6 @@ impl ComputeManager {
         let mut manager = Self {
             gpus,
             cpu,
-            thread_pool,
             tensors: Vec::new(),
             model,
             tensor_graph,
@@ -493,7 +474,7 @@ impl ComputeManager {
             });
         }
 
-        self.thread_pool
+        global_pool()
             .submit_batch_uniform(single_allocate_task, &tasks)
             .wait();
 
@@ -641,10 +622,8 @@ impl ComputeManager {
                         let task_ref: &GpuBatchOperationsParams =
                             pending_gpu_task_boxes.last().unwrap().as_ref();
 
-                        futures.push(
-                            self.thread_pool
-                                .submit_task(gpu_batch_operations_task, task_ref),
-                        );
+                        futures
+                            .push(global_pool().submit_task(gpu_batch_operations_task, task_ref));
                     }
                     DeviceLocation::CPU => {
                         // Submit each CPU operation as its own task so they can execute
@@ -662,8 +641,7 @@ impl ComputeManager {
                                 pending_cpu_task_boxes.last().unwrap().as_ref();
 
                             futures.push(
-                                self.thread_pool
-                                    .submit_task(single_cpu_operation_task, task_ref),
+                                global_pool().submit_task(single_cpu_operation_task, task_ref),
                             );
                         }
                     }
