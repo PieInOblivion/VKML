@@ -1,4 +1,5 @@
 use crate::{
+    compute::compute_manager::DeviceLocation,
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
@@ -20,6 +21,30 @@ pub type OperationId = usize;
 
 // Unique identifier for a tensor
 pub type TensorId = usize;
+
+/// Represents a chunk of operations that can be submitted together to a device
+#[derive(Debug, Clone)]
+pub struct ExecutionChunk {
+    pub device: DeviceLocation,
+    pub operations: Vec<OperationId>,
+    /// Dependencies within this chunk: (producer_op_index, consumer_op_index)
+    /// Indices are into the operations vec above
+    pub internal_deps: Vec<(usize, usize)>,
+    /// Timeline semaphore values to wait on before executing: (device, value)
+    pub wait_semaphores: Vec<(DeviceLocation, u64)>,
+    /// Timeline semaphore value to signal when this chunk completes
+    pub signal_value: u64,
+    /// Whether this chunk requires host synchronization before execution
+    pub requires_host_wait: bool,
+}
+
+/// Complete execution plan with dependency tracking for depth-aware scheduling
+#[derive(Debug, Clone)]
+pub struct ExecutionPlan {
+    pub chunks: Vec<ExecutionChunk>,
+    /// Next timeline semaphore value to use (monotonically increasing)
+    pub next_semaphore_value: u64,
+}
 
 pub struct TensorGraph {
     pub tensor_descs: Vec<TensorDesc>,
@@ -195,13 +220,80 @@ impl TensorGraph {
         })
     }
 
+    /// Creates a depth-aware execution plan for Vulkan 1.3+ using synchronization2 and timeline semaphores.
+    ///
+    /// # Requirements & Design
+    ///
+    /// ## Core Concept
+    /// - **Depth-aware scheduling**: Track operation dependencies to submit chains of work in a single batch
+    /// - **Minimize host synchronization**: Submit all work a device can do before needing to wait
+    /// - **Timeline semaphores**: Coordinate multi-device execution without host intervention where possible
+    /// - **Synchronization2**: Use VkDependencyInfo for fine-grained operation dependencies within submissions
+    ///
+    /// ## Execution Model
+    ///
+    /// ### Per-Device Submission Strategy
+    /// - Group operations into **dependency chains** per device
+    /// - Each chain is a sequence of operations where each depends on the previous
+    /// - Independent chains on the same device can be submitted separately (round-robin across queues)
+    /// - Submit entire chains with internal dependencies via synchronization2 in one `vkQueueSubmit2`
+    ///
+    /// ### Cross-Device Synchronization
+    /// - **GPU-to-GPU transfers**: Use transfer operations (already in graph) + timeline semaphores
+    ///   - Note: No direct GPU-to-GPU transfer for different vendors (must go through host)
+    /// - **GPU-to-CPU or CPU-to-GPU**: Explicit host synchronization required
+    /// - **Timeline semaphore values**: Track completion state per stage/submission, not per operation
+    ///
+    /// ### Host Synchronization Points
+    /// Host must wait/signal when:
+    /// 1. A CPU operation needs to execute (requires GPU results or produces GPU inputs)
+    /// 2. Transfer operation requires host-side copy (different vendor GPUs)
+    /// 3. End of graph execution (final outputs ready)
+    ///
+    /// ## Output Structure
+    ///
+    /// The execution plan should return information sufficient to:
+    /// - Identify **submission chunks**: Groups of operations submitted together per device
+    /// - Know **dependencies within chunks**: Which operations depend on which (for synchronization2)
+    /// - Track **cross-chunk dependencies**: When one chunk depends on another (timeline semaphores)
+    /// - Determine **host sync points**: Where CPU must wait before continuing
+    ///
+    /// Potential structure (to be designed):
+    /// ```
+    /// struct ExecutionChunk {
+    ///     device: DeviceLocation,
+    ///     operations: Vec<OperationId>,
+    ///     internal_deps: Vec<(OperationId, OperationId)>, // (producer, consumer) pairs
+    ///     wait_semaphores: Vec<(DeviceLocation, u64)>,    // (device, timeline_value) to wait on
+    ///     signal_semaphore_value: u64,                     // value to signal when done
+    /// }
+    /// ```
+    ///
+    /// ## Allocation Independence
+    /// - Tensor allocation strategy (`allocate_tensor_graph`) determines device placement
+    /// - Execution plan works with whatever allocation decided
+    /// - Graph may have operations on: GPU0 → GPU0 → CPU → GPU0 → GPU1, etc.
+    ///
+    /// ## Implementation Notes for execute()
+    /// - Create timeline semaphores per device (persistent across execution)
+    /// - Use `VkCommandBufferSubmitInfo` + `VkSubmitInfo2` for synchronization2
+    /// - Each operation's command buffer gets dependency info via `VkDependencyInfo`
+    /// - Track semaphore values to coordinate between chunks
+    /// - Host waits only at required synchronization points (not after every stage)
+    ///
+    /// ## Changes Required
+    /// - **This function** (`create_execution_plan`): Complete rewrite for depth-aware planning
+    /// - **`execute()` in compute_manager.rs**: Rewrite to use synchronization2 + timeline semaphores
+    /// - **`vk_gpu.rs`**: Update submission logic to use `vkQueueSubmit2` with dependency chains
+    /// - **Extensions**: Synchronization2 and timeline_semaphore are core in Vulkan 1.3
     pub fn create_execution_plan(&self) -> Vec<Vec<OperationId>> {
+        // Temporary: return old implementation until we have device info
+        // This will be replaced once we refactor to use ExecutionPlan
         use std::collections::{HashSet, VecDeque};
         let num_ops = self.operations.len();
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut in_degree: Vec<usize> = vec![0; num_ops];
 
-        // build dependency graph on the fly
         for curr_op in 0..num_ops {
             let mut preds = HashSet::new();
             for &t in &self.operations[curr_op].get_input_tensor_ids() {
@@ -214,7 +306,6 @@ impl TensorGraph {
             in_degree[curr_op] = preds.len();
         }
 
-        // Kahn's algorithm
         let mut plan = Vec::new();
         let mut dq: VecDeque<OperationId> = VecDeque::new();
         for op in 0..num_ops {
@@ -253,6 +344,200 @@ impl TensorGraph {
             );
         }
         plan
+    }
+
+    /// Creates depth-aware execution plan with proper device and dependency tracking
+    pub fn create_execution_plan_v2(
+        &self,
+        device_locations: &[Option<DeviceLocation>],
+    ) -> ExecutionPlan {
+        use std::collections::HashMap;
+
+        let num_ops = self.operations.len();
+
+        // Pre-build tensor producer map for O(1) lookups instead of O(n) searches
+        let mut tensor_producers: HashMap<TensorId, OperationId> = HashMap::new();
+        for (op_idx, op) in self.operations.iter().enumerate() {
+            for &tid in &op.get_output_tensor_ids() {
+                tensor_producers.insert(tid, op_idx);
+            }
+        }
+
+        // Build dependency graph with pre-sized vectors
+        let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
+        let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
+        let mut in_degree: Vec<usize> = vec![0; num_ops];
+
+        for curr_op in 0..num_ops {
+            let input_ids = self.operations[curr_op].get_input_tensor_ids();
+            let mut pred_set = HashSet::with_capacity(input_ids.len());
+
+            for &t in &input_ids {
+                if let Some(&pred_op) = tensor_producers.get(&t) {
+                    if pred_op != curr_op && pred_set.insert(pred_op) {
+                        successors[pred_op].push(curr_op);
+                        predecessors[curr_op].push(pred_op);
+                    }
+                }
+            }
+            in_degree[curr_op] = pred_set.len();
+        }
+
+        // Determine device for each operation (single pass)
+        let op_devices: Vec<DeviceLocation> = (0..num_ops)
+            .map(|op_id| self.determine_op_device(op_id, device_locations))
+            .collect();
+
+        // Build chunks: collect all operations per device that can execute together
+        let mut chunks = Vec::new();
+        let mut scheduled = vec![false; num_ops];
+        let mut scheduled_count = 0usize;
+        let mut current_semaphore_value = 1u64;
+
+        // Track the last semaphore value signaled by each device
+        let mut device_semaphore_values: HashMap<DeviceLocation, u64> = HashMap::new();
+
+        // Track current in-degrees (mutable copy)
+        let mut current_in_degree = in_degree;
+
+        while scheduled_count < num_ops {
+            // Find all operations ready to execute (in-degree == 0) - optimized iteration
+            let mut device_ops: HashMap<DeviceLocation, Vec<OperationId>> = HashMap::new();
+
+            for op in 0..num_ops {
+                if !scheduled[op] && current_in_degree[op] == 0 {
+                    device_ops
+                        .entry(op_devices[op].clone())
+                        .or_default()
+                        .push(op);
+                }
+            }
+
+            if device_ops.is_empty() {
+                eprintln!(
+                    "Warning: No ready operations but {} unscheduled",
+                    num_ops - scheduled_count
+                );
+                break;
+            }
+
+            // For each device, build the longest chain we can execute
+            for (device, mut ops) in device_ops {
+                if ops.is_empty() {
+                    continue;
+                }
+
+                ops.sort_unstable();
+
+                // Extend the chain: keep adding successors if they're on the same device and ready
+                let mut chain = ops;
+                let mut chain_set: HashSet<OperationId> = chain.iter().copied().collect();
+                let mut check_idx = 0;
+
+                // Use index-based iteration to avoid cloning
+                while check_idx < chain.len() {
+                    let op = chain[check_idx];
+
+                    for &succ in &successors[op] {
+                        if !scheduled[succ]
+                            && !chain_set.contains(&succ)
+                            && op_devices[succ] == device
+                            && predecessors[succ]
+                                .iter()
+                                .all(|&pred| scheduled[pred] || chain_set.contains(&pred))
+                        {
+                            chain.push(succ);
+                            chain_set.insert(succ);
+                        }
+                    }
+
+                    check_idx += 1;
+                }
+
+                // Build internal dependencies with position map for O(1) lookups
+                let position_map: HashMap<OperationId, usize> = chain
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, &op)| (op, idx))
+                    .collect();
+
+                let mut internal_deps = Vec::new();
+                for (local_idx, &op) in chain.iter().enumerate() {
+                    for &pred in &predecessors[op] {
+                        if let Some(&pred_local_idx) = position_map.get(&pred) {
+                            internal_deps.push((pred_local_idx, local_idx));
+                        }
+                    }
+                }
+
+                // Find cross-device dependencies (use HashSet to avoid duplicates)
+                let mut wait_set: HashSet<(DeviceLocation, u64)> = HashSet::new();
+                for &op in &chain {
+                    for &pred in &predecessors[op] {
+                        if scheduled[pred] {
+                            let pred_device = &op_devices[pred];
+                            if pred_device != &device {
+                                if let Some(&sem_val) = device_semaphore_values.get(pred_device) {
+                                    wait_set.insert((pred_device.clone(), sem_val));
+                                }
+                            }
+                        }
+                    }
+                }
+                let wait_semaphores: Vec<_> = wait_set.into_iter().collect();
+
+                let requires_host_wait = matches!(device, DeviceLocation::CPU);
+                let signal_value = current_semaphore_value;
+                current_semaphore_value += 1;
+
+                device_semaphore_values.insert(device.clone(), signal_value);
+
+                chunks.push(ExecutionChunk {
+                    device,
+                    operations: chain.clone(),
+                    internal_deps,
+                    wait_semaphores,
+                    signal_value,
+                    requires_host_wait,
+                });
+
+                // Mark as scheduled and update in-degrees
+                for &op in &chain {
+                    scheduled[op] = true;
+                    scheduled_count += 1;
+                    for &succ in &successors[op] {
+                        current_in_degree[succ] = current_in_degree[succ].saturating_sub(1);
+                    }
+                }
+            }
+        }
+
+        ExecutionPlan {
+            chunks,
+            next_semaphore_value: current_semaphore_value,
+        }
+    }
+
+    fn determine_op_device(
+        &self,
+        op_id: OperationId,
+        device_locations: &[Option<DeviceLocation>],
+    ) -> DeviceLocation {
+        // Check input tensors
+        for &tid in &self.operations[op_id].get_input_tensor_ids() {
+            if let Some(Some(dev)) = device_locations.get(tid) {
+                return dev.clone();
+            }
+        }
+
+        // Check output tensors
+        for &tid in &self.operations[op_id].get_output_tensor_ids() {
+            if let Some(Some(dev)) = device_locations.get(tid) {
+                return dev.clone();
+            }
+        }
+
+        DeviceLocation::CPU
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {
