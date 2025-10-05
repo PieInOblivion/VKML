@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ptr;
 use std::sync::OnceLock;
 
@@ -200,12 +199,14 @@ impl ComputeManager {
         let mut tensor_locations: Vec<Option<DeviceLocation>> =
             vec![None; self.tensor_graph.tensor_descs.len()];
 
-        // Maintain a list of tensor remappings: (original_id, device) -> new_id
-        let mut tensor_remappings: HashMap<(usize, DeviceLocation), usize> = HashMap::new();
+        // Maintain a list of tensor remappings per tensor: tensor_id -> [(device, new_id)]
+        // Most tensors have 0-1 remappings, so a small Vec is more efficient than HashMap
+        let mut tensor_remappings: Vec<Vec<(DeviceLocation, usize)>> =
+            vec![Vec::new(); self.tensor_graph.tensor_descs.len()];
 
-        // Store remappings needed for operations: op_id -> (new_inputs, new_outputs)
-        let mut operation_remappings: HashMap<OperationId, (Vec<usize>, Vec<usize>)> =
-            HashMap::new();
+        // Store remappings needed for operations: indexed by op_id
+        let mut operation_remappings: Vec<Option<(Vec<usize>, Vec<usize>)>> =
+            vec![None; self.tensor_graph.operations.len()];
 
         // New tensors created for transfers or device-local outputs - including layer info
         let mut new_tensors: Vec<(TensorDesc, DeviceLocation, Option<LayerId>)> = Vec::new();
@@ -250,7 +251,7 @@ impl ComputeManager {
                         }
                         Some(loc) if loc != cand_device => {
                             // already allocated elsewhere -> we need to create a remapped tensor here
-                            if !tensor_remappings.contains_key(&(tid, cand_device.clone())) {
+                            if !tensor_remappings[tid].iter().any(|(dev, _)| dev == cand_device) {
                                 needed = needed.saturating_add(tensor_size(tid));
                             }
                         }
@@ -265,7 +266,7 @@ impl ComputeManager {
                             needed = needed.saturating_add(tensor_size(tid));
                         }
                         Some(loc) if loc != cand_device => {
-                            if !tensor_remappings.contains_key(&(tid, cand_device.clone())) {
+                            if !tensor_remappings[tid].iter().any(|(dev, _)| dev == cand_device) {
                                 needed = needed.saturating_add(tensor_size(tid));
                             }
                         }
@@ -309,8 +310,10 @@ impl ComputeManager {
                         new_inputs.push(tid);
                     }
                     Some(loc) if loc != &current_device => {
-                        let key = (tid, current_device.clone());
-                        if let Some(&mapped_id) = tensor_remappings.get(&key) {
+                        if let Some(&(_, mapped_id)) = tensor_remappings[tid]
+                            .iter()
+                            .find(|(dev, _)| dev == &current_device)
+                        {
                             new_inputs.push(mapped_id);
                             remapping_needed = true;
                         } else {
@@ -342,7 +345,7 @@ impl ComputeManager {
                             );
                             transfer_operations.push((op_id, transfer_instr));
 
-                            tensor_remappings.insert(key, new_tensor_id);
+                            tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
                             new_inputs.push(new_tensor_id);
                             remapping_needed = true;
                         }
@@ -365,8 +368,10 @@ impl ComputeManager {
                         new_outputs.push(tid);
                     }
                     Some(loc) if loc != &current_device => {
-                        let key = (tid, current_device.clone());
-                        if let Some(&mapped_id) = tensor_remappings.get(&key) {
+                        if let Some(&(_, mapped_id)) = tensor_remappings[tid]
+                            .iter()
+                            .find(|(dev, _)| dev == &current_device)
+                        {
                             new_outputs.push(mapped_id);
                             remapping_needed = true;
                         } else {
@@ -385,7 +390,7 @@ impl ComputeManager {
                                 current_device.clone(),
                                 original_layer_id,
                             ));
-                            tensor_remappings.insert(key, new_tensor_id);
+                            tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
                             new_outputs.push(new_tensor_id);
                             remapping_needed = true;
                         }
@@ -397,7 +402,7 @@ impl ComputeManager {
             }
 
             if remapping_needed {
-                operation_remappings.insert(op_id, (new_inputs, new_outputs));
+                operation_remappings[op_id] = Some((new_inputs, new_outputs));
             }
         }
 
@@ -438,11 +443,12 @@ impl ComputeManager {
 
         // 3. Apply the tensor remappings to all operations. We need to account for how many
         // transfer ops were inserted before each original op index.
-        let mut remap_entries: Vec<(OperationId, Vec<usize>, Vec<usize>)> = operation_remappings
+        let remap_entries: Vec<(OperationId, Vec<usize>, Vec<usize>)> = operation_remappings
             .into_iter()
-            .map(|(op, (ins, outs))| (op, ins, outs))
+            .enumerate()
+            .filter_map(|(op_id, opt)| opt.map(|(ins, outs)| (op_id, ins, outs)))
             .collect();
-        remap_entries.sort_by_key(|e| e.0);
+        // Already sorted since we iterate by index
 
         // Two-pointer sweep to compute number of transfers inserted before each op
         let mut t_idx = 0usize;
