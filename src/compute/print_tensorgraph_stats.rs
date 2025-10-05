@@ -7,7 +7,7 @@ use std::collections::HashSet;
 pub fn print_tensor_flow(cm: &ComputeManager) {
     println!("\n=== TENSOR GRAPH VISUALIZATION ===\n");
 
-    let execution_plan = cm.tensor_graph.create_execution_plan();
+    let execution_plan = cm.tensor_graph.create_stage_plan();
 
     println!("Execution Plan: {} stages", execution_plan.len());
     println!("{:-<100}", "");

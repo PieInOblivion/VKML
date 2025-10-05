@@ -218,75 +218,10 @@ impl TensorGraph {
         })
     }
 
-    /// Creates a depth-aware execution plan for Vulkan 1.3+ using synchronization2 and timeline semaphores.
-    ///
-    /// # Requirements & Design
-    ///
-    /// ## Core Concept
-    /// - **Depth-aware scheduling**: Track operation dependencies to submit chains of work in a single batch
-    /// - **Minimize host synchronization**: Submit all work a device can do before needing to wait
-    /// - **Timeline semaphores**: Coordinate multi-device execution without host intervention where possible
-    /// - **Synchronization2**: Use VkDependencyInfo for fine-grained operation dependencies within submissions
-    ///
-    /// ## Execution Model
-    ///
-    /// ### Per-Device Submission Strategy
-    /// - Group operations into **dependency chains** per device
-    /// - Each chain is a sequence of operations where each depends on the previous
-    /// - Independent chains on the same device can be submitted separately (round-robin across queues)
-    /// - Submit entire chains with internal dependencies via synchronization2 in one `vkQueueSubmit2`
-    ///
-    /// ### Cross-Device Synchronization
-    /// - **GPU-to-GPU transfers**: Use transfer operations (already in graph) + timeline semaphores
-    ///   - Note: No direct GPU-to-GPU transfer for different vendors (must go through host)
-    /// - **GPU-to-CPU or CPU-to-GPU**: Explicit host synchronization required
-    /// - **Timeline semaphore values**: Track completion state per stage/submission, not per operation
-    ///
-    /// ### Host Synchronization Points
-    /// Host must wait/signal when:
-    /// 1. A CPU operation needs to execute (requires GPU results or produces GPU inputs)
-    /// 2. Transfer operation requires host-side copy (different vendor GPUs)
-    /// 3. End of graph execution (final outputs ready)
-    ///
-    /// ## Output Structure
-    ///
-    /// The execution plan should return information sufficient to:
-    /// - Identify **submission chunks**: Groups of operations submitted together per device
-    /// - Know **dependencies within chunks**: Which operations depend on which (for synchronization2)
-    /// - Track **cross-chunk dependencies**: When one chunk depends on another (timeline semaphores)
-    /// - Determine **host sync points**: Where CPU must wait before continuing
-    ///
-    /// Potential structure (to be designed):
-    /// ```
-    /// struct ExecutionChunk {
-    ///     device: DeviceLocation,
-    ///     operations: Vec<OperationId>,
-    ///     internal_deps: Vec<(OperationId, OperationId)>, // (producer, consumer) pairs
-    ///     wait_semaphores: Vec<(DeviceLocation, u64)>,    // (device, timeline_value) to wait on
-    ///     signal_semaphore_value: u64,                     // value to signal when done
-    /// }
-    /// ```
-    ///
-    /// ## Allocation Independence
-    /// - Tensor allocation strategy (`allocate_tensor_graph`) determines device placement
-    /// - Execution plan works with whatever allocation decided
-    /// - Graph may have operations on: GPU0 → GPU0 → CPU → GPU0 → GPU1, etc.
-    ///
-    /// ## Implementation Notes for execute()
-    /// - Create timeline semaphores per device (persistent across execution)
-    /// - Use `VkCommandBufferSubmitInfo` + `VkSubmitInfo2` for synchronization2
-    /// - Each operation's command buffer gets dependency info via `VkDependencyInfo`
-    /// - Track semaphore values to coordinate between chunks
-    /// - Host waits only at required synchronization points (not after every stage)
-    ///
-    /// ## Changes Required
-    /// - **This function** (`create_execution_plan`): Complete rewrite for depth-aware planning
-    /// - **`execute()` in compute_manager.rs**: Rewrite to use synchronization2 + timeline semaphores
-    /// - **`vk_gpu.rs`**: Update submission logic to use `vkQueueSubmit2` with dependency chains
-    /// - **Extensions**: Synchronization2 and timeline_semaphore are core in Vulkan 1.3
-    pub fn create_execution_plan(&self) -> Vec<Vec<OperationId>> {
-        // Temporary: return old implementation until we have device info
-        // This will be replaced once we refactor to use ExecutionPlan
+    /// Creates a simple stage-based plan for allocation and debugging.
+    /// Returns operations grouped into stages where all ops in a stage can run in parallel.
+    /// Used for tensor allocation planning and debug visualization.
+    pub fn create_stage_plan(&self) -> Vec<Vec<OperationId>> {
         let num_ops = self.operations.len();
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut in_degree: Vec<usize> = vec![0; num_ops];
@@ -343,8 +278,9 @@ impl TensorGraph {
         plan
     }
 
-    /// Creates depth-aware execution plan with proper device and dependency tracking
-    pub fn create_execution_plan_v2(
+    /// Creates depth-aware execution plan with proper device and dependency tracking.
+    /// This is the main execution planning function used by the compute manager.
+    pub fn create_execution_plan(
         &self,
         device_locations: &[Option<DeviceLocation>],
     ) -> ExecutionPlan {
