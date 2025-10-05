@@ -48,9 +48,10 @@ impl Layer for ConcatLayer {
         }
 
         // Check that all inputs have the same number of dimensions
-        let ndim = input_shapes[0].to_dims().len();
+        let first_dims = input_shapes[0].dims();
+        let ndim = first_dims.len();
         for shape in input_shapes.iter().skip(1) {
-            if shape.to_dims().len() != ndim {
+            if shape.dims().len() != ndim {
                 return Err(VKMLError::VulkanError(
                     "All inputs to Concat must have same number of dimensions".to_string(),
                 ));
@@ -71,9 +72,9 @@ impl Layer for ConcatLayer {
                 continue;
             }
 
-            let size = input_shapes[0].to_dims()[d];
+            let size = first_dims[d];
             for shape in input_shapes.iter().skip(1) {
-                if shape.to_dims()[d] != size {
+                if shape.dims()[d] != size {
                     return Err(VKMLError::VulkanError(format!(
                         "Dimension {} must have same size for all inputs to Concat",
                         d
@@ -83,12 +84,12 @@ impl Layer for ConcatLayer {
         }
 
         // Calculate the output shape
-        let mut output_dims = input_shapes[0].to_dims();
+        let mut output_dims = first_dims.to_vec();
 
         // Sum the sizes along the concat dimension
         output_dims[self.dim] = input_shapes
             .iter()
-            .map(|shape| shape.to_dims()[self.dim])
+            .map(|shape| shape.dims()[self.dim])
             .sum();
 
         // Create output tensor descriptor of the appropriate type

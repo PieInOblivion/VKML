@@ -51,7 +51,7 @@ impl Layer for LinearLayer {
             )));
         }
 
-        let cols = input_shape.to_dims()[1];
+        let cols = input_shape.dims()[1];
         if cols != self.in_features {
             return Err(VKMLError::VulkanError(format!(
                 "Linear layer expected {} input features, got {}",
@@ -123,7 +123,7 @@ impl Layer for LinearLayer {
             ));
         }
 
-        let cols = input_shape.to_dims()[1];
+        let cols = input_shape.dims()[1];
         if cols != self.in_features {
             return Err(VKMLError::VulkanError(format!(
                 "Linear layer expects {} input features, got {}",

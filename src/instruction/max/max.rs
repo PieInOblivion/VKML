@@ -69,13 +69,13 @@ impl Instruction for MaxInstruction {
         let src2_desc = &src2_tensor.desc;
         let dst_desc = &dst_tensor.desc;
 
-        let src1_dims_usize = src1_desc.to_dims();
-        let src2_dims_usize = src2_desc.to_dims();
-        let dst_dims_usize = dst_desc.to_dims();
+        let src1_dims = src1_desc.dims();
+        let src2_dims = src2_desc.dims();
+        let dst_dims = dst_desc.dims();
 
         // Prepare push constant data using shared PushConstants
 
-        let rank = dst_dims_usize.len() as u32;
+        let rank = dst_dims.len() as u32;
         assert!(
             rank <= 8,
             "Max: tensor rank {} exceeds maximum supported rank of 8",
@@ -83,26 +83,26 @@ impl Instruction for MaxInstruction {
         );
 
         let mut dims_arr = [0u32; 8];
-        for i in 0..dst_dims_usize.len() {
-            dims_arr[i] = dst_dims_usize[i] as u32;
+        for i in 0..dst_dims.len() {
+            dims_arr[i] = dst_dims[i] as u32;
         }
 
-        let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
-            .unwrap_or_else(|| {
+        let broadcast_dims =
+            TensorDesc::broadcast_shape(src1_dims, src2_dims).unwrap_or_else(|| {
                 panic!(
                     "GPU Max: Can't broadcast {:?} vs {:?}",
-                    src1_dims_usize, src2_dims_usize
+                    src1_dims, src2_dims
                 )
             });
 
         assert_eq!(
-            broadcast_dims, dst_dims_usize,
+            broadcast_dims, dst_dims,
             "GPU Max: Broadcast shape {:?} != dst shape {:?}",
-            broadcast_dims, dst_dims_usize
+            broadcast_dims, dst_dims
         );
 
-        let strides_a_usize = TensorDesc::broadcast_strides(&src1_dims_usize, &dst_dims_usize);
-        let strides_b_usize = TensorDesc::broadcast_strides(&src2_dims_usize, &dst_dims_usize);
+        let strides_a_usize = TensorDesc::broadcast_strides(src1_dims, dst_dims);
+        let strides_b_usize = TensorDesc::broadcast_strides(src2_dims, dst_dims);
 
         let mut strides_a_arr = [0u32; 8];
         for i in 0..strides_a_usize.len() {
@@ -118,7 +118,7 @@ impl Instruction for MaxInstruction {
             }
         }
 
-        let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+        let total_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
 
         let push_const_values = MaxPushConstants {
             rank,
@@ -234,7 +234,7 @@ impl Instruction for MaxInstruction {
             );
 
             let workgroup_size = 256;
-            let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+            let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
             let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
 
             gpu.get_device()
@@ -259,16 +259,16 @@ impl Instruction for MaxInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src1_tensor.desc.to_dims();
-        let b = src2_tensor.desc.to_dims();
-        let c = dst_tensor.desc.to_dims();
+        let a = src1_tensor.desc.dims();
+        let b = src2_tensor.desc.dims();
+        let c = dst_tensor.desc.dims().to_vec();
 
-        let bc = TensorDesc::broadcast_shape(&a, &b)
+        let bc = TensorDesc::broadcast_shape(a, b)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
-        let sa = TensorDesc::broadcast_strides(&a, &c);
-        let sb = TensorDesc::broadcast_strides(&b, &c);
+        let sa = TensorDesc::broadcast_strides(a, &c);
+        let sb = TensorDesc::broadcast_strides(b, &c);
 
         let op_datatype = dst_tensor.desc.data_type();
 

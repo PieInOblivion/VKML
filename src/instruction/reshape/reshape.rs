@@ -99,7 +99,7 @@ impl Instruction for ReshapeInstruction {
 
         if !allowzero_flag {
             let src_desc = cm.tensor_read(self.src).desc.clone();
-            let src_dims = src_desc.to_dims();
+            let src_dims = src_desc.dims();
             for (i, val) in new_dims.iter_mut().enumerate() {
                 if *val == 0 {
                     *val = *src_dims.get(i).unwrap_or(&1);

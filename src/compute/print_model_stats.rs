@@ -98,7 +98,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
                             let output_tensor_id = connected_layer_outputs[output_idx];
                             if output_tensor_id < cm.tensors.len() {
                                 let tensor = cm.tensor_read(output_tensor_id);
-                                let dims = tensor.desc.to_dims();
+                                let dims = tensor.desc.dims();
                                 return Some(format_dimensions(&dims));
                             }
                         }
@@ -110,7 +110,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let output_shapes_str = if output_tensor < cm.tensors.len() {
                 let tensor = cm.tensor_read(output_tensor);
-                format_dimensions(&tensor.desc.to_dims())
+                format_dimensions(&tensor.desc.dims())
             } else {
                 "Unknown".to_string()
             };
@@ -422,7 +422,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 None => "CPU".to_string(),
             }
         );
-        println!("  Shape: {:?}", tensor.desc.to_dims());
+        println!("  Shape: {:?}", tensor.desc.dims());
         println!(
             "  Size in memory: {}",
             cm.format_memory_mb(tensor.desc.size_in_bytes() as u64)
@@ -476,7 +476,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     } else {
         for &tensor_id in &output_tensors {
             let tensor = cm.tensor_read(tensor_id);
-            println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.to_dims());
+            println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.dims());
         }
     }
 

@@ -62,9 +62,8 @@ impl ConvInstruction {
             pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
             pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
         } else if self.auto_pad != AutoPad::NotSet {
-            let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i];
+                let in_i = src_desc.dims()[i + 2];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;
@@ -163,9 +162,9 @@ impl Instruction for ConvInstruction {
 
         // Basic sanity checks for group before doing GPU work
         let src_desc_tmp = src_tensor.desc.clone();
-        let c_val = src_desc_tmp.to_dims()[1];
+        let c_val = src_desc_tmp.dims()[1];
         let dst_desc_tmp = dst_tensor.desc.clone();
-        let m_val = dst_desc_tmp.to_dims()[1];
+        let m_val = dst_desc_tmp.dims()[1];
         if self.group < 1 || c_val % self.group != 0 || m_val % self.group != 0 {
             panic!(
                 "ConvInstruction.create_command_buffer: invalid group configuration: group={}, C={}, M={}",
@@ -286,7 +285,7 @@ impl Instruction for ConvInstruction {
                 0 | 1 => {
                     // 1D shader
                     // derive dims
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let input_len = if src_dims.len() >= 3 {
                         src_dims[2] as u32
                     } else {
@@ -294,7 +293,7 @@ impl Instruction for ConvInstruction {
                     };
 
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
                     let output_len = if dst_dims.len() >= 3 {
                         dst_dims[2] as u32
                     } else {
@@ -352,9 +351,9 @@ impl Instruction for ConvInstruction {
                 }
                 2 => {
                     // 2D shader
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
 
                     let pc_values = Conv2DPushConstants {
                         n: src_dims[0] as u32,
@@ -415,9 +414,9 @@ impl Instruction for ConvInstruction {
                 }
                 3 => {
                     // 3D shader
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
 
                     let pc_values = Conv3DPushConstants {
                         n: src_dims[0] as u32,
@@ -520,9 +519,9 @@ impl Instruction for ConvInstruction {
         let dst_desc = dst_tensor.desc.clone();
 
         // Convert dims to usize vectors
-        let src_dims: Vec<usize> = src_desc.to_dims().iter().map(|d| *d as usize).collect();
-        let weight_dims: Vec<usize> = weight_desc.to_dims().iter().map(|d| *d as usize).collect();
-        let dst_dims: Vec<usize> = dst_desc.to_dims().iter().map(|d| *d as usize).collect();
+        let src_dims: Vec<usize> = src_desc.dims().iter().map(|d| *d as usize).collect();
+        let weight_dims: Vec<usize> = weight_desc.dims().iter().map(|d| *d as usize).collect();
+        let dst_dims: Vec<usize> = dst_desc.dims().iter().map(|d| *d as usize).collect();
 
         // Get raw bytes as slices referencing our copied vecs
         let src_bytes: &[u8] = src_bytes_vec.as_slice();
@@ -564,9 +563,8 @@ impl Instruction for ConvInstruction {
         } else if self.auto_pad != AutoPad::NotSet {
             // Compute SAME_UPPER / SAME_LOWER / VALID pads following ONNX semantics
             // Need input spatial sizes
-            let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i];
+                let in_i = src_desc.dims()[i + 2];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;

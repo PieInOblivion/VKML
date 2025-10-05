@@ -144,7 +144,7 @@ impl Instruction for InitUniformInstruction {
     fn execute_cpu(&self, cm: &ComputeManager) {
         let dst = cm.tensor_write(self.dst);
         let dtype = dst.desc.data_type();
-        let dst_dims = dst.desc.to_dims();
+        let dst_dims = dst.desc.dims().to_vec();
         let out = dst.get_cpu_memory_mut_slice_or_panic();
 
         match dtype {

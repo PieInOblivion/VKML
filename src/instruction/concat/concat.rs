@@ -1,5 +1,7 @@
 use crate::{
-    ComputeManager, gpu::vk_gpu::Gpu, instruction::instruction::Instruction,
+    ComputeManager,
+    gpu::vk_gpu::Gpu,
+    instruction::{concat::f32_cpu::f32_cpu, instruction::Instruction},
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
@@ -69,14 +71,14 @@ impl Instruction for ConcatInstruction {
 
         // Prepare tensors and validate shapes
         let first_source = self.sources[0];
-        let first_desc = cm.tensor_read(first_source).desc.to_dims();
+        let first_desc = cm.tensor_read(first_source).desc.dims();
         assert_eq!(first_desc.len(), 2, "Concat only supports 2D tensors");
         let batch_size = first_desc[0] as usize;
 
         let mut total_features: usize = 0;
         let mut source_features: Vec<usize> = Vec::with_capacity(self.sources.len());
         for &src_id in &self.sources {
-            let src_desc = cm.tensor_read(src_id).desc.to_dims();
+            let src_desc = cm.tensor_read(src_id).desc.dims();
             assert_eq!(
                 src_desc.len(),
                 2,
@@ -91,7 +93,7 @@ impl Instruction for ConcatInstruction {
             total_features += feat;
         }
 
-        let dst_desc = cm.tensor_read(self.dst).desc.to_dims();
+        let dst_desc = cm.tensor_read(self.dst).desc.dims();
         assert_eq!(dst_desc.len(), 2, "Destination tensor must be 2D");
         assert_eq!(
             dst_desc[0] as usize, batch_size,
@@ -111,19 +113,20 @@ impl Instruction for ConcatInstruction {
             let src_tensor = cm.tensor_read(src_id);
             let src_slice = src_tensor.get_cpu_memory_slice_or_panic();
             owned_src_bytes.push(src_slice.to_vec());
-            src_dims_vec.push(src_tensor.desc.to_dims());
+            src_dims_vec.push(src_tensor.desc.dims().to_vec());
         }
 
         // Build a vector of byte-slice references that point into our owned buffers.
         let src_bytes_vec: Vec<&[u8]> = owned_src_bytes.iter().map(|v| v.as_slice()).collect();
 
-        // Now it's safe to take a mutable borrow for the destination tensor.
         let dst_tensor = cm.tensor_write(self.dst);
         let op_datatype = dst_tensor.desc.data_type();
+
+        let dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
+
         match op_datatype {
             DataType::Float => {
-                let dst_bytes = dst_tensor.get_cpu_memory_mut_slice_or_panic();
-                crate::instruction::concat::f32_cpu::f32_cpu(
+                f32_cpu(
                     &src_bytes_vec,
                     &src_dims_vec,
                     self.dim,

@@ -26,9 +26,9 @@ impl TensorDesc {
         self.num_elements() * elem_size
     }
 
-    // Get dimensions vector
-    pub fn to_dims(&self) -> Vec<i64> {
-        self.dims.clone()
+    // Get dimensions
+    pub fn dims(&self) -> &[i64] {
+        &self.dims
     }
 
     // Get number of dimensions

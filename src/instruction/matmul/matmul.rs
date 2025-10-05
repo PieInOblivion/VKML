@@ -59,10 +59,10 @@ impl Instruction for MatMulInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_read(self.dst);
 
-        // Collect dims first to avoid borrowing temporaries returned by to_dims()
-        let src1_dims_vec = src1_tensor.desc.to_dims();
-        let src2_dims_vec = src2_tensor.desc.to_dims();
-        let operation = determine_matmul_variant(&src1_dims_vec, &src2_dims_vec);
+        // Collect dimension slices once for readability
+        let src1_dims = src1_tensor.desc.dims();
+        let src2_dims = src2_tensor.desc.dims();
+        let operation = determine_matmul_variant(src1_dims, src2_dims);
 
         if operation == GPUMemoryOperation::MatMul_F32 {
             // Use generic fallback for unsupported dimension combinations
@@ -98,9 +98,9 @@ impl Instruction for MatMulInstruction {
         let dtype = dst_tensor.desc.data_type();
 
         // dims are i64 internally; convert to usize for CPU indexing/math
-        let src1_dims_i64 = src1_tensor.desc.to_dims();
-        let src2_dims_i64 = src2_tensor.desc.to_dims();
-        let dst_dims_i64 = dst_tensor.desc.to_dims();
+        let src1_dims_i64 = src1_tensor.desc.dims();
+        let src2_dims_i64 = src2_tensor.desc.dims();
+        let dst_dims_i64 = dst_tensor.desc.dims();
         let src1_dims: Vec<usize> = src1_dims_i64.iter().map(|&d| d as usize).collect();
         let src2_dims: Vec<usize> = src2_dims_i64.iter().map(|&d| d as usize).collect();
         let dst_dims: Vec<usize> = dst_dims_i64.iter().map(|&d| d as usize).collect();
@@ -160,8 +160,8 @@ fn configure_matmul_operation(
     src2_tensor: &Tensor,
     dst_tensor: &Tensor,
 ) -> Result<(Vec<u32>, u32, u32, u32), Box<dyn std::error::Error>> {
-    let src1_dims = src1_tensor.desc.to_dims();
-    let src2_dims = src2_tensor.desc.to_dims();
+    let src1_dims = src1_tensor.desc.dims();
+    let src2_dims = src2_tensor.desc.dims();
 
     let src1_strides = src1_tensor.desc.strides();
     let src2_strides = src2_tensor.desc.strides();
@@ -415,9 +415,9 @@ fn create_generic_matmul_command_buffer(
         let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::MatMul_F32);
 
         // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
-        let src1_dims = src1_tensor.desc.to_dims();
-        let src2_dims = src2_tensor.desc.to_dims();
-        let dst_dims = dst_tensor.desc.to_dims();
+        let src1_dims = src1_tensor.desc.dims();
+        let src2_dims = src2_tensor.desc.dims();
+        let dst_dims = dst_tensor.desc.dims();
 
         let src1_dims_usize: Vec<usize> = src1_dims.iter().map(|&d| d as usize).collect();
         let src2_dims_usize: Vec<usize> = src2_dims.iter().map(|&d| d as usize).collect();

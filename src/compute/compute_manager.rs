@@ -251,7 +251,10 @@ impl ComputeManager {
                         }
                         Some(loc) if loc != cand_device => {
                             // already allocated elsewhere -> we need to create a remapped tensor here
-                            if !tensor_remappings[tid].iter().any(|(dev, _)| dev == cand_device) {
+                            if !tensor_remappings[tid]
+                                .iter()
+                                .any(|(dev, _)| dev == cand_device)
+                            {
                                 needed = needed.saturating_add(tensor_size(tid));
                             }
                         }
@@ -266,7 +269,10 @@ impl ComputeManager {
                             needed = needed.saturating_add(tensor_size(tid));
                         }
                         Some(loc) if loc != cand_device => {
-                            if !tensor_remappings[tid].iter().any(|(dev, _)| dev == cand_device) {
+                            if !tensor_remappings[tid]
+                                .iter()
+                                .any(|(dev, _)| dev == cand_device)
+                            {
                                 needed = needed.saturating_add(tensor_size(tid));
                             }
                         }

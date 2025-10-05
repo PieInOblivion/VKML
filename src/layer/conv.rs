@@ -88,8 +88,9 @@ impl Layer for ConvLayer {
         let spatial_rank = ndim - 2;
 
         // Verify input channels match
-        let in_channels = input_shape.to_dims()[1];
-        if in_channels != self.in_features {
+        let input_dims = input_shape.dims();
+        let in_channels = input_dims[1];
+        if input_dims[1] != self.in_features {
             return Err(VKMLError::VulkanError(format!(
                 "Conv expected {} input channels, got {}",
                 self.in_features, in_channels
@@ -97,7 +98,6 @@ impl Layer for ConvLayer {
         }
 
         // Gather spatial input sizes
-        let input_dims = input_shape.to_dims();
         let mut spatial_input: Vec<i64> = Vec::with_capacity(spatial_rank);
         for i in 0..spatial_rank {
             spatial_input.push(input_dims[2 + i]);
@@ -301,7 +301,8 @@ impl Layer for ConvLayer {
             ));
         }
 
-        let in_channels = input_shape.to_dims()[1];
+        let input_dims = input_shape.dims();
+        let in_channels = input_dims[1];
         if in_channels != self.in_features {
             return Err(VKMLError::VulkanError(format!(
                 "Conv layer expects {} input channels, got {}",
@@ -310,7 +311,6 @@ impl Layer for ConvLayer {
         }
 
         let spatial_rank = input_shape.ndim() - 2;
-        let input_dims = input_shape.to_dims();
         let mut spatial_input: Vec<i64> = Vec::with_capacity(spatial_rank);
         for i in 0..spatial_rank {
             spatial_input.push(input_dims[2 + i]);

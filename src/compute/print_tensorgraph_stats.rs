@@ -53,7 +53,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             println!("  Inputs:");
             for input in inputs {
                 let tensor = cm.tensor_read(input);
-                let shape = format!("{:?}", tensor.desc.to_dims());
+                let shape = format!("{:?}", tensor.desc.dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
@@ -85,7 +85,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             println!("  Outputs:");
             for output in outputs {
                 let tensor = cm.tensor_read(output);
-                let shape = format!("{:?}", tensor.desc.to_dims());
+                let shape = format!("{:?}", tensor.desc.dims());
 
                 let location = match &tensor.device {
                     DeviceId::CPU => "CPU".to_string(),
@@ -195,7 +195,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 println!(
                     "    Tensor {}: Shape {:?}, Size: {}",
                     tensor_id,
-                    tensor.desc.to_dims(),
+                    tensor.desc.dims(),
                     cm.format_memory_mb(tensor.desc.size_in_bytes() as u64)
                 );
             }

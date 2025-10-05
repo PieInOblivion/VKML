@@ -70,9 +70,9 @@ impl Instruction for AddInstruction {
         let src2_desc = &src2_tensor.desc;
         let dst_desc = &dst_tensor.desc;
 
-        let src1_dims_usize = src1_desc.to_dims();
-        let src2_dims_usize = src2_desc.to_dims();
-        let dst_dims_usize = dst_desc.to_dims();
+        let src1_dims_usize = src1_desc.dims();
+        let src2_dims_usize = src2_desc.dims();
+        let dst_dims_usize = dst_desc.dims();
 
         // Prepare push constant data using shared PushConstants
 
@@ -89,7 +89,7 @@ impl Instruction for AddInstruction {
         }
 
         // Calculate broadcast shape and strides (similar to execute_cpu)
-        let broadcast_dims = TensorDesc::broadcast_shape(&src1_dims_usize, &src2_dims_usize)
+        let broadcast_dims = TensorDesc::broadcast_shape(src1_dims_usize, src2_dims_usize)
             .unwrap_or_else(|| {
                 panic!(
                     "GPU Add: Can't broadcast {:?} vs {:?}",
@@ -103,8 +103,8 @@ impl Instruction for AddInstruction {
             broadcast_dims, dst_dims_usize
         );
 
-        let strides_a_usize = TensorDesc::broadcast_strides(&src1_dims_usize, &dst_dims_usize);
-        let strides_b_usize = TensorDesc::broadcast_strides(&src2_dims_usize, &dst_dims_usize);
+        let strides_a_usize = TensorDesc::broadcast_strides(src1_dims_usize, dst_dims_usize);
+        let strides_b_usize = TensorDesc::broadcast_strides(src2_dims_usize, dst_dims_usize);
 
         let mut strides_a_arr = [0u32; 8];
         // Ensure strides_a_usize rank matches dst_dims_usize rank for consistency in shader
@@ -281,16 +281,16 @@ impl Instruction for AddInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src1_tensor.desc.to_dims();
-        let b = src2_tensor.desc.to_dims();
-        let c = dst_tensor.desc.to_dims();
+        let a = src1_tensor.desc.dims();
+        let b = src2_tensor.desc.dims();
+        let c = dst_tensor.desc.dims().to_vec();
 
         let bc = TensorDesc::broadcast_shape(&a, &b)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 
-        let sa = TensorDesc::broadcast_strides(&a, &c);
-        let sb = TensorDesc::broadcast_strides(&b, &c);
+        let sa = TensorDesc::broadcast_strides(a, &c);
+        let sb = TensorDesc::broadcast_strides(b, &c);
 
         let op_datatype = dst_tensor.desc.data_type();
 

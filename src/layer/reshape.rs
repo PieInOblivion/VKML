@@ -23,7 +23,7 @@ impl ReshapeLayer {
 
     // Helper to check if this is a flatten operation
     fn is_flatten(&self) -> bool {
-        let dims = self.target_shape.to_dims();
+        let dims = self.target_shape.dims();
         dims.len() == 2 && dims[0] == 0 && dims[1] == 0
     }
 }
@@ -60,7 +60,7 @@ impl Layer for ReshapeLayer {
         }
 
         // Get target dimensions
-        let target_dims = self.target_shape.to_dims();
+        let target_dims = self.target_shape.dims();
 
         // Count zeros (dimensions to be inferred)
         let zeros = target_dims.iter().filter(|&&d| d == 0).count();
@@ -78,7 +78,7 @@ impl Layer for ReshapeLayer {
             Ok(vec![self.target_shape.clone()])
         } else {
             // Use dimension inference
-            let mut new_dims = target_dims.clone();
+            let mut new_dims = target_dims.to_vec();
 
             // One dimension to infer
             if zeros == 1 {
@@ -124,7 +124,7 @@ impl Layer for ReshapeLayer {
         } else {
             let shape_str = self
                 .target_shape
-                .to_dims()
+                .dims()
                 .iter()
                 .map(|d| d.to_string())
                 .collect::<Vec<_>>()
@@ -166,7 +166,7 @@ impl Layer for ReshapeLayer {
         tensors.push(output_shape.clone());
 
         // Create Reshape instruction
-        let instruction = instruction::reshape(0, 1, output_shape.to_dims(), None);
+        let instruction = instruction::reshape(0, 1, output_shape.dims().to_vec(), None);
 
         // Get input mappings using the trait method
         let input_mappings = self.map_input_tensors(input_shapes.len());

@@ -165,12 +165,12 @@ impl Instruction for SigmoidInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src_tensor.desc.to_dims();
-        let c = dst_tensor.desc.to_dims();
+        let a = src_tensor.desc.dims();
+        let c = dst_tensor.desc.dims().to_vec();
 
         let bc = TensorDesc::broadcast_shape(&a, &c)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, c));
-        assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
+        assert_eq!(bc.as_slice(), c, "Broadcast {:?} != dst {:?}", bc, c);
 
         let sa = TensorDesc::broadcast_strides(&a, &c);
 

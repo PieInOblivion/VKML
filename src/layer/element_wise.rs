@@ -52,11 +52,11 @@ impl Layer for ElementWiseLayer {
         // All inputs must have the same shape
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
-            if shape.to_dims() != first_shape.to_dims() {
+            if shape.dims() != first_shape.dims() {
                 return Err(VKMLError::VulkanError(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
-                    first_shape.to_dims(),
-                    shape.to_dims()
+                    first_shape.dims(),
+                    shape.dims()
                 )));
             }
         }
@@ -88,11 +88,11 @@ impl Layer for ElementWiseLayer {
         // Check that all inputs have the same shape
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
-            if shape.to_dims() != first_shape.to_dims() {
+            if shape.dims() != first_shape.dims() {
                 return Err(VKMLError::VulkanError(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
-                    first_shape.to_dims(),
-                    shape.to_dims()
+                    first_shape.dims(),
+                    shape.dims()
                 )));
             }
         }

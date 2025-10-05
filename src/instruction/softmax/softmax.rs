@@ -75,7 +75,7 @@ impl Instruction for SoftmaxInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let dims = src_tensor.desc.to_dims();
+        let dims = src_tensor.desc.dims();
         let dim = self.resolve_axis(dims.len());
 
         // Currently we only support softmax on the last dimension
@@ -211,7 +211,7 @@ impl Instruction for SoftmaxInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let dims = src_tensor.desc.to_dims();
+        let dims = src_tensor.desc.dims();
         let dim = self.resolve_axis(dims.len());
 
         assert_eq!(

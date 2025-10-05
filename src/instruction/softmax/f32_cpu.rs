@@ -2,7 +2,7 @@ use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
 // CPU softmax helper for f32. Currently supports softmax along the last dimension
 // but uses canonical tensor byte-slice casting and performs numerically stable softmax per-batch.
-pub fn f32_cpu(dst_dims: Vec<i64>, dim: usize, src_bytes: &[u8], dst_ptr: &mut [u8]) {
+pub fn f32_cpu(dst_dims: &[i64], dim: usize, src_bytes: &[u8], dst_ptr: &mut [u8]) {
     // verify dims
     assert!(!dst_dims.is_empty(), "dst dims empty");
     assert_eq!(

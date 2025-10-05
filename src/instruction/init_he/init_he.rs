@@ -138,7 +138,7 @@ impl Instruction for InitHeInstruction {
         let dst = cm.tensor_write(self.dst);
         let (fan_in, _) = dst.desc.calculate_fan_in_out();
         // compute immutable info before taking mutable borrow
-        let dst_dims = dst.desc.to_dims();
+        let dst_dims = dst.desc.dims().to_vec();
         let dtype = dst.desc.data_type();
         let out = dst.get_cpu_memory_mut_slice_or_panic();
 

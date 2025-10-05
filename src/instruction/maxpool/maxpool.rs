@@ -57,9 +57,8 @@ impl MaxPoolInstruction {
             pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
             pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
         } else if self.auto_pad != AutoPad::NotSet {
-            let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
             for i in 0..spatial_rank {
-                let in_i = input_spatial[i];
+                let in_i = src_desc.dims()[i + 2];
                 let k = kernel_vec[i] as i64;
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;
@@ -194,14 +193,14 @@ impl Instruction for MaxPoolInstruction {
 
             match spatial_rank {
                 0 | 1 => {
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let input_len = if src_dims.len() >= 3 {
                         src_dims[2] as u32
                     } else {
                         1
                     };
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
                     let output_len = if dst_dims.len() >= 3 {
                         dst_dims[2] as u32
                     } else {
@@ -256,9 +255,9 @@ impl Instruction for MaxPoolInstruction {
                         .cmd_dispatch(command_buffer, num_groups, 1, 1);
                 }
                 2 => {
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
 
                     let pc = MaxPool2DPushConstants {
                         n: src_dims[0] as u32,
@@ -319,9 +318,9 @@ impl Instruction for MaxPoolInstruction {
                         .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
                 }
                 3 => {
-                    let src_dims = src_desc.to_dims();
+                    let src_dims = src_desc.dims();
                     let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.to_dims();
+                    let dst_dims = dst_desc.dims();
 
                     let pc = MaxPool3DPushConstants {
                         n: src_dims[0] as u32,
@@ -411,8 +410,8 @@ impl Instruction for MaxPoolInstruction {
         let dst_ptr = dst_guard.get_cpu_memory_mut_slice_or_panic();
 
         // derive dims
-        let src_dims: Vec<usize> = src_desc.to_dims().iter().map(|d| *d as usize).collect();
-        let dst_dims: Vec<usize> = dst_desc.to_dims().iter().map(|d| *d as usize).collect();
+        let src_dims: Vec<usize> = src_desc.dims().iter().map(|d| *d as usize).collect();
+        let dst_dims: Vec<usize> = dst_desc.dims().iter().map(|d| *d as usize).collect();
 
         // normalize parameters
         let spatial_rank = if src_dims.len() >= 2 {
@@ -442,9 +441,8 @@ impl Instruction for MaxPoolInstruction {
                 pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
                 pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
             } else if self.auto_pad != AutoPad::NotSet {
-                let input_spatial: Vec<i64> = src_desc.to_dims()[2..].to_vec();
                 for i in 0..spatial_rank {
-                    let in_i = input_spatial[i];
+                    let in_i = src_desc.dims()[i + 2];
                     let k = kernel_vec[i] as i64;
                     let s = stride_vec[i] as i64;
                     let d = dil_vec[i] as i64;
