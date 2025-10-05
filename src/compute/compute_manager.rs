@@ -12,7 +12,7 @@ use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::instruction::instruction::Instruction;
-use crate::tensor_graph::tensor_graph::{ExecutionPlan, OperationId, TensorGraph};
+use crate::tensor_graph::tensor_graph::{ExecutionChunk, ExecutionPlan, OperationId, TensorGraph};
 use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
@@ -20,12 +20,6 @@ use crate::{
 use vulkanalia::vk::{CommandBuffer, DeviceV1_0};
 
 use super::cpu_compute::CPUCompute;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum DeviceLocation {
-    CPU,
-    GPU(usize),
-}
 
 pub struct ComputeManager {
     pub tensors: Vec<TensorCell>,
@@ -196,12 +190,12 @@ impl ComputeManager {
         let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();
 
         // Track planned tensor locations: tensor_id -> DeviceLocation
-        let mut tensor_locations: Vec<Option<DeviceLocation>> =
+        let mut tensor_locations: Vec<Option<DeviceId>> =
             vec![None; self.tensor_graph.tensor_descs.len()];
 
         // Maintain a list of tensor remappings per tensor: tensor_id -> [(device, new_id)]
         // Most tensors have 0-1 remappings, so a small Vec is more efficient than HashMap
-        let mut tensor_remappings: Vec<Vec<(DeviceLocation, usize)>> =
+        let mut tensor_remappings: Vec<Vec<(DeviceId, usize)>> =
             vec![Vec::new(); self.tensor_graph.tensor_descs.len()];
 
         // Store remappings needed for operations: indexed by op_id
@@ -209,20 +203,17 @@ impl ComputeManager {
             vec![None; self.tensor_graph.operations.len()];
 
         // New tensors created for transfers or device-local outputs - including layer info
-        let mut new_tensors: Vec<(TensorDesc, DeviceLocation, Option<LayerId>)> = Vec::new();
+        let mut new_tensors: Vec<(TensorDesc, DeviceId, Option<LayerId>)> = Vec::new();
 
         // Transfer operations to insert: (insert_before_op, transfer_instr)
         let mut transfer_operations: Vec<(OperationId, Box<dyn Instruction>)> = Vec::new();
 
         // Track available memory per device in the desired order (GPUs then CPU)
-        let mut available_memory: Vec<(DeviceLocation, u64)> = Vec::new();
+        let mut available_memory: Vec<(DeviceId, u64)> = Vec::new();
         for (idx, gpu) in self.gpus.gpus().iter().enumerate() {
-            available_memory.push((DeviceLocation::GPU(idx), gpu.available_memory()));
+            available_memory.push((DeviceId::GPU(idx), gpu.available_memory()));
         }
-        available_memory.push((
-            DeviceLocation::CPU,
-            self.cpu.memory_tracking.get_available(),
-        ));
+        available_memory.push((DeviceId::CPU, self.cpu.memory_tracking.get_available()));
 
         // Helper to get tensor size
         let tensor_size =
@@ -476,7 +467,7 @@ impl ComputeManager {
 
     fn allocate_tensors(
         &mut self,
-        tensor_locations: Vec<Option<DeviceLocation>>,
+        tensor_locations: Vec<Option<DeviceId>>,
         mut initialisers: Vec<Option<Box<[u8]>>>,
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
@@ -508,13 +499,13 @@ impl ComputeManager {
     pub fn allocate_tensor(
         &self,
         desc: &TensorDesc,
-        target_device: &DeviceLocation,
+        target_device: &DeviceId,
         init_box: Option<Box<[u8]>>,
     ) -> Result<Tensor, VKMLError> {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match target_device {
-            DeviceLocation::CPU => {
+            DeviceId::CPU => {
                 self.cpu.memory_tracking.allocate(size_in_bytes);
                 if let Some(boxed) = init_box {
                     if boxed.len() != desc.size_in_bytes() {
@@ -530,7 +521,7 @@ impl ComputeManager {
                     Ok(Tensor::new_cpu(desc.clone(), buf.into()))
                 }
             }
-            DeviceLocation::GPU(idx) => {
+            DeviceId::GPU(idx) => {
                 let gpu = &self.gpus.get_gpu(*idx);
                 gpu.allocate_memory(size_in_bytes);
 
@@ -628,16 +619,10 @@ impl ComputeManager {
     pub fn execute(&mut self) -> Result<(), VKMLError> {
         // Get or create cached execution plan
         if self.cached_execution_plan.is_none() {
-            let device_locations: Vec<Option<DeviceLocation>> = self
+            let device_locations: Vec<DeviceId> = self
                 .tensors
                 .iter()
-                .map(|tensor_cell| {
-                    let tensor = unsafe { tensor_cell.as_ref() };
-                    Some(match tensor.device {
-                        DeviceId::CPU => DeviceLocation::CPU,
-                        DeviceId::GPU(idx) => DeviceLocation::GPU(idx),
-                    })
-                })
+                .map(|tensor_cell| unsafe { tensor_cell.as_ref() }.device.clone())
                 .collect();
 
             let plan = self.tensor_graph.create_execution_plan(&device_locations);
@@ -658,7 +643,7 @@ impl ComputeManager {
             .iter()
             .enumerate()
             .map(|(gpu_idx, gpu)| {
-                let device = DeviceLocation::GPU(gpu_idx);
+                let device = DeviceId::GPU(gpu_idx);
                 let count = plan.chunks.iter().filter(|c| c.device == device).count() as u64;
                 if count > 0 {
                     gpu.allocate_semaphore_values(count)
@@ -699,7 +684,7 @@ impl ComputeManager {
                 let offset = device_offsets[gpu_idx];
                 plan.chunks
                     .iter()
-                    .filter(|c| matches!(c.device, DeviceLocation::GPU(idx) if idx == gpu_idx))
+                    .filter(|c| matches!(c.device, DeviceId::GPU(idx) if idx == gpu_idx))
                     .map(|c| c.signal_value + offset)
                     .max()
                     .map(|max_value| (gpu_idx, max_value))
@@ -784,7 +769,7 @@ impl ComputeManager {
                 .wait_semaphores
                 .iter()
                 .filter_map(|(dev, val)| {
-                    if let DeviceLocation::GPU(wait_gpu_idx) = dev {
+                    if let DeviceId::GPU(wait_gpu_idx) = dev {
                         let wait_offset = device_offsets[*wait_gpu_idx];
                         let wait_gpu = self.gpus.get_gpu(*wait_gpu_idx);
                         Some((
@@ -810,12 +795,12 @@ impl ComputeManager {
 
     fn execute_cpu_chunk(
         &self,
-        chunk: &crate::tensor_graph::tensor_graph::ExecutionChunk,
+        chunk: &ExecutionChunk,
         device_offsets: &[u64],
     ) {
         // Wait for any GPU dependencies first (with offsets applied)
         for (wait_dev, wait_val) in &chunk.wait_semaphores {
-            if let DeviceLocation::GPU(gpu_idx) = wait_dev {
+            if let DeviceId::GPU(gpu_idx) = wait_dev {
                 let offset = device_offsets[*gpu_idx];
                 let gpu = self.gpus.get_gpu(*gpu_idx);
                 if let Err(e) = gpu.wait_for_timeline_value(*wait_val + offset) {
@@ -892,7 +877,7 @@ struct SingleAllocParams {
     initialisers_ptr: *mut Option<Box<[u8]>>,
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
-    tensor_locations_ptr: *const Option<DeviceLocation>,
+    tensor_locations_ptr: *const Option<DeviceId>,
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
@@ -905,7 +890,7 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
     let target = unsafe {
         (*params.tensor_locations_ptr.add(params.index))
             .clone()
-            .unwrap_or(DeviceLocation::CPU)
+            .unwrap_or(DeviceId::CPU)
     };
 
     let tensor = manager.allocate_tensor(desc, &target, init_box).unwrap();
@@ -941,12 +926,12 @@ struct ChunkExecutionParams<'a> {
 
 zp_define_task_fn!(chunk_execution_task, ChunkExecutionParams, |params| {
     match &params.chunk.device {
-        DeviceLocation::GPU(gpu_idx) => {
+        DeviceId::GPU(gpu_idx) => {
             params
                 .compute_manager
                 .execute_gpu_chunk(params.chunk, *gpu_idx, params.device_offsets);
         }
-        DeviceLocation::CPU => {
+        DeviceId::CPU => {
             params
                 .compute_manager
                 .execute_cpu_chunk(params.chunk, params.device_offsets);

@@ -1,9 +1,8 @@
 use crate::{
-    compute::compute_manager::DeviceLocation,
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::desc::TensorDesc,
+    tensor::{desc::TensorDesc, tensor::DeviceId},
     utils::error::VKMLError,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -24,13 +23,13 @@ pub type TensorId = usize;
 
 /// Represents a chunk of operations that can be submitted together to a device
 pub struct ExecutionChunk {
-    pub device: DeviceLocation,
+    pub device: DeviceId,
     pub operations: Vec<OperationId>,
     /// Dependencies within this chunk: (producer_op_index, consumer_op_index)
     /// Indices are into the operations vec above
     pub internal_deps: Vec<(usize, usize)>,
     /// Timeline semaphore values to wait on before executing: (device, value)
-    pub wait_semaphores: Vec<(DeviceLocation, u64)>,
+    pub wait_semaphores: Vec<(DeviceId, u64)>,
     /// Timeline semaphore value to signal when this chunk completes
     pub signal_value: u64,
     /// Whether this chunk requires host synchronization before execution
@@ -280,10 +279,7 @@ impl TensorGraph {
 
     /// Creates depth-aware execution plan with proper device and dependency tracking.
     /// This is the main execution planning function used by the compute manager.
-    pub fn create_execution_plan(
-        &self,
-        device_locations: &[Option<DeviceLocation>],
-    ) -> ExecutionPlan {
+    pub fn create_execution_plan(&self, device_locations: &[DeviceId]) -> ExecutionPlan {
         let num_ops = self.operations.len();
 
         // Pre-build tensor producer map for O(1) lookups instead of O(n) searches
@@ -315,7 +311,7 @@ impl TensorGraph {
         }
 
         // Determine device for each operation (single pass)
-        let op_devices: Vec<DeviceLocation> = (0..num_ops)
+        let op_devices: Vec<DeviceId> = (0..num_ops)
             .map(|op_id| self.determine_op_device(op_id, device_locations))
             .collect();
 
@@ -326,14 +322,14 @@ impl TensorGraph {
         let mut current_semaphore_value = 1u64;
 
         // Track the last semaphore value signaled by each device
-        let mut device_semaphore_values: HashMap<DeviceLocation, u64> = HashMap::new();
+        let mut device_semaphore_values: HashMap<DeviceId, u64> = HashMap::new();
 
         // Track current in-degrees (mutable copy)
         let mut current_in_degree = in_degree;
 
         while scheduled_count < num_ops {
             // Find all operations ready to execute (in-degree == 0) - optimized iteration
-            let mut device_ops: HashMap<DeviceLocation, Vec<OperationId>> = HashMap::new();
+            let mut device_ops: HashMap<DeviceId, Vec<OperationId>> = HashMap::new();
 
             for op in 0..num_ops {
                 if !scheduled[op] && current_in_degree[op] == 0 {
@@ -402,7 +398,7 @@ impl TensorGraph {
                 }
 
                 // Find cross-device dependencies (use HashSet to avoid duplicates)
-                let mut wait_set: HashSet<(DeviceLocation, u64)> = HashSet::new();
+                let mut wait_set: HashSet<(DeviceId, u64)> = HashSet::new();
                 for &op in &chain {
                     for &pred in &predecessors[op] {
                         if scheduled[pred] {
@@ -417,7 +413,7 @@ impl TensorGraph {
                 }
                 let wait_semaphores: Vec<_> = wait_set.into_iter().collect();
 
-                let requires_host_wait = matches!(device, DeviceLocation::CPU);
+                let requires_host_wait = matches!(device, DeviceId::CPU);
                 let signal_value = current_semaphore_value;
                 current_semaphore_value += 1;
 
@@ -449,26 +445,22 @@ impl TensorGraph {
         }
     }
 
-    fn determine_op_device(
-        &self,
-        op_id: OperationId,
-        device_locations: &[Option<DeviceLocation>],
-    ) -> DeviceLocation {
+    fn determine_op_device(&self, op_id: OperationId, device_locations: &[DeviceId]) -> DeviceId {
         // Check input tensors
         for &tid in &self.operations[op_id].get_input_tensor_ids() {
-            if let Some(Some(dev)) = device_locations.get(tid) {
+            if let Some(dev) = device_locations.get(tid) {
                 return dev.clone();
             }
         }
 
         // Check output tensors
         for &tid in &self.operations[op_id].get_output_tensor_ids() {
-            if let Some(Some(dev)) = device_locations.get(tid) {
+            if let Some(dev) = device_locations.get(tid) {
                 return dev.clone();
             }
         }
 
-        DeviceLocation::CPU
+        DeviceId::CPU
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {

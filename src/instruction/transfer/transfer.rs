@@ -1,6 +1,6 @@
 use crate::{
-    ComputeManager, compute::compute_manager::DeviceLocation, gpu::vk_gpu::Gpu,
-    instruction::instruction::Instruction, tensor_graph::tensor_graph::TensorId,
+    ComputeManager, gpu::vk_gpu::Gpu, instruction::instruction::Instruction,
+    tensor::tensor::DeviceId, tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
@@ -9,8 +9,8 @@ use vulkanalia::vk;
 pub struct TransferToDeviceInstruction {
     pub src: TensorId,
     pub dst: TensorId,
-    pub source_device: DeviceLocation,
-    pub target_device: DeviceLocation,
+    pub source_device: DeviceId,
+    pub target_device: DeviceId,
 }
 
 impl Debug for TransferToDeviceInstruction {

@@ -7,7 +7,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum DeviceId {
     CPU,
     GPU(usize),

@@ -1,5 +1,4 @@
 use crate::{
-    compute::compute_manager::DeviceLocation,
     instruction::{
         add::add::AddInstruction,
         concat::concat::ConcatInstruction,
@@ -22,6 +21,7 @@ use crate::{
         sub::sub::SubInstruction,
         transfer::transfer::TransferToDeviceInstruction,
     },
+    tensor::tensor::DeviceId,
     tensor_graph::tensor_graph::TensorId,
 };
 
@@ -177,8 +177,8 @@ pub fn sub(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction
 pub fn transfer(
     src: TensorId,
     dst: TensorId,
-    source_device: DeviceLocation,
-    target_device: DeviceLocation,
+    source_device: DeviceId,
+    target_device: DeviceId,
 ) -> Box<dyn Instruction> {
     Box::new(TransferToDeviceInstruction {
         src,
