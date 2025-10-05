@@ -23,7 +23,6 @@ use crate::{
 use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
-
 pub struct GpuPool {
     gpus: Vec<Gpu>,
     _entry: Entry,
@@ -441,7 +440,6 @@ impl Gpu {
     pub fn available_memory(&self) -> u64 {
         self.memory_tracker.get_available()
     }
-
 
     fn create_pipeline(&self, shader_code: &[u8]) -> Result<vk::Pipeline, VKMLError> {
         unsafe {

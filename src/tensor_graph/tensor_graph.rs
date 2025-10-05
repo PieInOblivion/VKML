@@ -6,7 +6,7 @@ use crate::{
     tensor::desc::TensorDesc,
     utils::error::VKMLError,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 // TODO:
 // This representation of tensor dag needs changing.
@@ -289,7 +289,6 @@ impl TensorGraph {
     pub fn create_execution_plan(&self) -> Vec<Vec<OperationId>> {
         // Temporary: return old implementation until we have device info
         // This will be replaced once we refactor to use ExecutionPlan
-        use std::collections::{HashSet, VecDeque};
         let num_ops = self.operations.len();
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut in_degree: Vec<usize> = vec![0; num_ops];
@@ -351,8 +350,6 @@ impl TensorGraph {
         &self,
         device_locations: &[Option<DeviceLocation>],
     ) -> ExecutionPlan {
-        use std::collections::HashMap;
-
         let num_ops = self.operations.len();
 
         // Pre-build tensor producer map for O(1) lookups instead of O(n) searches
