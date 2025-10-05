@@ -31,7 +31,6 @@ pub struct Gpu {
     extensions: VkExtensions,
 
     // Drop order matters: fields drop top-to-bottom
-    // Semaphore must be destroyed before device, pipelines before pipeline_layout, etc.
     timeline_semaphore: OnceLock<vk::Semaphore>,
     next_semaphore_value: AtomicU64,
     pipelines: Vec<OnceLock<vk::Pipeline>>,
@@ -429,7 +428,6 @@ impl Gpu {
     }
 
     pub fn get_device(&self) -> &Device {
-        // Arc<Device> derefs to Device, return a reference to the inner Device
         &self.device
     }
 
