@@ -17,7 +17,7 @@ use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
 };
-use vulkanalia::vk::{CommandBuffer, DeviceV1_0};
+use vulkanalia::vk::{self, CommandBuffer, DeviceV1_0};
 
 use super::cpu_compute::CPUCompute;
 
@@ -676,7 +676,7 @@ impl ComputeManager {
 
     fn wait_for_gpu_completion(
         &self,
-        plan: &crate::tensor_graph::tensor_graph::ExecutionPlan,
+        plan: &ExecutionPlan,
         device_offsets: &[u64],
     ) -> Result<(), VKMLError> {
         let gpu_waits: Vec<(usize, u64)> = (0..self.gpus.gpus().len())
@@ -720,12 +720,7 @@ impl ComputeManager {
         Ok(())
     }
 
-    fn execute_gpu_chunk(
-        &self,
-        chunk: &crate::tensor_graph::tensor_graph::ExecutionChunk,
-        gpu_idx: usize,
-        device_offsets: &[u64],
-    ) {
+    fn execute_gpu_chunk(&self, chunk: &ExecutionChunk, gpu_idx: usize, device_offsets: &[u64]) {
         let gpu = self.gpus.get_gpu(gpu_idx);
 
         unsafe {
@@ -736,11 +731,11 @@ impl ComputeManager {
                 .map(|&op_id| {
                     *self.cached_command_buffers[op_id].get_or_init(|| {
                         // Allocate a single command buffer for this operation
-                        let alloc_info = vulkanalia::vk::CommandBufferAllocateInfo {
-                            s_type: vulkanalia::vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                        let alloc_info = vk::CommandBufferAllocateInfo {
+                            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
                             next: std::ptr::null(),
                             command_pool: gpu.get_command_pool(),
-                            level: vulkanalia::vk::CommandBufferLevel::PRIMARY,
+                            level: vk::CommandBufferLevel::PRIMARY,
                             command_buffer_count: 1,
                         };
 
@@ -793,11 +788,7 @@ impl ComputeManager {
         }
     }
 
-    fn execute_cpu_chunk(
-        &self,
-        chunk: &ExecutionChunk,
-        device_offsets: &[u64],
-    ) {
+    fn execute_cpu_chunk(&self, chunk: &ExecutionChunk, device_offsets: &[u64]) {
         // Wait for any GPU dependencies first (with offsets applied)
         for (wait_dev, wait_val) in &chunk.wait_semaphores {
             if let DeviceId::GPU(gpu_idx) = wait_dev {
