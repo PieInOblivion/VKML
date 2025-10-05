@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::OnceLock;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::gpu::vk_gpu::GpuPool;
@@ -38,7 +37,7 @@ pub struct ComputeManager {
     cpu: CPUCompute,
 
     // Cached execution plan
-    execution_plan: OnceLock<ExecutionPlan>,
+    execution_plan: Option<ExecutionPlan>,
 }
 
 impl ComputeManager {
@@ -66,7 +65,7 @@ impl ComputeManager {
             tensor_graph,
             gpus,
             cpu,
-            execution_plan: OnceLock::new(),
+            execution_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -134,7 +133,7 @@ impl ComputeManager {
             tensors: Vec::new(),
             model,
             tensor_graph,
-            execution_plan: OnceLock::new(),
+            execution_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -515,9 +514,7 @@ impl ComputeManager {
                 }
             }
             DeviceLocation::GPU(idx) => {
-                let gpu_idx = *idx;
-                let gpu = &self.gpus.get_gpu(gpu_idx);
-
+                let gpu = &self.gpus.get_gpu(*idx);
                 gpu.allocate_memory(size_in_bytes);
 
                 if let Some(boxed) = init_box {
@@ -529,22 +526,20 @@ impl ComputeManager {
                         )));
                     }
                     let gpu_mem = gpu.move_to_gpu(&boxed);
-                    Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
+                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else {
                     let gpu_mem = gpu
                         .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
                         .map_err(|e| VKMLError::VulkanError(e.to_string()))?;
-                    Ok(Tensor::new_gpu(desc.clone(), gpu_idx, gpu_mem))
+                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 }
             }
         }
     }
 
     pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<Tensor>, VKMLError> {
-        // Get input tensor indices
         let input_tensor_ids = self.tensor_graph.get_input_tensor_ids();
 
-        // Validate input batch count
         if batches.len() != input_tensor_ids.len() {
             return Err(VKMLError::VulkanError(format!(
                 "Expected {} input batches, got {}",
@@ -553,13 +548,9 @@ impl ComputeManager {
             )));
         }
 
-        // Load input data into tensors
-        for (batch_idx, batch) in batches.into_iter().enumerate() {
-            let tensor_id = input_tensor_ids[batch_idx];
-
-            // Validate size after conversion
-            let expected_bytes = self.tensor_read(tensor_id).desc.size_in_bytes();
-
+        // Validate all sizes upfront
+        for (batch_idx, batch) in batches.iter().enumerate() {
+            let expected_bytes = self.tensor_read(input_tensor_ids[batch_idx]).desc.size_in_bytes();
             if batch.buffer.len_bytes() != expected_bytes {
                 return Err(VKMLError::VulkanError(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
@@ -568,36 +559,61 @@ impl ComputeManager {
                     expected_bytes
                 )));
             }
-
-            self.tensor_write(tensor_id).write(&batch.read());
         }
 
-        // Execute the model
+        // Load input data in parallel
+        let load_task_boxes: Vec<_> = batches
+            .into_iter()
+            .enumerate()
+            .map(|(batch_idx, batch)| {
+                Box::new(BatchLoadParams {
+                    tensor_id: input_tensor_ids[batch_idx],
+                    batch,
+                    compute_manager: self,
+                })
+            })
+            .collect();
+
+        load_task_boxes
+            .iter()
+            .map(|b| global_pool().submit_task(batch_load_task, b.as_ref()))
+            .for_each(|f| f.wait());
+
         self.execute()?;
 
-        // Gather output data and convert to Tensor objects
-        let output_tensor_ids = &self.tensor_graph.get_output_tensor_ids();
-        let mut output_batches = Vec::with_capacity(output_tensor_ids.len());
+        // Gather output data in parallel
+        let output_tensor_ids = self.tensor_graph.get_output_tensor_ids();
+        let output_count = output_tensor_ids.len();
 
-        for &tensor_id in output_tensor_ids.iter() {
-            let tensor = self.tensor_read(tensor_id);
+        let mut output_batches: Vec<Tensor> = Vec::with_capacity(output_count);
+        let out_ptr: *mut Tensor = output_batches.as_mut_ptr();
 
-            // Get data from tensor
-            let output_data = tensor.read();
+        let copy_task_boxes: Vec<_> = output_tensor_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, &tensor_id)| {
+                Box::new(BatchCopyParams {
+                    tensor_id,
+                    output_index: idx,
+                    compute_manager: self,
+                    out_ptr,
+                })
+            })
+            .collect();
 
-            // No conversion - just packaging the tensor's data with its type
-            let batch = Tensor::new_cpu(tensor.desc.clone(), output_data);
+        copy_task_boxes
+            .iter()
+            .map(|b| global_pool().submit_task(batch_copy_task, b.as_ref()))
+            .for_each(|f| f.wait());
 
-            output_batches.push(batch);
-        }
+        unsafe { output_batches.set_len(output_count) };
 
         Ok(output_batches)
     }
 
-    pub fn execute(&self) -> Result<(), VKMLError> {
+    pub fn execute(&mut self) -> Result<(), VKMLError> {
         // Get or create cached execution plan
-        let plan = self.execution_plan.get_or_init(|| {
-            // Build device location map from tensor allocations
+        if self.execution_plan.is_none() {
             let device_locations: Vec<Option<DeviceLocation>> = self
                 .tensors
                 .iter()
@@ -610,40 +626,44 @@ impl ComputeManager {
                 })
                 .collect();
 
-            self.tensor_graph
-                .create_execution_plan_v2(&device_locations)
-        });
-
-        // Pre-build semaphore map (done once per execute, very cheap)
-        let device_to_semaphore: HashMap<DeviceLocation, vulkanalia::vk::Semaphore> =
-            (0..self.gpus.gpus().len())
-                .map(|gpu_idx| {
-                    let sem = self
-                        .gpus
-                        .get_gpu(gpu_idx)
-                        .get_or_create_timeline_semaphore();
-                    (DeviceLocation::GPU(gpu_idx), sem)
-                })
-                .collect();
-
-        // Execute chunks as thread pool tasks - each chunk executes independently
-        let mut chunk_futures = Vec::with_capacity(plan.chunks.len());
-        let mut chunk_task_boxes = Vec::with_capacity(plan.chunks.len());
-
-        for chunk in &plan.chunks {
-            let boxed = Box::new(ChunkExecutionParams {
-                chunk,
-                compute_manager: self,
-                device_to_semaphore: &device_to_semaphore,
-            });
-            chunk_task_boxes.push(boxed);
-            chunk_futures.push(global_pool().submit_task(
-                chunk_execution_task,
-                chunk_task_boxes.last().unwrap().as_ref(),
-            ));
+            self.execution_plan = Some(
+                self.tensor_graph
+                    .create_execution_plan_v2(&device_locations),
+            );
         }
+        let plan = self.execution_plan.as_ref().unwrap();
 
-        chunk_futures.into_iter().for_each(|f| f.wait());
+        // Build semaphore map
+        let device_to_semaphore: HashMap<DeviceLocation, vulkanalia::vk::Semaphore> = self
+            .gpus
+            .gpus()
+            .iter()
+            .enumerate()
+            .map(|(gpu_idx, gpu)| {
+                (
+                    DeviceLocation::GPU(gpu_idx),
+                    gpu.get_or_create_timeline_semaphore(),
+                )
+            })
+            .collect();
+
+        // Execute chunks as thread pool tasks
+        let chunk_task_boxes: Vec<_> = plan
+            .chunks
+            .iter()
+            .map(|chunk| {
+                Box::new(ChunkExecutionParams {
+                    chunk,
+                    compute_manager: self,
+                    device_to_semaphore: &device_to_semaphore,
+                })
+            })
+            .collect();
+
+        chunk_task_boxes
+            .iter()
+            .map(|b| global_pool().submit_task(chunk_execution_task, b.as_ref()))
+            .for_each(|f| f.wait());
 
         // Wait for all GPU work to complete
         self.wait_for_gpu_completion(plan)?;
@@ -666,36 +686,33 @@ impl ComputeManager {
             })
             .collect();
 
-        match gpu_waits.len() {
-            0 => Ok(()),
-            1 => {
-                let (gpu_idx, max_value) = gpu_waits[0];
-                self.gpus
-                    .get_gpu(gpu_idx)
-                    .wait_for_timeline_value(max_value)
-            }
-            _ => {
-                // Multi-GPU: wait in parallel
-                let mut wait_futures = Vec::with_capacity(gpu_waits.len());
-                let mut wait_task_boxes = Vec::with_capacity(gpu_waits.len());
-
-                for (gpu_idx, semaphore_value) in gpu_waits {
-                    let boxed = Box::new(GpuWaitParams {
-                        gpu_idx,
-                        semaphore_value,
-                        gpu_pool: &self.gpus,
-                    });
-                    wait_task_boxes.push(boxed);
-                    wait_futures.push(
-                        global_pool()
-                            .submit_task(gpu_wait_task, wait_task_boxes.last().unwrap().as_ref()),
-                    );
-                }
-
-                wait_futures.into_iter().for_each(|f| f.wait());
-                Ok(())
-            }
+        if gpu_waits.is_empty() {
+            return Ok(());
         }
+
+        if gpu_waits.len() == 1 {
+            let (gpu_idx, max_value) = gpu_waits[0];
+            return self.gpus.get_gpu(gpu_idx).wait_for_timeline_value(max_value);
+        }
+
+        // Multi-GPU: wait in parallel
+        let wait_task_boxes: Vec<_> = gpu_waits
+            .into_iter()
+            .map(|(gpu_idx, semaphore_value)| {
+                Box::new(GpuWaitParams {
+                    gpu_idx,
+                    semaphore_value,
+                    gpu_pool: &self.gpus,
+                })
+            })
+            .collect();
+
+        wait_task_boxes
+            .iter()
+            .map(|b| global_pool().submit_task(gpu_wait_task, b.as_ref()))
+            .for_each(|f| f.wait());
+
+        Ok(())
     }
 
     fn execute_gpu_chunk(
@@ -735,10 +752,10 @@ impl ComputeManager {
             }
 
             // Prepare wait semaphores
-            let wait_sems: Vec<(vulkanalia::vk::Semaphore, u64)> = chunk
+            let wait_sems: Vec<_> = chunk
                 .wait_semaphores
                 .iter()
-                .filter_map(|(dev, val)| device_to_semaphore.get(dev).map(|&sem| (sem, *val)))
+                .filter_map(|(dev, val)| device_to_semaphore.get(dev).copied().zip(Some(*val)))
                 .collect();
 
             // Submit with timeline semaphore
@@ -767,22 +784,21 @@ impl ComputeManager {
         }
 
         // Execute CPU operations in parallel
-        let mut futures = Vec::new();
-        let mut task_boxes: Vec<Box<SingleCpuOperationParams>> = Vec::new();
+        let task_boxes: Vec<_> = chunk
+            .operations
+            .iter()
+            .map(|&op_id| {
+                Box::new(SingleCpuOperationParams {
+                    operation_id: op_id,
+                    compute_manager: self,
+                })
+            })
+            .collect();
 
-        for &op_id in &chunk.operations {
-            let boxed = Box::new(SingleCpuOperationParams {
-                operation_id: op_id,
-                compute_manager: self,
-            });
-            task_boxes.push(boxed);
-            futures.push(global_pool().submit_task(
-                single_cpu_operation_task,
-                task_boxes.last().unwrap().as_ref(),
-            ));
-        }
-
-        futures.into_iter().for_each(|f| f.wait());
+        task_boxes
+            .iter()
+            .map(|b| global_pool().submit_task(single_cpu_operation_task, b.as_ref()))
+            .for_each(|f| f.wait());
     }
 
     pub fn format_memory_mb(&self, bytes: u64) -> String {
@@ -909,5 +925,36 @@ zp_define_task_fn!(gpu_wait_task, GpuWaitParams, |params| {
     let gpu = params.gpu_pool.get_gpu(params.gpu_idx);
     if let Err(e) = gpu.wait_for_timeline_value(params.semaphore_value) {
         eprintln!("Failed to wait for GPU {}: {}", params.gpu_idx, e);
+    }
+});
+
+struct BatchLoadParams<'a> {
+    tensor_id: usize,
+    batch: Tensor,
+    compute_manager: &'a ComputeManager,
+}
+
+zp_define_task_fn!(batch_load_task, BatchLoadParams, |params| {
+    params
+        .compute_manager
+        .tensor_write(params.tensor_id)
+        .write(&params.batch.read());
+});
+
+struct BatchCopyParams<'a> {
+    tensor_id: usize,
+    output_index: usize,
+    compute_manager: &'a ComputeManager,
+    out_ptr: *mut Tensor,
+}
+
+zp_define_task_fn!(batch_copy_task, BatchCopyParams, |params| {
+    let tensor = params.compute_manager.tensor_read(params.tensor_id);
+    let output_data = tensor.read();
+    let batch = Tensor::new_cpu(tensor.desc.clone(), output_data);
+
+    unsafe {
+        let slot = params.out_ptr.add(params.output_index);
+        ptr::write(slot, batch);
     }
 });
