@@ -2,7 +2,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
-use crate::gpu::vk_gpu::GpuPool;
+use crate::gpu::pool::GpuPool;
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
 use crate::tensor::cell::TensorCell;
@@ -38,13 +38,12 @@ pub struct ComputeManager {
 
 impl ComputeManager {
     pub fn new_from_graph(model: GraphModel) -> Result<Self, VKMLError> {
-        let gpus = GpuPool::new(None)?;
-        Self::new_from_graph_with(model, gpus, None)
+        Self::new_from_graph_with(model, None, None)
     }
 
     pub fn new_from_graph_with(
         mut model: GraphModel,
-        gpus: GpuPool,
+        explicit_gpus: Option<Vec<usize>>,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
         if model.verified.is_none() {
@@ -59,7 +58,7 @@ impl ComputeManager {
             tensors: Vec::new(),
             model,
             tensor_graph,
-            gpus,
+            gpus: GpuPool::new(explicit_gpus)?,
             cpu,
             cached_command_buffers: Vec::new(),
             cached_execution_plan: None,
@@ -87,13 +86,13 @@ impl ComputeManager {
     }
 
     pub fn new_from_onnx_path(onnx_path: &str) -> Result<Self, VKMLError> {
-        Self::new_from_onnx_path_with(onnx_path, GpuPool::new(None)?, None, 1)
+        Self::new_from_onnx_path_with(onnx_path, None, None, 1)
     }
 
     /// Create ComputeManager from ONNX file with custom settings
     pub fn new_from_onnx_path_with(
         onnx_path: &str,
-        gpus: GpuPool,
+        explicit_gpus: Option<Vec<usize>>,
         cpu_memory_limit_bytes: Option<u64>,
         batch_size: usize,
     ) -> Result<Self, VKMLError> {
@@ -109,7 +108,12 @@ impl ComputeManager {
         let (tensor_graph, tensor_bytes) =
             OnnxParser::parse_onnx_model(onnx_model, batch_size as i64)?;
 
-        Self::new_from_tensor_graph(tensor_graph, tensor_bytes, gpus, cpu_memory_limit_bytes)
+        Self::new_from_tensor_graph(
+            tensor_graph,
+            tensor_bytes,
+            GpuPool::new(explicit_gpus)?,
+            cpu_memory_limit_bytes,
+        )
     }
 
     fn new_from_tensor_graph(

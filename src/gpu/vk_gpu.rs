@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     ffi::{CString, c_void},
     ptr,
     sync::{
@@ -8,109 +7,19 @@ use std::{
     },
 };
 use vulkanalia::{
-    Device, Entry, Instance,
-    loader::{LIBRARY, LibloadingLoader},
-    vk::{self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1},
+    Device, Instance,
+    vk::{self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0},
 };
 
 use crate::{
+    GpuInfo,
     compute::memory_tracker::MemoryTracker,
-    gpu::raw_formats::RAW_FORMATS,
     instruction::gpu_operations::GPUMemoryOperation,
     utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
 
 use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
-
-pub struct GpuPool {
-    gpus: Vec<Gpu>,
-    _entry: Entry,
-}
-
-impl GpuPool {
-    pub fn new(selected: Option<Vec<usize>>) -> Result<Self, VKMLError> {
-        unsafe {
-            let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
-            let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
-
-            let aname = CString::new("vkml").unwrap();
-
-            let appinfo = vk::ApplicationInfo {
-                s_type: vk::StructureType::APPLICATION_INFO,
-                next: ptr::null(),
-                application_name: aname.as_ptr(),
-                application_version: vk::make_version(1, 3, 0),
-                engine_name: aname.as_ptr(),
-                engine_version: vk::make_version(1, 3, 0),
-                api_version: vk::make_version(1, 3, 0),
-            };
-
-            let create_info = vk::InstanceCreateInfo {
-                s_type: vk::StructureType::INSTANCE_CREATE_INFO,
-                next: ptr::null(),
-                flags: vk::InstanceCreateFlags::empty(),
-                application_info: &appinfo,
-                enabled_layer_count: 0,
-                enabled_layer_names: ptr::null(),
-                enabled_extension_count: 0,
-                enabled_extension_names: ptr::null(),
-            };
-
-            let instance = Arc::new(entry.create_instance(&create_info, None)?);
-
-            // Get all gpus
-            let physical_devices = instance.enumerate_physical_devices()?;
-
-            let mut init_gpus = Vec::new();
-
-            // If selected is Some, iterate over those indices and validate them.
-            // Otherwise initialise every physical device found.
-            if let Some(selected_set) = selected {
-                let mut seen = HashSet::new();
-
-                for &idx in selected_set.iter() {
-                    if idx >= physical_devices.len() {
-                        return Err(VKMLError::Generic(format!(
-                            "Selected GPU index {} out of range",
-                            idx
-                        )));
-                    }
-
-                    if !seen.insert(idx) {
-                        return Err(VKMLError::Generic(format!(
-                            "Duplicate GPU index {} in selection",
-                            idx
-                        )));
-                    }
-
-                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
-                    init_gpus.push(gpu);
-                }
-            } else {
-                for (idx, _) in physical_devices.iter().enumerate() {
-                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
-                    init_gpus.push(gpu);
-                }
-            }
-
-            let gpus = Self {
-                gpus: init_gpus,
-                _entry: entry,
-            };
-
-            Ok(gpus)
-        }
-    }
-
-    pub fn gpus(&self) -> &Vec<Gpu> {
-        &self.gpus
-    }
-
-    pub fn get_gpu(&self, idx: usize) -> &Gpu {
-        self.gpus().get(idx).unwrap()
-    }
-}
 
 pub struct Gpu {
     info: OnceLock<GpuInfo>,
@@ -541,6 +450,14 @@ impl Gpu {
         info_ref.clone()
     }
 
+    pub fn get_instance(&self) -> Arc<Instance> {
+        self.instance.clone()
+    }
+
+    pub fn get_physical_device(&self) -> vk::PhysicalDevice {
+        self.physical_device
+    }
+
     pub fn get_or_create_timeline_semaphore(&self) -> vk::Semaphore {
         *self.timeline_semaphore.get_or_init(|| unsafe {
             let mut timeline_info = vk::SemaphoreTypeCreateInfo {
@@ -644,103 +561,5 @@ impl Gpu {
 
             Ok(())
         }
-    }
-}
-
-// No custom Drop implementation needed.
-// Rust drops fields top-to-bottom: timeline_semaphore -> pipelines -> pipeline_layout
-// -> command_pool -> device -> instance.
-// When the Device (Arc) refcount reaches 0, vulkanalia::Device::drop() properly
-// destroys the VkDevice, which automatically cleans up all child Vulkan objects
-// including semaphores. Verified with Vulkan validation layers - no leaks.
-
-#[derive(Clone)]
-pub struct GpuInfo {
-    name: String,
-    device_type: vk::PhysicalDeviceType,
-    has_compute: bool,
-    supported_formats: Vec<vk::Format>,
-    max_workgroup_count: [u32; 3],
-    max_workgroup_size: [u32; 3],
-    max_workgroup_invocations: u32,
-    max_shared_memory_size: u32,
-    compute_queue_count: u32,
-    max_push_descriptors: u32,
-}
-
-impl GpuInfo {
-    fn new(gpu: &Gpu) -> GpuInfo {
-        unsafe {
-            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
-                next: ptr::null_mut(),
-                max_push_descriptors: 0,
-            };
-
-            let mut props2 = vk::PhysicalDeviceProperties2 {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_PROPERTIES_2,
-                next: &mut push_props as *mut _ as *mut std::ffi::c_void,
-                properties: Default::default(),
-            };
-
-            gpu.instance
-                .get_physical_device_properties2(gpu.physical_device, &mut props2);
-
-            let properties = props2.properties;
-
-            let queue_families = gpu
-                .instance
-                .get_physical_device_queue_family_properties(gpu.physical_device);
-
-            let name = String::from_utf8_lossy(
-                &properties
-                    .device_name
-                    .iter()
-                    .take_while(|&&c| c != 0)
-                    .map(|&c| c as u8)
-                    .collect::<Vec<u8>>(),
-            )
-            .to_string();
-
-            let (has_compute, compute_queue_count) = queue_families
-                .iter()
-                .find(|props| props.queue_flags.contains(vk::QueueFlags::COMPUTE))
-                .map(|props| (true, props.queue_count))
-                .unwrap_or((false, 0));
-
-            let supported_formats = RAW_FORMATS
-                .iter()
-                .cloned()
-                .filter(|&format| {
-                    let props = gpu
-                        .instance
-                        .get_physical_device_format_properties(gpu.physical_device, format);
-                    props
-                        .buffer_features
-                        .contains(vk::FormatFeatureFlags::STORAGE_TEXEL_BUFFER)
-                })
-                .collect();
-
-            GpuInfo {
-                name,
-                device_type: properties.device_type,
-                has_compute,
-                supported_formats,
-                max_workgroup_count: properties.limits.max_compute_work_group_count,
-                max_workgroup_size: properties.limits.max_compute_work_group_size,
-                max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
-                max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
-                compute_queue_count,
-                max_push_descriptors: push_props.max_push_descriptors,
-            }
-        }
-    }
-
-    pub fn system_gpus_info() -> Result<Vec<GpuInfo>, VKMLError> {
-        let pool = GpuPool::new(None)?;
-
-        let info: Vec<GpuInfo> = pool.gpus().iter().map(GpuInfo::new).collect();
-
-        Ok(info)
     }
 }
