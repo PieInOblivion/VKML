@@ -2,7 +2,10 @@ use std::{
     collections::HashSet,
     ffi::{CString, c_void},
     ptr,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use vulkanalia::{
     Device, Entry, Instance,
@@ -123,6 +126,7 @@ pub struct Gpu {
     // Drop order matters: fields drop top-to-bottom
     // Semaphore must be destroyed before device, pipelines before pipeline_layout, etc.
     timeline_semaphore: OnceLock<vk::Semaphore>,
+    next_semaphore_value: AtomicU64,
     pipelines: Vec<OnceLock<vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
@@ -309,6 +313,7 @@ impl Gpu {
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, kept low for testing
                 extensions: vk_extensions,
                 timeline_semaphore: OnceLock::new(),
+                next_semaphore_value: AtomicU64::new(1),
 
                 pipelines: (0..GPUMemoryOperation::VARIANT_COUNT)
                     .map(|_| OnceLock::new())
@@ -629,6 +634,12 @@ impl Gpu {
                 .create_semaphore(&semaphore_info, None)
                 .expect("Failed to create timeline semaphore")
         })
+    }
+
+    /// Allocate the next N semaphore values and return the starting value
+    pub fn allocate_semaphore_values(&self, count: u64) -> u64 {
+        self.next_semaphore_value
+            .fetch_add(count, Ordering::Relaxed)
     }
 
     pub fn submit_with_timeline_semaphore(
