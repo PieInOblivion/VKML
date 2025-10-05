@@ -22,7 +22,6 @@ mod tensor_graph;
 mod importers;
 
 pub use compute::compute_manager::ComputeManager;
-pub use gpu::info::GpuInfo;
 pub use importers::onnx_parser;
 pub use layer::factory::Layers;
 pub use model::{graph_model::GraphModel, layer_connection::LayerConnection};

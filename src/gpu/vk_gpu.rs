@@ -8,11 +8,10 @@ use std::{
 };
 use vulkanalia::{
     Device, Instance,
-    vk::{self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0},
+    vk::{self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1},
 };
 
 use crate::{
-    GpuInfo,
     compute::memory_tracker::MemoryTracker,
     instruction::gpu_operations::GPUMemoryOperation,
     utils::{error::VKMLError, expect_msg::ExpectMsg},
@@ -22,7 +21,15 @@ use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
 pub struct Gpu {
-    info: OnceLock<GpuInfo>,
+    name: String,
+    device_type: vk::PhysicalDeviceType,
+    has_compute: bool,
+    max_workgroup_count: [u32; 3],
+    max_workgroup_size: [u32; 3],
+    max_workgroup_invocations: u32,
+    max_shared_memory_size: u32,
+    max_compute_queue_count: u32,
+    max_push_descriptors: u32,
 
     physical_device: vk::PhysicalDevice,
     compute_queue: vk::Queue,
@@ -180,6 +187,40 @@ impl Gpu {
                 device.create_pipeline_layout(&pipeline_layout_info, None)?
             };
 
+            // Query device properties for info fields and limits
+            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
+                next: ptr::null_mut(),
+                max_push_descriptors: 0,
+            };
+
+            let mut props2 = vk::PhysicalDeviceProperties2 {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PROPERTIES_2,
+                next: &mut push_props as *mut _ as *mut c_void,
+                properties: Default::default(),
+            };
+
+            instance.get_physical_device_properties2(physical_device, &mut props2);
+            let properties = props2.properties;
+
+            // Extract device name
+            let name = String::from_utf8_lossy(
+                &properties
+                    .device_name
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .map(|&c| c as u8)
+                    .collect::<Vec<u8>>(),
+            )
+            .to_string();
+
+            // Check compute capability
+            let (has_compute, max_compute_queue_count) = queue_families
+                .iter()
+                .find(|props| props.queue_flags.contains(vk::QueueFlags::COMPUTE))
+                .map(|props| (true, props.queue_count))
+                .unwrap_or((false, 0));
+
             let memory_properties = instance.get_physical_device_memory_properties(physical_device);
             let total_memory = {
                 let device_local_heap_index = (0..memory_properties.memory_type_count)
@@ -195,8 +236,20 @@ impl Gpu {
                 memory_properties.memory_heaps[device_local_heap_index as usize].size
             };
 
+            let pipelines = (0..GPUMemoryOperation::VARIANT_COUNT)
+                .map(|_| OnceLock::new())
+                .collect();
+
             Ok(Self {
-                info: OnceLock::new(),
+                name,
+                device_type: properties.device_type,
+                has_compute,
+                max_workgroup_count: properties.limits.max_compute_work_group_count,
+                max_workgroup_size: properties.limits.max_compute_work_group_size,
+                max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
+                max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
+                max_compute_queue_count,
+                max_push_descriptors: push_props.max_push_descriptors,
 
                 physical_device,
                 compute_queue,
@@ -206,9 +259,7 @@ impl Gpu {
                 timeline_semaphore: OnceLock::new(),
                 next_semaphore_value: AtomicU64::new(1),
 
-                pipelines: (0..GPUMemoryOperation::VARIANT_COUNT)
-                    .map(|_| OnceLock::new())
-                    .collect(),
+                pipelines,
                 pipeline_layout,
                 command_pool,
                 device,
@@ -445,9 +496,40 @@ impl Gpu {
         self.memory_tracker.get_maximum()
     }
 
-    pub fn get_info(&self) -> GpuInfo {
-        let info_ref = self.info.get_or_init(|| GpuInfo::new(self));
-        info_ref.clone()
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn device_type(&self) -> vk::PhysicalDeviceType {
+        self.device_type
+    }
+
+    pub fn has_compute(&self) -> bool {
+        self.has_compute
+    }
+
+    pub fn max_workgroup_count(&self) -> [u32; 3] {
+        self.max_workgroup_count
+    }
+
+    pub fn max_workgroup_size(&self) -> [u32; 3] {
+        self.max_workgroup_size
+    }
+
+    pub fn max_workgroup_invocations(&self) -> u32 {
+        self.max_workgroup_invocations
+    }
+
+    pub fn max_compute_queue_count(&self) -> u32 {
+        self.max_compute_queue_count
+    }
+
+    pub fn max_shared_memory_size(&self) -> u32 {
+        self.max_shared_memory_size
+    }
+
+    pub fn max_push_descriptors(&self) -> u32 {
+        self.max_push_descriptors
     }
 
     pub fn get_instance(&self) -> Arc<Instance> {

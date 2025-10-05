@@ -6,7 +6,7 @@ use vulkanalia::{
     vk::{self, InstanceV1_0},
 };
 
-use crate::{GpuInfo, error::VKMLError, gpu::vk_gpu::Gpu, utils::expect_msg::ExpectMsg};
+use crate::{error::VKMLError, gpu::vk_gpu::Gpu, utils::expect_msg::ExpectMsg};
 
 pub struct GpuPool {
     gpus: Vec<Gpu>,
@@ -44,7 +44,6 @@ impl GpuPool {
 
             let instance = Arc::new(entry.create_instance(&create_info, None)?);
 
-            // Get all gpus
             let physical_devices = instance.enumerate_physical_devices()?;
 
             let mut init_gpus = Vec::new();
@@ -73,10 +72,18 @@ impl GpuPool {
                     init_gpus.push(gpu);
                 }
             } else {
-                for (idx, _) in physical_devices.iter().enumerate() {
-                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
+                for physical_device in physical_devices {
+                    let gpu = Gpu::new_shared(instance.clone(), physical_device)?;
                     init_gpus.push(gpu);
                 }
+
+                // Sort GPUs: discrete GPUs first, then by total memory (descending)
+                init_gpus.sort_by_key(|gpu| {
+                    (
+                        gpu.device_type() != vk::PhysicalDeviceType::DISCRETE_GPU,
+                        std::cmp::Reverse(gpu.total_memory()),
+                    )
+                });
             }
 
             let gpus = Self {
@@ -99,9 +106,35 @@ impl GpuPool {
 
 impl std::fmt::Debug for GpuPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let infos: Vec<GpuInfo> = self.gpus.iter().map(|g| g.get_info()).collect();
-        f.debug_struct("GpuPool")
-            .field("gpus_info", &infos)
-            .finish()
+        #[derive(Debug)]
+        struct GpuDebugInfo {
+            name: String,
+            device_type: vk::PhysicalDeviceType,
+            has_compute: bool,
+            max_workgroup_count: [u32; 3],
+            max_workgroup_size: [u32; 3],
+            max_workgroup_invocations: u32,
+            max_compute_queue_count: u32,
+            max_shared_memory_size: u32,
+            max_push_descriptors: u32,
+        }
+
+        let gpu_infos: Vec<GpuDebugInfo> = self
+            .gpus
+            .iter()
+            .map(|g| GpuDebugInfo {
+                name: g.name().to_string(),
+                device_type: g.device_type(),
+                has_compute: g.has_compute(),
+                max_workgroup_count: g.max_workgroup_count(),
+                max_workgroup_size: g.max_workgroup_size(),
+                max_workgroup_invocations: g.max_workgroup_invocations(),
+                max_compute_queue_count: g.max_compute_queue_count(),
+                max_shared_memory_size: g.max_shared_memory_size(),
+                max_push_descriptors: g.max_push_descriptors(),
+            })
+            .collect();
+
+        f.debug_struct("GpuPool").field("gpus", &gpu_infos).finish()
     }
 }
