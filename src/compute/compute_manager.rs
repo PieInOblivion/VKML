@@ -32,7 +32,7 @@ pub struct ComputeManager {
 
     // Cached command buffers per operation, indexed by operation ID
     cached_command_buffers: Vec<OnceLock<CommandBuffer>>,
-    // Cached execution plan (single-threaded access, no lock needed)
+    // Cached execution plan
     cached_execution_plan: Option<ExecutionPlan>,
 }
 
