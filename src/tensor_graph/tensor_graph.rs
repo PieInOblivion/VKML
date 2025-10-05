@@ -2,7 +2,7 @@ use crate::{
     instruction::instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::{desc::TensorDesc, tensor::DeviceId},
+    tensor::{cell::TensorCell, desc::TensorDesc, tensor::DeviceId},
     utils::error::VKMLError,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -279,7 +279,7 @@ impl TensorGraph {
 
     /// Creates depth-aware execution plan with proper device and dependency tracking.
     /// This is the main execution planning function used by the compute manager.
-    pub fn create_execution_plan(&self, device_locations: &[DeviceId]) -> ExecutionPlan {
+    pub fn create_execution_plan(&self, device_locations: &[TensorCell]) -> ExecutionPlan {
         let num_ops = self.operations.len();
 
         // Pre-build tensor producer map for O(1) lookups instead of O(n) searches
@@ -312,7 +312,18 @@ impl TensorGraph {
 
         // Determine device for each operation (single pass)
         let op_devices: Vec<DeviceId> = (0..num_ops)
-            .map(|op_id| self.determine_op_device(op_id, device_locations))
+            .map(|op_id| {
+                let op = &self.operations[op_id];
+                let inputs = op.get_input_tensor_ids();
+                let outputs = op.get_output_tensor_ids();
+                let tensor_id = inputs
+                    .first()
+                    .or_else(|| outputs.first())
+                    .expect("Operation has no tensors");
+                unsafe { device_locations[*tensor_id].as_ref() }
+                    .device
+                    .clone()
+            })
             .collect();
 
         // Build chunks: collect all operations per device that can execute together
@@ -443,24 +454,6 @@ impl TensorGraph {
             chunks,
             next_semaphore_value: current_semaphore_value,
         }
-    }
-
-    fn determine_op_device(&self, op_id: OperationId, device_locations: &[DeviceId]) -> DeviceId {
-        // Check input tensors
-        for &tid in &self.operations[op_id].get_input_tensor_ids() {
-            if let Some(dev) = device_locations.get(tid) {
-                return dev.clone();
-            }
-        }
-
-        // Check output tensors
-        for &tid in &self.operations[op_id].get_output_tensor_ids() {
-            if let Some(dev) = device_locations.get(tid) {
-                return dev.clone();
-            }
-        }
-
-        DeviceId::CPU
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {

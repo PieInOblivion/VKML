@@ -619,13 +619,7 @@ impl ComputeManager {
     pub fn execute(&mut self) -> Result<(), VKMLError> {
         // Get or create cached execution plan
         if self.cached_execution_plan.is_none() {
-            let device_locations: Vec<DeviceId> = self
-                .tensors
-                .iter()
-                .map(|tensor_cell| unsafe { tensor_cell.as_ref() }.device.clone())
-                .collect();
-
-            let plan = self.tensor_graph.create_execution_plan(&device_locations);
+            let plan = self.tensor_graph.create_execution_plan(&self.tensors);
 
             // Initialize command buffer cache with one entry per operation
             let op_count = self.tensor_graph.operations.len();
