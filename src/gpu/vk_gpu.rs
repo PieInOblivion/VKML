@@ -1,4 +1,5 @@
 use std::{
+    array,
     ffi::{CString, c_void},
     ptr,
     sync::{
@@ -119,40 +120,15 @@ impl Gpu {
 
             let command_pool = device.create_command_pool(&command_pool_info, None)?;
 
-            let bindings = [
-                // Input buffer 1 (used by all operations)
-                vk::DescriptorSetLayoutBinding {
-                    binding: 0,
+            // Create 4 identical storage buffer bindings
+            let bindings: [vk::DescriptorSetLayoutBinding; 4] =
+                array::from_fn(|i| vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::COMPUTE,
                     immutable_samplers: ptr::null(),
-                },
-                // Input buffer 2 (used by binary operations like Add, Mul, etc.)
-                vk::DescriptorSetLayoutBinding {
-                    binding: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    immutable_samplers: ptr::null(),
-                },
-                // Output buffer (binding used by most operations)
-                vk::DescriptorSetLayoutBinding {
-                    binding: 2,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    immutable_samplers: ptr::null(),
-                },
-                // Additional bindings if needed (bias buffer for Conv, etc.)
-                vk::DescriptorSetLayoutBinding {
-                    binding: 3,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    immutable_samplers: ptr::null(),
-                },
-            ];
+                });
 
             let descriptor_layout_info = vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,

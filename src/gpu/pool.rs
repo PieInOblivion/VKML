@@ -51,6 +51,7 @@ impl GpuPool {
             // If selected is Some, iterate over those indices and validate them.
             // Otherwise initialise every physical device found.
             if let Some(selected_set) = selected {
+                init_gpus.reserve_exact(selected_set.len());
                 let mut seen = HashSet::new();
 
                 for &idx in selected_set.iter() {
@@ -68,13 +69,12 @@ impl GpuPool {
                         )));
                     }
 
-                    let gpu = Gpu::new_shared(instance.clone(), physical_devices[idx])?;
-                    init_gpus.push(gpu);
+                    init_gpus.push(Gpu::new_shared(instance.clone(), physical_devices[idx])?);
                 }
             } else {
-                for physical_device in physical_devices {
-                    let gpu = Gpu::new_shared(instance.clone(), physical_device)?;
-                    init_gpus.push(gpu);
+                init_gpus.reserve_exact(physical_devices.len());
+                for device in physical_devices {
+                    init_gpus.push(Gpu::new_shared(instance.clone(), device)?);
                 }
 
                 // Sort GPUs: discrete GPUs first, then by total memory (descending)
