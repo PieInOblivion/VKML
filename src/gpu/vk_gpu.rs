@@ -23,7 +23,6 @@ use crate::{
 use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
-const REQUEST_ALL_COMPUTE_QUEUES: bool = false;
 
 pub struct GpuPool {
     gpus: Vec<Gpu>,
@@ -118,7 +117,7 @@ pub struct Gpu {
     info: OnceLock<GpuInfo>,
 
     physical_device: vk::PhysicalDevice,
-    compute_queues: Vec<vk::Queue>,
+    compute_queue: vk::Queue,
     descriptor_set_layout: vk::DescriptorSetLayout,
     memory_tracker: MemoryTracker,
     extensions: VkExtensions,
@@ -154,27 +153,14 @@ impl Gpu {
                 .map(|(index, _)| index as u32)
                 .expect("No compute queue family found on device");
 
-            // Get queue family properties to find the number of available queues
-            let queue_family_props =
-                instance.get_physical_device_queue_family_properties(physical_device);
-
-            let queue_count = queue_family_props[queue_family_index as usize].queue_count;
-            let requested_queue_count: u32 = if REQUEST_ALL_COMPUTE_QUEUES {
-                queue_count
-            } else {
-                1
-            };
-
-            // Create queue info with priorities for all queues
-            let queue_priorities = vec![1.0; requested_queue_count as usize];
-
+            // Request a single compute queue
             let queue_info = vk::DeviceQueueCreateInfo {
                 s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
                 next: std::ptr::null(),
                 flags: vk::DeviceQueueCreateFlags::empty(),
                 queue_family_index,
-                queue_count: requested_queue_count,
-                queue_priorities: queue_priorities.as_ptr(),
+                queue_count: 1,
+                queue_priorities: &1.0f32,
             };
 
             let device_features = vk::PhysicalDeviceFeatures::default();
@@ -207,11 +193,8 @@ impl Gpu {
             let device =
                 Arc::new(instance.create_device(physical_device, &device_create_info, None)?);
 
-            // Get all compute queues
-            let mut compute_queues = Vec::with_capacity(requested_queue_count as usize);
-            for i in 0..requested_queue_count {
-                compute_queues.push(device.get_device_queue(queue_family_index, i));
-            }
+            // Get the single compute queue
+            let compute_queue = device.get_device_queue(queue_family_index, 0);
 
             let command_pool_info = vk::CommandPoolCreateInfo {
                 s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
@@ -308,7 +291,7 @@ impl Gpu {
                 info: OnceLock::new(),
 
                 physical_device,
-                compute_queues,
+                compute_queue,
                 descriptor_set_layout,
                 memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, kept low for testing
                 extensions: vk_extensions,
@@ -459,61 +442,6 @@ impl Gpu {
         self.memory_tracker.get_available()
     }
 
-    pub fn submit_command_buffers_and_wait(
-        &self,
-        command_buffers: &[vk::CommandBuffer],
-    ) -> Result<(), VKMLError> {
-        unsafe {
-            // Split command buffers evenly across queues
-            // No idea what happens per device vendor implementation
-            // I assume hardware schedulers still only operate one queue at a time
-            // But, is the queue maximum equal across all queues in total, or can one queue use it all if the others are empty?
-            // Also what if a device can benefit from using the multiple queues in hardware?
-            // Is it better for sequential operations to be in the same queue?
-            let buffers_per_queue = command_buffers.len().div_ceil(self.compute_queues.len());
-            let mut fences = Vec::with_capacity(self.compute_queues.len());
-
-            // For each queue, create a batch of command buffers
-            for (queue_idx, chunk) in command_buffers.chunks(buffers_per_queue).enumerate() {
-                // Create a fence for this submission to track completion
-                let fence_info = vk::FenceCreateInfo {
-                    s_type: vk::StructureType::FENCE_CREATE_INFO,
-                    next: std::ptr::null(),
-                    flags: vk::FenceCreateFlags::empty(),
-                };
-
-                let fence = self.device.create_fence(&fence_info, None)?;
-                fences.push(fence);
-
-                let submit_info = vk::SubmitInfo {
-                    s_type: vk::StructureType::SUBMIT_INFO,
-                    next: std::ptr::null(),
-                    wait_semaphore_count: 0,
-                    wait_semaphores: std::ptr::null(),
-                    wait_dst_stage_mask: std::ptr::null(),
-                    command_buffer_count: chunk.len() as u32,
-                    command_buffers: chunk.as_ptr(),
-                    signal_semaphore_count: 0,
-                    signal_semaphores: std::ptr::null(),
-                };
-
-                // Get queue index, wrap around if needed
-                let queue_idx = queue_idx % self.compute_queues.len();
-
-                self.device
-                    .queue_submit(self.compute_queues[queue_idx], &[submit_info], fence)?;
-            }
-
-            // Wait for all fences to signal completion
-            self.device.wait_for_fences(&fences, true, u64::MAX)?;
-
-            for fence in fences {
-                self.device.destroy_fence(fence, None);
-            }
-
-            Ok(())
-        }
-    }
 
     fn create_pipeline(&self, shader_code: &[u8]) -> Result<vk::Pipeline, VKMLError> {
         unsafe {
@@ -693,7 +621,7 @@ impl Gpu {
             };
 
             self.device
-                .queue_submit(self.compute_queues[0], &[submit_info], vk::Fence::null())?;
+                .queue_submit(self.compute_queue, &[submit_info], vk::Fence::null())?;
 
             Ok(())
         }
