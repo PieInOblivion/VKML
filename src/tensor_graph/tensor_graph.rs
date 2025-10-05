@@ -23,7 +23,6 @@ pub type OperationId = usize;
 pub type TensorId = usize;
 
 /// Represents a chunk of operations that can be submitted together to a device
-#[derive(Debug, Clone)]
 pub struct ExecutionChunk {
     pub device: DeviceLocation,
     pub operations: Vec<OperationId>,
@@ -39,7 +38,6 @@ pub struct ExecutionChunk {
 }
 
 /// Complete execution plan with dependency tracking for depth-aware scheduling
-#[derive(Debug, Clone)]
 pub struct ExecutionPlan {
     pub chunks: Vec<ExecutionChunk>,
     /// Next timeline semaphore value to use (monotonically increasing)
