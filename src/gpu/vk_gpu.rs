@@ -541,6 +541,99 @@ impl Gpu {
             .fetch_add(count, Ordering::Relaxed)
     }
 
+    /// Calculate optimal workgroup size for 1D compute operations (element-wise ops)
+    /// Counts in increments of 64 up to either total_elements or GPU limits
+    pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> u32 {
+        const INCREMENT: u32 = 64;
+        let max_total = self.max_workgroup_invocations;
+        let max_x = self.max_workgroup_size[0];
+
+        let mut size = INCREMENT;
+        while size < max_total
+            && size < max_x
+            && (size as u64) < total_elements {
+            size += INCREMENT;
+        }
+
+        size.min(max_total).min(max_x)
+    }
+
+    /// Calculate optimal workgroup size for 2D compute operations (matmul, conv2d)
+    /// Returns square tiles, counting in increments of 8 per dimension
+    ///
+    /// Note: For batched 2D operations (e.g., batched matmul), use this function
+    /// and handle the batch dimension in the dispatch call, not the workgroup size.
+    /// Standard pattern: workgroup = [tile, tile], dispatch = [m/tile, n/tile, batch]
+    pub fn optimal_workgroup_size_2d(&self, rows: u64, cols: u64) -> [u32; 2] {
+        const INCREMENT: u32 = 8;
+        let max_total = self.max_workgroup_invocations;
+        let max_dim_gpu = self.max_workgroup_size[0].min(self.max_workgroup_size[1]);
+        let max_dim_op = rows.max(cols);
+
+        let mut tile_size = INCREMENT;
+        while (tile_size + INCREMENT).pow(2) <= max_total
+            && (tile_size + INCREMENT) <= max_dim_gpu
+            && (tile_size + INCREMENT) as u64 <= max_dim_op {
+            tile_size += INCREMENT;
+        }
+
+        [tile_size, tile_size]
+    }
+
+    /// Calculate optimal workgroup size for 3D spatial operations (conv3d, maxpool3d)
+    /// Returns cubic tiles, counting in increments of 2 per dimension
+    ///
+    /// This is for true 3D spatial operations, not batched 2D operations.
+    /// For batched 2D, use optimal_workgroup_size_2d() instead.
+    ///
+    /// Uses the minimum of max_workgroup_size dimensions to ensure cubic tiles fit.
+    pub fn optimal_workgroup_size_3d(&self, x: u64, y: u64, z: u64) -> [u32; 3] {
+        const INCREMENT: u32 = 2;
+        let max_total = self.max_workgroup_invocations;
+        let max_dim_gpu = self.max_workgroup_size[0]
+            .min(self.max_workgroup_size[1])
+            .min(self.max_workgroup_size[2]);
+        let max_dim_op = x.max(y).max(z);
+
+        let mut size = INCREMENT;
+        while (size + INCREMENT).pow(3) <= max_total
+            && (size + INCREMENT) <= max_dim_gpu
+            && (size + INCREMENT) as u64 <= max_dim_op {
+            size += INCREMENT;
+        }
+
+        [size, size, size]
+    }
+
+    // TODO: To use these workgroup sizes in shaders:
+    //
+    // 1. Update shaders to use specialization constants instead of hardcoded sizes:
+    //    Change:
+    //      layout(local_size_x = 256) in;
+    //    To:
+    //      layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+    //
+    // 2. When creating pipelines (in get_or_create_pipeline), pass specialization constants:
+    //      let workgroup_size = gpu.optimal_workgroup_size_1d(total_elements);
+    //      let spec_data = [workgroup_size, 1u32, 1u32];
+    //      let spec_entries = [
+    //          vk::SpecializationMapEntry { constant_id: 0, offset: 0, size: 4 },
+    //          vk::SpecializationMapEntry { constant_id: 1, offset: 4, size: 4 },
+    //          vk::SpecializationMapEntry { constant_id: 2, offset: 8, size: 4 },
+    //      ];
+    //      let spec_info = vk::SpecializationInfo {
+    //          map_entry_count: 3,
+    //          p_map_entries: spec_entries.as_ptr(),
+    //          data_size: 12,
+    //          p_data: spec_data.as_ptr() as *const c_void,
+    //      };
+    //      // Pass spec_info to vk::ComputePipelineCreateInfo.stage.specialization_info
+    //
+    // 3. Update dispatch calculations in create_command_buffer():
+    //      let workgroup_size = gpu.optimal_workgroup_size_1d(total_elements);
+    //      let num_workgroups = total_elements.div_ceil(workgroup_size as u64);
+    //      gpu.get_device().cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
+
     pub fn submit_with_timeline_semaphore(
         &self,
         command_buffers: &[vk::CommandBuffer],
