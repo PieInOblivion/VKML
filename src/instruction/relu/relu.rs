@@ -51,6 +51,10 @@ impl Instruction for ReLUInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
+        // Prepare CPU-side values
+        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+
+        // Begin command buffer
         gpu.begin_command_buffer(command_buffer)?;
 
         // Choose operation based on DataType (only Float supported)
@@ -64,16 +68,16 @@ impl Instruction for ReLUInstruction {
             }
         };
 
+        // Choose an optimal local workgroup size for this 1D element-wise op
+        let local_size = gpu.optimal_workgroup_size_1d(num_elements);
+
         // Bind pipeline first so descriptor push is associated with the correct layout
-        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
 
         gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
-        let workgroup_size = 256;
-        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-        let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
-
-        gpu.dispatch(command_buffer, num_workgroups as u32, 1, 1);
+        // Dispatch
+        gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         gpu.end_command_buffer(command_buffer)?;
 

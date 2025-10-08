@@ -81,6 +81,17 @@ impl Instruction for SoftmaxInstruction {
             dim
         );
 
+        let feature_size = dims[dim] as usize;
+        let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
+
+        // Create push constants struct (compute before GPU ops)
+        let push_constants = SoftmaxPushConstants {
+            batch_size: batch_size as u32,
+            feature_size: feature_size as u32,
+        };
+
+        let pc_bytes = as_bytes(&push_constants);
+
         // Begin command buffer
         gpu.begin_command_buffer(command_buffer)?;
 
@@ -95,25 +106,19 @@ impl Instruction for SoftmaxInstruction {
             }
         };
 
+        // Choose an optimal local workgroup for per-batch parallelism
+        // We want one workgroup per batch; pick local_size sized to GPU limits
+        let local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
+
         // Bind pipeline and descriptors (src=0, dst=1)
-        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
-        let feature_size = dims[dim] as usize;
-        let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
-
-        // Create push constants struct
-        let push_constants = SoftmaxPushConstants {
-            batch_size: batch_size as u32,
-            feature_size: feature_size as u32,
-        };
-
-        let pc_bytes = as_bytes(&push_constants);
+        // Push constants
         gpu.bind_push_constants(command_buffer, pc_bytes);
 
         // Calculate dispatch size based on batch size (one workgroup per batch)
-        let num_workgroups = (batch_size as u64).div_ceil(256) as u32;
-        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+        gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
 
         gpu.end_command_buffer(command_buffer)?;
 

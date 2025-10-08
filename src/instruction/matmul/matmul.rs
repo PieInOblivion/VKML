@@ -468,8 +468,8 @@ fn create_generic_matmul_command_buffer(
     pc.extend_from_slice(&b_strides_packed);
     pc.extend_from_slice(&c_strides_packed);
 
-    // Bind pipeline and storage buffers via helpers (ensures correct ordering and debug logging)
-    gpu.bind_compute_pipeline(command_buffer, GPUOperation::MatMul_F32);
+    let local_size = gpu.optimal_workgroup_size_2d(n as u64, m as u64);
+    gpu.bind_compute_pipeline(command_buffer, GPUOperation::MatMul_F32, local_size);
     gpu.bind_storage_buffers(
         command_buffer,
         &[&src1_gpu_mem, &src2_gpu_mem, &dst_gpu_mem],
@@ -490,15 +490,12 @@ fn create_generic_matmul_command_buffer(
         }
     }
 
-    let workgroup_size_x = 16; // from shader
-    let workgroup_size_y = 16; // from shader
-    let workgroup_size_z = 1; // from shader layout(local_size_z = 1)
-
-    let num_groups_x = (n as u32).div_ceil(workgroup_size_x);
-    let num_groups_y = (m as u32).div_ceil(workgroup_size_y);
-    let num_groups_z = (batch_size_val as u32).div_ceil(workgroup_size_z); // if workgroup_size_z is 1, this is just batch_size_val
-
-    gpu.dispatch(command_buffer, num_groups_x, num_groups_y, num_groups_z);
+    // Dispatch using total work extents; Gpu::dispatch will ceil-divide by local_size
+    gpu.dispatch(
+        command_buffer,
+        local_size,
+        [n as u64, m as u64, batch_size_val as u64],
+    );
 
     gpu.end_command_buffer(command_buffer)?;
 
@@ -602,8 +599,21 @@ fn create_specialized_matmul_command_buffer(
     // Begin command buffer using helper
     gpu.begin_command_buffer(command_buffer)?;
 
-    // Bind the specialised pipeline and storage buffers (src1=0, src2=1, dst=2)
-    gpu.bind_compute_pipeline(command_buffer, operation);
+    // Choose local workgroup size appropriate for the specialised kernel later and bind pipeline
+    // We'll pick based on the operation's expected tile sizes
+    let local_size = match operation {
+        GPUOperation::MatMul1D2D_F32
+        | GPUOperation::MatMul2D1D_F32
+        | GPUOperation::MatMul3D1D_F32
+        | GPUOperation::MatMul1D3D_F32 => gpu.optimal_workgroup_size_1d(1), // will be overridden per-dispatch below for total work
+        GPUOperation::MatMul2D2D_F32
+        | GPUOperation::MatMul3D2D_F32
+        | GPUOperation::MatMul2D3D_F32
+        | GPUOperation::MatMul3D3D_F32 => gpu.optimal_workgroup_size_2d(16, 16),
+        _ => gpu.optimal_workgroup_size_1d(1),
+    };
+
+    gpu.bind_compute_pipeline(command_buffer, operation, local_size);
     gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
 
     // Configure operation-specific parameters and dispatch dimensions
@@ -617,9 +627,40 @@ fn create_specialized_matmul_command_buffer(
         pc_bytes_vec.extend_from_slice(&v.to_ne_bytes());
     }
 
-    // Push constants and dispatch via helpers
+    // Push constants
     gpu.bind_push_constants(command_buffer, pc_bytes_vec.as_slice());
-    gpu.dispatch(command_buffer, dispatch_x, dispatch_y, dispatch_z);
+
+    // Convert dispatch counts from (groups_x, groups_y, groups_z) into total work extents
+    // depending on the kernel we select local_size to match shader tiles and then
+    // provide total work sizes so Gpu::dispatch computes the number of workgroups.
+    let work_size: [u64; 3] = match operation {
+        GPUOperation::MatMul1D2D_F32 | GPUOperation::MatMul2D1D_F32 => {
+            // 1D kernels: dispatch along single dimension (n or m)
+            [dispatch_x as u64, 1u64, 1u64]
+        }
+        GPUOperation::MatMul2D2D_F32 => {
+            // 2D kernel: provide (n, m, batch)
+            let n_u = dispatch_x as u64 * 16u64; // approximate total cols = groups_x * tile_x
+            let m_u = dispatch_y as u64 * 16u64; // approximate total rows = groups_y * tile_y
+            let batch_u = dispatch_z as u64; // batch count
+            [n_u, m_u, batch_u]
+        }
+        GPUOperation::MatMul2D3D_F32
+        | GPUOperation::MatMul3D2D_F32
+        | GPUOperation::MatMul3D3D_F32 => {
+            // 3D kernels: groups_x/groups_y correspond to tiles in n/m, groups_z to batch
+            let n_u = dispatch_x as u64 * 8u64; // shader tiles are 8 in xy for these kernels
+            let m_u = dispatch_y as u64 * 8u64;
+            let batch_u = dispatch_z as u64 * 4u64; // z tile size 4
+            [n_u, m_u, batch_u]
+        }
+        GPUOperation::MatMul3D1D_F32 | GPUOperation::MatMul1D3D_F32 => {
+            [dispatch_x as u64, dispatch_y as u64, dispatch_z as u64]
+        }
+        _ => [dispatch_x as u64, dispatch_y as u64, dispatch_z as u64],
+    };
+
+    gpu.dispatch(command_buffer, local_size, work_size);
 
     // End command buffer
     gpu.end_command_buffer(command_buffer)?;

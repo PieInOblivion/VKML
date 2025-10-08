@@ -224,7 +224,11 @@ impl Instruction for ConvInstruction {
                 let push_constant_bytes = as_bytes(&pc_values);
 
                 // Bind pipeline and descriptors (preserve optional bias binding)
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv1D_F32);
+                // choose an optimal local workgroup size for this 1D workload
+                let total: u64 = (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
+                let local_size = gpu.optimal_workgroup_size_1d(total);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv1D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
@@ -232,11 +236,9 @@ impl Instruction for ConvInstruction {
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                // dispatch: output elements = n * m * output_len
-                let total: u64 = (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
-                let workgroup_size = 256u64;
-                let num_groups = total.div_ceil(workgroup_size) as u32;
-                gpu.dispatch(command_buffer, num_groups, 1, 1);
+                // dispatch: provide total work counts per-dimension; Gpu::dispatch will
+                // compute the needed number of workgroups as ceil(work/local_size)
+                gpu.dispatch(command_buffer, local_size, [total, 1, 1]);
             }
             2 => {
                 // 2D shader
@@ -266,7 +268,14 @@ impl Instruction for ConvInstruction {
 
                 let push_constant_bytes = as_bytes(&pc_values);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv2D_F32);
+                // choose a 2D tile size suitable for (out_h x out_w) work
+                let out_w = dst_dims[3] as u64;
+                let out_h = dst_dims[2] as u64;
+                let batch_nm = (dst_dims[0] as u64) * (dst_dims[1] as u64); // n * m
+
+                let local_size = gpu.optimal_workgroup_size_2d(out_h, out_w);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv2D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
@@ -274,14 +283,8 @@ impl Instruction for ConvInstruction {
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                // dispatch: out_w x out_h workgroups, z dimension encodes (m * n)
-                let out_w = dst_dims[3] as u32;
-                let out_h = dst_dims[2] as u32;
-                let groups_x = out_w.div_ceil(16);
-                let groups_y = out_h.div_ceil(16);
-                let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * m
-
-                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+                // dispatch using total work extents (width, height, batch)
+                gpu.dispatch(command_buffer, local_size, [out_w, out_h, batch_nm]);
             }
             3 => {
                 // 3D shader
@@ -325,7 +328,17 @@ impl Instruction for ConvInstruction {
 
                 let push_constant_bytes = as_bytes(&pc_values);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv3D_F32);
+                let out_w = dst_dims[4] as u64;
+                let out_h = dst_dims[3] as u64;
+                let out_d = dst_dims[2] as u64;
+
+                // total_z includes depth * batch (n * m)
+                let total_z = (out_d) * (dst_dims[0] as u64) * (dst_dims[1] as u64);
+
+                // pick a cubic local workgroup size based on spatial dims
+                let local_size = gpu.optimal_workgroup_size_3d(out_w, out_h, out_d);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv3D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
@@ -333,14 +346,8 @@ impl Instruction for ConvInstruction {
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                // dispatch: x=ceil(out_w/8), y=ceil(out_h/8), z=ceil((out_d * n * m) / local_z)
-                let groups_x = (dst_dims[4] as u32).div_ceil(8);
-                let groups_y = (dst_dims[3] as u32).div_ceil(8);
-                let local_z = 4u32; // shader local size z
-                let total_z = (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                let groups_z = total_z.div_ceil(local_z);
-
-                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+                // dispatch over (w, h, depth * batch)
+                gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);
             }
             _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
         }

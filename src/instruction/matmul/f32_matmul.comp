@@ -1,6 +1,6 @@
 #version 450
 
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
 
 layout(std430, binding = 0) buffer InBufferA { float a[]; };
 layout(std430, binding = 1) buffer InBufferB { float b[]; };
@@ -37,8 +37,8 @@ layout(push_constant) uniform PushConstants {
 } dims;
 
 // Shared-memory tiles
-shared float tileA[16][16];
-shared float tileB[16][16];
+shared float tileA[gl_WorkGroupSize.y][gl_WorkGroupSize.x];
+shared float tileB[gl_WorkGroupSize.y][gl_WorkGroupSize.x];
 
 // Broadcast-safe indexing: only treat size==1 as broadcast
 // Support up to 6 dims packed as two u16 per u32 word
@@ -128,7 +128,7 @@ void main() {
     uint c_index = idx_broadcast_unpacked(c_idxs, dims.dim_count_c, shape_c, strides_c);
 
     float sum = 0.0;
-    uint numTiles = (dims.k + 16 - 1) / 16;
+    uint numTiles = (dims.k + gl_WorkGroupSize.x - 1) / gl_WorkGroupSize.x;
 
     // Temporary index arrays
     uint a_idxs[6];
@@ -137,7 +137,7 @@ void main() {
     // Loop over tiles in k dimension
     for (uint t = 0; t < numTiles; ++t) {
         // Each thread loads one element of A and B into shared memory
-        uint kGlobal = t * 16 + gl_LocalInvocationID.x;
+    uint kGlobal = t * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
         // Prepare A indices for broadcast
         for (uint d = 0u; d < dims.batch_dims && d < MAX_DIMS; ++d) a_idxs[d] = batch_idxs[d];
         // Set matrix dims in A
@@ -165,7 +165,7 @@ void main() {
         barrier();
 
         // Compute partial sums
-        for (uint kk = 0; kk < 16; ++kk) {
+        for (uint kk = 0; kk < gl_WorkGroupSize.x; ++kk) {
             sum += tileA[gl_LocalInvocationID.y][kk] *
                    tileB[kk][gl_LocalInvocationID.x];
         }

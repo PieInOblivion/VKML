@@ -51,15 +51,7 @@ impl Instruction for InitConstantInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Use generic constant-init compute shader that writes elements up to 8 bytes
-        gpu.begin_command_buffer(command_buffer)?;
-
-        // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
-        // Bind pipeline first so push-descriptors are associated with the correct layout
-        gpu.bind_compute_pipeline(command_buffer, GPUOperation::InitConstant);
-
-        // bind dst buffer at binding 0
-        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
-
+        // Prepare CPU-side values (element size, total bytes/words, push constants)
         // Determine element size for this tensor and pass it to the GPU so the shader
         // can write using the correct stride/width. Panic if we don't know the size.
         let elem_size_usize = dst_tensor
@@ -113,11 +105,24 @@ impl Instruction for InitConstantInstruction {
 
         let pc_bytes = as_bytes(&push_constants);
 
+        // begin command buffer and bind GPU resources
+        gpu.begin_command_buffer(command_buffer)?;
+
+        // Choose operation and workgroup
+        let gpu_op = GPUOperation::InitConstant;
+        let local_size = gpu.optimal_workgroup_size_1d(total_words as u64);
+
+        // Bind pipeline first so push-descriptors are associated with the correct layout
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+
+        // bind dst buffer at binding 0
+        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
+
+        // push constants and dispatch
         gpu.bind_push_constants(command_buffer, pc_bytes);
 
-        let workgroup_size = 256u32;
-        let num_workgroups = total_words.div_ceil(workgroup_size);
-        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+        // Dispatch
+        gpu.dispatch(command_buffer, local_size, [total_words as u64, 1, 1]);
 
         gpu.end_command_buffer(command_buffer)?;
 

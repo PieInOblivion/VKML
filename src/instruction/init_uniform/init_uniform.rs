@@ -51,27 +51,7 @@ impl Instruction for InitUniformInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        // Begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
-        // Choose operation based on data type
-        let op_datatype = dst_tensor.desc.data_type();
-        let gpu_op = match op_datatype {
-            onnx_extractor::DataType::Float => GPUOperation::InitUniform_F32,
-            _ => {
-                return Err(format!(
-                    "GPU InitUniform unimplemented for DataType {:?}",
-                    op_datatype
-                )
-                .into());
-            }
-        };
-
-        // Bind pipeline and descriptor (dst at binding 0)
-        gpu.bind_compute_pipeline(command_buffer, gpu_op);
-        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
-
-        // Push constants
+        // Prepare push constants and CPU-side values (calculate before GPU work)
         let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
         let seed = rand::random::<u32>();
 
@@ -83,12 +63,35 @@ impl Instruction for InitUniformInstruction {
         };
 
         let pc_bytes = as_bytes(&push_constants);
+
+        // begin command buffer
+        gpu.begin_command_buffer(command_buffer)?;
+
+        // Choose operation based on data type
+        let op_datatype = dst_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            DataType::Float => GPUOperation::InitUniform_F32,
+            _ => {
+                return Err(format!(
+                    "GPU InitUniform unimplemented for DataType {:?}",
+                    op_datatype
+                )
+                .into());
+            }
+        };
+
+        // Choose and bind workgroup and pipeline after we know total elements
+        let local_size = gpu.optimal_workgroup_size_1d(dst_elems);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+
+        // Bind descriptor (dst at binding 0)
+        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
+
+        // Push constants
         gpu.bind_push_constants(command_buffer, pc_bytes);
 
         // Dispatch
-        let workgroup_size = 256u32;
-        let num_workgroups = (dst_elems as u32).div_ceil(workgroup_size);
-        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+        gpu.dispatch(command_buffer, local_size, [dst_elems, 1, 1]);
 
         // End command buffer
         gpu.end_command_buffer(command_buffer)?;

@@ -52,6 +52,9 @@ impl Instruction for SigmoidInstruction {
         let src_mem = src_tensor.get_gpu_memory_or_panic();
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
+        // Prepare CPU-side values
+        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+
         // begin command buffer
         gpu.begin_command_buffer(command_buffer)?;
 
@@ -66,15 +69,13 @@ impl Instruction for SigmoidInstruction {
             }
         };
 
-        // Bind pipeline and descriptors (src=0, dst=1)
-        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        // Choose local workgroup and bind pipeline
+        let local_size = gpu.optimal_workgroup_size_1d(num_elements);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
         // Dispatch
-        let workgroup_size = 256u64;
-        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-        let num_workgroups = num_elements.div_ceil(workgroup_size) as u32;
-        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+        gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         gpu.end_command_buffer(command_buffer)?;
 

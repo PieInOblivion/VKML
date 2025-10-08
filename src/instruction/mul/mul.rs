@@ -145,19 +145,17 @@ impl Instruction for MulInstruction {
             }
         };
 
-        // Bind pipeline and descriptors (src1=0, src2=1, dst=2)
-        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        // Choose 1D local workgroup size and bind pipeline/descriptors
+        let local_size = gpu.optimal_workgroup_size_1d(total_elements);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
 
         // Push constants to the shader
         gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-        let workgroup_size = 256u64;
-        // Minimal check: use tensor shape as the source of truth for element count
         let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
-        let num_workgroups = num_elements.div_ceil(workgroup_size) as u32;
 
-        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+        gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         gpu.end_command_buffer(command_buffer)?;
 

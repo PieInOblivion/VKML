@@ -400,6 +400,35 @@ impl Gpu {
             let shader_module = self.device.create_shader_module(&shader_info, None)?;
 
             let entry_point = CString::new("main").unwrap();
+
+            // Prepare specialization constants so shaders compiled to use
+            // specialization IDs 0,1,2 for local_size_x/y/z will receive
+            // the chosen local workgroup sizes at pipeline creation time.
+            let spec_entries = [
+                vk::SpecializationMapEntry {
+                    constant_id: 0,
+                    offset: 0,
+                    size: std::mem::size_of::<u32>(),
+                },
+                vk::SpecializationMapEntry {
+                    constant_id: 1,
+                    offset: std::mem::size_of::<u32>() as u32,
+                    size: std::mem::size_of::<u32>(),
+                },
+                vk::SpecializationMapEntry {
+                    constant_id: 2,
+                    offset: (std::mem::size_of::<u32>() * 2) as u32,
+                    size: std::mem::size_of::<u32>(),
+                },
+            ];
+
+            let spec_info = vk::SpecializationInfo {
+                map_entry_count: spec_entries.len() as u32,
+                map_entries: spec_entries.as_ptr(),
+                data_size: (local_size.len() * std::mem::size_of::<u32>()) as usize,
+                data: local_size.as_ptr() as *const c_void,
+            };
+
             let pipeline_info = vk::ComputePipelineCreateInfo {
                 s_type: vk::StructureType::COMPUTE_PIPELINE_CREATE_INFO,
                 next: std::ptr::null(),
@@ -411,7 +440,7 @@ impl Gpu {
                     stage: vk::ShaderStageFlags::COMPUTE,
                     module: shader_module,
                     name: entry_point.as_ptr(),
-                    specialization_info: std::ptr::null(),
+                    specialization_info: &spec_info,
                 },
                 layout: self.pipeline_layout,
                 base_pipeline_handle: vk::Pipeline::null(),
@@ -561,7 +590,9 @@ impl Gpu {
             size += INCREMENT;
         }
 
-        [size.min(max_total).min(max_x), 1, 1]
+        let final_size = size.min(max_total).min(max_x);
+
+        [final_size, 1, 1]
     }
 
     /// Calculate optimal workgroup size for 2D compute operations (matmul, conv2d)
@@ -574,7 +605,8 @@ impl Gpu {
         const INCREMENT: u32 = 8;
         let max_total = self.max_workgroup_invocations;
         let max_dim_gpu = self.max_workgroup_size[0].min(self.max_workgroup_size[1]);
-        let max_dim_op = rows.max(cols);
+        // Use the smaller of the two operation dimensions so tiles fit both axes
+        let max_dim_op = rows.min(cols);
 
         let mut tile_size = INCREMENT;
         while (tile_size + INCREMENT).pow(2) <= max_total
@@ -584,7 +616,10 @@ impl Gpu {
             tile_size += INCREMENT;
         }
 
-        [tile_size, tile_size, 1]
+        // Clamp final tile to available operation and GPU limits
+        let final_tile = tile_size.min(max_dim_gpu).min(max_dim_op as u32);
+
+        [final_tile, final_tile, 1]
     }
 
     /// Calculate optimal workgroup size for 3D spatial operations (conv3d, maxpool3d)
@@ -600,7 +635,8 @@ impl Gpu {
         let max_dim_gpu = self.max_workgroup_size[0]
             .min(self.max_workgroup_size[1])
             .min(self.max_workgroup_size[2]);
-        let max_dim_op = x.max(y).max(z);
+        // Use the smallest operation dimension so cubic tiles fit all axes
+        let max_dim_op = x.min(y).min(z);
 
         let mut size = INCREMENT;
         while (size + INCREMENT).pow(3) <= max_total
@@ -610,7 +646,9 @@ impl Gpu {
             size += INCREMENT;
         }
 
-        [size, size, size]
+        let final_size = size.min(max_dim_gpu).min(max_dim_op as u32);
+
+        [final_size, final_size, final_size]
     }
 
     /// Begin recording a compute command buffer
@@ -754,7 +792,7 @@ impl Gpu {
     }
 
     /// Dispatch compute shader work
-    fn dispatch(&self, cb: vk::CommandBuffer, local_size: [u32; 3], work_size: [u64; 3]) {
+    pub fn dispatch(&self, cb: vk::CommandBuffer, local_size: [u32; 3], work_size: [u64; 3]) {
         let dispatch_x = ((work_size[0] + local_size[0] as u64 - 1) / local_size[0] as u64) as u32;
         let dispatch_y = ((work_size[1] + local_size[1] as u64 - 1) / local_size[1] as u64) as u32;
         let dispatch_z = ((work_size[2] + local_size[2] as u64 - 1) / local_size[2] as u64) as u32;

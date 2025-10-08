@@ -177,14 +177,14 @@ impl Instruction for MaxPoolInstruction {
 
                 let push_constant_bytes = as_bytes(&pc);
 
-                // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool1D_F32);
+                // choose local workgroup size and bind specialized pipeline
+                let total: u64 = (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
+                let local_size = gpu.optimal_workgroup_size_1d(total);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool1D_F32, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                let total: u64 = (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
-                let workgroup_size = 256u64;
-                let num_groups = total.div_ceil(workgroup_size) as u32;
-                gpu.dispatch(command_buffer, num_groups, 1, 1);
+                gpu.dispatch(command_buffer, local_size, [total, 1, 1]);
             }
             2 => {
                 let src_dims = src_desc.dims();
@@ -216,17 +216,17 @@ impl Instruction for MaxPoolInstruction {
 
                 let push_constant_bytes = as_bytes(&pc);
 
-                // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool2D_F32);
+                // choose local tile size and bind specialized pipeline
+                let out_w = dst_dims[3] as u64;
+                let out_h = dst_dims[2] as u64;
+                let batch_nc = (dst_dims[0] as u64) * (dst_dims[1] as u64); // n * c
+
+                let local_size = gpu.optimal_workgroup_size_2d(out_h, out_w);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool2D_F32, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                let out_w = dst_dims[3] as u32;
-                let out_h = dst_dims[2] as u32;
-                let groups_x = out_w.div_ceil(16);
-                let groups_y = out_h.div_ceil(16);
-                let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * c
-
-                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+                gpu.dispatch(command_buffer, local_size, [out_w, out_h, batch_nc]);
             }
             3 => {
                 let src_dims = src_desc.dims();
@@ -267,17 +267,18 @@ impl Instruction for MaxPoolInstruction {
 
                 let push_constant_bytes = as_bytes(&pc);
 
-                // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool3D_F32);
+                let out_w = dst_dims[4] as u64;
+                let out_h = dst_dims[3] as u64;
+                let out_d = dst_dims[2] as u64;
+
+                let total_z = out_d * (dst_dims[0] as u64) * (dst_dims[1] as u64);
+
+                let local_size = gpu.optimal_workgroup_size_3d(out_w, out_h, out_d);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool3D_F32, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                let groups_x = (dst_dims[4] as u32).div_ceil(8);
-                let groups_y = (dst_dims[3] as u32).div_ceil(8);
-                let local_z = 4u32;
-                let total_z = (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                let groups_z = total_z.div_ceil(local_z);
-
-                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+                gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);
             }
             _ => panic!("Unsupported spatial rank {} for GPU MaxPool", spatial_rank),
         }
