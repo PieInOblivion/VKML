@@ -1,9 +1,10 @@
 use std::{
     array,
+    collections::HashMap,
     ffi::{CString, c_void},
     ptr,
     sync::{
-        Arc, OnceLock,
+        Arc, OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -44,7 +45,7 @@ pub struct Gpu {
     // Drop order matters: fields drop top-to-bottom
     timeline_semaphore: OnceLock<vk::Semaphore>,
     next_semaphore_value: AtomicU64,
-    pipelines: Vec<OnceLock<vk::Pipeline>>,
+    pipelines: RwLock<HashMap<(GPUOperation, [u32; 3]), vk::Pipeline>>,
     pipeline_layout: vk::PipelineLayout,
     command_pool: vk::CommandPool,
     device: Arc<Device>,
@@ -214,10 +215,6 @@ impl Gpu {
                 memory_properties.memory_heaps[device_local_heap_index as usize].size
             };
 
-            let pipelines = (0..GPUOperation::VARIANT_COUNT)
-                .map(|_| OnceLock::new())
-                .collect();
-
             Ok(Self {
                 name,
                 device_type: properties.device_type,
@@ -237,7 +234,7 @@ impl Gpu {
                 timeline_semaphore: OnceLock::new(),
                 next_semaphore_value: AtomicU64::new(1),
 
-                pipelines,
+                pipelines: RwLock::new(HashMap::new()),
                 pipeline_layout,
                 command_pool,
                 device,
@@ -379,7 +376,11 @@ impl Gpu {
         self.memory_tracker.get_available()
     }
 
-    fn create_pipeline(&self, shader_code: &[u8]) -> Result<vk::Pipeline, VKMLError> {
+    fn create_pipeline(
+        &self,
+        shader_code: &[u8],
+        local_size: [u32; 3],
+    ) -> Result<vk::Pipeline, VKMLError> {
         unsafe {
             // ensure the shader byte length is a multiple of 4 (SPIR-V is in 32-bit words)
             if !shader_code.len().is_multiple_of(4) {
@@ -428,25 +429,29 @@ impl Gpu {
         }
     }
 
-    fn create_and_get_pipeline(&self, op: GPUOperation, shader_code: &[u8]) -> vk::Pipeline {
-        let pipeline_ref = self.pipelines[op as usize].get_or_init(|| {
-            self.create_pipeline(shader_code)
-                .expect_msg(&format!("Pipeline creation failed {:?}", op))
-        });
+    pub fn get_or_create_pipeline(&self, op: GPUOperation, local_size: [u32; 3]) -> vk::Pipeline {
+        let key = (op, local_size);
 
-        *pipeline_ref
-    }
-
-    fn get_pipeline_for_op(&self, op: GPUOperation) -> Option<vk::Pipeline> {
-        self.pipelines[op as usize].get().copied()
-    }
-
-    pub fn get_or_create_pipeline(&self, op: GPUOperation) -> vk::Pipeline {
-        if let Some(pipeline) = self.get_pipeline_for_op(op) {
-            pipeline
-        } else {
-            self.create_and_get_pipeline(op, op.get_shader_bytes())
+        // Fast path: pipeline already exists
+        if let Some(pipeline) = self.pipelines.read().unwrap().get(&key) {
+            return *pipeline;
         }
+
+        // Slow path: create pipeline
+        let pipeline = self
+            .create_pipeline(op.get_shader_bytes(), local_size)
+            .expect_msg(&format!(
+                "Pipeline creation failed {:?} with workgroup {:?}",
+                op, local_size
+            ));
+
+        // Insert and return (handles race condition gracefully)
+        self.pipelines
+            .write()
+            .unwrap()
+            .entry(key)
+            .or_insert(pipeline);
+        pipeline
     }
 
     pub fn get_layout(&self) -> vk::PipelineLayout {
@@ -546,7 +551,7 @@ impl Gpu {
 
     /// Calculate optimal workgroup size for 1D compute operations (element-wise ops)
     /// Counts in increments of 64 up to either total_elements or GPU limits
-    pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> u32 {
+    pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> [u32; 3] {
         const INCREMENT: u32 = 64;
         let max_total = self.max_workgroup_invocations;
         let max_x = self.max_workgroup_size[0];
@@ -556,7 +561,7 @@ impl Gpu {
             size += INCREMENT;
         }
 
-        size.min(max_total).min(max_x)
+        [size.min(max_total).min(max_x), 1, 1]
     }
 
     /// Calculate optimal workgroup size for 2D compute operations (matmul, conv2d)
@@ -565,7 +570,7 @@ impl Gpu {
     /// Note: For batched 2D operations (e.g., batched matmul), use this function
     /// and handle the batch dimension in the dispatch call, not the workgroup size.
     /// Standard pattern: workgroup = [tile, tile], dispatch = [m/tile, n/tile, batch]
-    pub fn optimal_workgroup_size_2d(&self, rows: u64, cols: u64) -> [u32; 2] {
+    pub fn optimal_workgroup_size_2d(&self, rows: u64, cols: u64) -> [u32; 3] {
         const INCREMENT: u32 = 8;
         let max_total = self.max_workgroup_invocations;
         let max_dim_gpu = self.max_workgroup_size[0].min(self.max_workgroup_size[1]);
@@ -579,7 +584,7 @@ impl Gpu {
             tile_size += INCREMENT;
         }
 
-        [tile_size, tile_size]
+        [tile_size, tile_size, 1]
     }
 
     /// Calculate optimal workgroup size for 3D spatial operations (conv3d, maxpool3d)
@@ -723,9 +728,10 @@ impl Gpu {
         &self,
         command_buffer: vk::CommandBuffer,
         operation: GPUOperation,
+        local_size: [u32; 3],
     ) {
         unsafe {
-            let pipeline = self.get_or_create_pipeline(operation);
+            let pipeline = self.get_or_create_pipeline(operation, local_size);
             self.get_device().cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
@@ -748,9 +754,13 @@ impl Gpu {
     }
 
     /// Dispatch compute shader work
-    pub fn dispatch(&self, command_buffer: vk::CommandBuffer, x: u32, y: u32, z: u32) {
+    fn dispatch(&self, cb: vk::CommandBuffer, local_size: [u32; 3], work_size: [u64; 3]) {
+        let dispatch_x = ((work_size[0] + local_size[0] as u64 - 1) / local_size[0] as u64) as u32;
+        let dispatch_y = ((work_size[1] + local_size[1] as u64 - 1) / local_size[1] as u64) as u32;
+        let dispatch_z = ((work_size[2] + local_size[2] as u64 - 1) / local_size[2] as u64) as u32;
         unsafe {
-            self.get_device().cmd_dispatch(command_buffer, x, y, z);
+            self.get_device()
+                .cmd_dispatch(cb, dispatch_x, dispatch_y, dispatch_z);
         }
     }
 
