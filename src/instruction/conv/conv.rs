@@ -13,9 +13,7 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct ConvInstruction {
@@ -183,317 +181,174 @@ impl Instruction for ConvInstruction {
             .as_ref()
             .map(|t| t.get_gpu_memory_or_panic());
 
-        // Prepare push constants and descriptor set
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        // Begin command buffer
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Decide which shader/pipeline to use based on spatial rank and prepare push constants
+        let src_desc = &src_tensor.desc;
+        let spatial_rank = if src_desc.ndim() >= 2 {
+            src_desc.ndim() - 2
+        } else {
+            0
+        };
 
-            // Prepare buffer infos for bindings: src(0), weights(1), dst(2), bias(3)
-            let buffer_infos = [
-                vk::DescriptorBufferInfo {
-                    buffer: src_mem.buffer,
-                    offset: 0,
-                    range: src_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: weights_mem.buffer,
-                    offset: 0,
-                    range: weights_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: dst_mem.buffer,
-                    offset: 0,
-                    range: dst_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: if let Some(b) = bias_mem {
-                        b.buffer
-                    } else {
-                        vk::Buffer::null()
-                    },
-                    offset: 0,
-                    range: if let Some(b) = bias_mem { b.size } else { 0 },
-                },
-            ];
+        match spatial_rank {
+            0 | 1 => {
+                // 1D shader
+                let src_dims = src_desc.dims();
+                let input_len = if src_dims.len() >= 3 {
+                    src_dims[2] as u32
+                } else {
+                    1
+                };
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
+                let output_len = if dst_dims.len() >= 3 {
+                    dst_dims[2] as u32
+                } else {
+                    1
+                };
 
-            let write_descriptor_sets = [
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[0],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 1,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[1],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[2],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 3,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[3],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-            ];
+                let pc_values = Conv1DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    m: dst_dims[1] as u32,
+                    input_len,
+                    output_len,
+                    kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    stride: self.strides.first().copied().unwrap_or(1) as u32,
+                    dilation: self.dilations.first().copied().unwrap_or(1) as u32,
+                    pad_begin: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
+                    group: self.group as u32,
+                    has_bias: if self.bias.is_some() { 1 } else { 0 },
+                };
 
-            // Decide which shader/pipeline to use based on spatial rank
-            let src_desc = &src_tensor.desc;
-            let spatial_rank = if src_desc.ndim() >= 2 {
-                src_desc.ndim() - 2
-            } else {
-                0
-            };
+                let push_constant_bytes = as_bytes(&pc_values);
 
-            // Prepare push-constant bytes per shader
-            match spatial_rank {
-                0 | 1 => {
-                    // 1D shader
-                    // derive dims
-                    let src_dims = src_desc.dims();
-                    let input_len = if src_dims.len() >= 3 {
-                        src_dims[2] as u32
-                    } else {
-                        1
-                    };
+                // Bind pipeline and descriptors (preserve optional bias binding)
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv1D_F32);
+                gpu.bind_storage_buffers_optional(
+                    command_buffer,
+                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                );
 
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-                    let output_len = if dst_dims.len() >= 3 {
-                        dst_dims[2] as u32
-                    } else {
-                        1
-                    };
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                    let pc_values = Conv1DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        m: dst_dims[1] as u32,
-                        input_len,
-                        output_len,
-                        kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        stride: self.strides.first().copied().unwrap_or(1) as u32,
-                        dilation: self.dilations.first().copied().unwrap_or(1) as u32,
-                        // compute pads using the same helper as CPU path
-                        pad_begin: self.compute_pads(src_desc).0.first().copied().unwrap_or(0)
-                            as u32,
-                        group: self.group as u32,
-                        has_bias: if self.bias.is_some() { 1 } else { 0 },
-                    };
-
-                    let push_constant_bytes = as_bytes(&pc_values);
-
-                    let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Conv1D_F32);
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    // dispatch: output elements = n * m * output_len
-                    let total: u64 =
-                        (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
-                    let workgroup_size = 256u64;
-                    let num_groups = total.div_ceil(workgroup_size) as u32;
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, num_groups, 1, 1);
-                }
-                2 => {
-                    // 2D shader
-                    let src_dims = src_desc.dims();
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-
-                    let pc_values = Conv2DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        m: dst_dims[1] as u32,
-                        in_h: src_dims[2] as u32,
-                        in_w: src_dims[3] as u32,
-                        out_h: dst_dims[2] as u32,
-                        out_w: dst_dims[3] as u32,
-                        k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        s_h: self.strides.first().copied().unwrap_or(1) as u32,
-                        s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.first().copied().unwrap_or(1) as u32,
-                        d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                        // compute pads using the same helper as CPU path
-                        pad_h: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
-                        pad_w: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
-                        group: self.group as u32,
-                        has_bias: if self.bias.is_some() { 1 } else { 0 },
-                    };
-
-                    let push_constant_bytes = as_bytes(&pc_values);
-
-                    let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Conv2D_F32);
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    // dispatch: out_w x out_h workgroups, z dimension encodes (m * n)
-                    let out_w = dst_dims[3] as u32;
-                    let out_h = dst_dims[2] as u32;
-                    let groups_x = out_w.div_ceil(16);
-                    let groups_y = out_h.div_ceil(16);
-                    let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * m
-
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
-                }
-                3 => {
-                    // 3D shader
-                    let src_dims = src_desc.dims();
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-
-                    let pc_values = Conv3DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        m: dst_dims[1] as u32,
-                        in_d: src_dims[2] as u32,
-                        in_h: src_dims[3] as u32,
-                        in_w: src_dims[4] as u32,
-                        out_d: dst_dims[2] as u32,
-                        out_h: dst_dims[3] as u32,
-                        out_w: dst_dims[4] as u32,
-                        k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
-                        s_d: self.strides.first().copied().unwrap_or(1) as u32,
-                        s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
-                        d_d: self.dilations.first().copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                        d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
-                        pad_d: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
-                        pad_h: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
-                        pad_w: self.compute_pads(src_desc).0.get(2).copied().unwrap_or(0) as u32,
-                        group: {
-                            if self.group < 1 {
-                                panic!(
-                                    "ConvInstruction.create_command_buffer: group must be >= 1, got {}",
-                                    self.group
-                                );
-                            }
-                            self.group as u32
-                        },
-                        has_bias: if self.bias.is_some() { 1 } else { 0 },
-                    };
-
-                    let push_constant_bytes = as_bytes(&pc_values);
-
-                    let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::Conv3D_F32);
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    // dispatch: x=ceil(out_w/8), y=ceil(out_h/8), z=ceil((out_d * n * m) / local_z)
-                    let groups_x = (dst_dims[4] as u32).div_ceil(8);
-                    let groups_y = (dst_dims[3] as u32).div_ceil(8);
-                    let local_z = 4u32; // shader local size z
-                    let total_z =
-                        (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                    let groups_z = total_z.div_ceil(local_z);
-
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
-                }
-                _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
+                // dispatch: output elements = n * m * output_len
+                let total: u64 = (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
+                let workgroup_size = 256u64;
+                let num_groups = total.div_ceil(workgroup_size) as u32;
+                gpu.dispatch(command_buffer, num_groups, 1, 1);
             }
+            2 => {
+                // 2D shader
+                let src_dims = src_desc.dims();
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
 
-            gpu.get_device().end_command_buffer(command_buffer)?;
+                let pc_values = Conv2DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    m: dst_dims[1] as u32,
+                    in_h: src_dims[2] as u32,
+                    in_w: src_dims[3] as u32,
+                    out_h: dst_dims[2] as u32,
+                    out_w: dst_dims[3] as u32,
+                    k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
+                    s_h: self.strides.first().copied().unwrap_or(1) as u32,
+                    s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
+                    d_h: self.dilations.first().copied().unwrap_or(1) as u32,
+                    d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
+                    pad_h: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
+                    pad_w: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
+                    group: self.group as u32,
+                    has_bias: if self.bias.is_some() { 1 } else { 0 },
+                };
+
+                let push_constant_bytes = as_bytes(&pc_values);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv2D_F32);
+                gpu.bind_storage_buffers_optional(
+                    command_buffer,
+                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                );
+
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+
+                // dispatch: out_w x out_h workgroups, z dimension encodes (m * n)
+                let out_w = dst_dims[3] as u32;
+                let out_h = dst_dims[2] as u32;
+                let groups_x = out_w.div_ceil(16);
+                let groups_y = out_h.div_ceil(16);
+                let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * m
+
+                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+            }
+            3 => {
+                // 3D shader
+                let src_dims = src_desc.dims();
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
+
+                let pc_values = Conv3DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    m: dst_dims[1] as u32,
+                    in_d: src_dims[2] as u32,
+                    in_h: src_dims[3] as u32,
+                    in_w: src_dims[4] as u32,
+                    out_d: dst_dims[2] as u32,
+                    out_h: dst_dims[3] as u32,
+                    out_w: dst_dims[4] as u32,
+                    k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
+                    k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
+                    s_d: self.strides.first().copied().unwrap_or(1) as u32,
+                    s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
+                    s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
+                    d_d: self.dilations.first().copied().unwrap_or(1) as u32,
+                    d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
+                    d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
+                    pad_d: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
+                    pad_h: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
+                    pad_w: self.compute_pads(src_desc).0.get(2).copied().unwrap_or(0) as u32,
+                    group: {
+                        if self.group < 1 {
+                            panic!(
+                                "ConvInstruction.create_command_buffer: group must be >= 1, got {}",
+                                self.group
+                            );
+                        }
+                        self.group as u32
+                    },
+                    has_bias: if self.bias.is_some() { 1 } else { 0 },
+                };
+
+                let push_constant_bytes = as_bytes(&pc_values);
+
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv3D_F32);
+                gpu.bind_storage_buffers_optional(
+                    command_buffer,
+                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                );
+
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+
+                // dispatch: x=ceil(out_w/8), y=ceil(out_h/8), z=ceil((out_d * n * m) / local_z)
+                let groups_x = (dst_dims[4] as u32).div_ceil(8);
+                let groups_y = (dst_dims[3] as u32).div_ceil(8);
+                let local_z = 4u32; // shader local size z
+                let total_z = (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
+                let groups_z = total_z.div_ceil(local_z);
+
+                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+            }
+            _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
         }
+
+        // End command buffer
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

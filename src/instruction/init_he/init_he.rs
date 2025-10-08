@@ -10,9 +10,7 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct InitHeInstruction {
@@ -47,85 +45,46 @@ impl Instruction for InitHeInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Begin command buffer
+        gpu.begin_command_buffer(command_buffer)?;
 
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer: dst_mem.buffer,
-                offset: 0,
-                range: dst_mem.size,
-            };
-            let write_descriptor_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: std::ptr::null(),
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_info,
-                image_info: std::ptr::null(),
-                texel_buffer_view: std::ptr::null(),
-            };
+        // Choose operation based on data type
+        let op_datatype = dst_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            onnx_extractor::DataType::Float => GPUMemoryOperation::InitHe_F32,
+            _ => {
+                return Err(
+                    format!("GPU InitHe unimplemented for DataType {:?}", op_datatype).into(),
+                );
+            }
+        };
 
-            let op_datatype = dst_tensor.desc.data_type();
-            let gpu_op = match op_datatype {
-                onnx_extractor::DataType::Float => GPUMemoryOperation::InitHe_F32,
-                _ => {
-                    return Err(
-                        format!("GPU InitHe unimplemented for DataType {:?}", op_datatype).into(),
-                    );
-                }
-            };
+        // Bind pipeline and descriptor (dst at binding 0)
+        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
 
-            let pipeline = gpu.get_or_create_pipeline(gpu_op);
-            gpu.get_device().cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                pipeline,
-            );
-            gpu.get_device().cmd_push_descriptor_set_khr(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                gpu.get_layout(),
-                0,
-                &[write_descriptor_set],
-            );
+        // Push constants
+        let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
+        let (fan_in, _) = dst_tensor.desc.calculate_fan_in_out();
+        let seed = rand::random::<u32>();
+        let gain = 2.0f32; // default gain for He init (variance scaling)
 
-            let dst_elems = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let (fan_in, _) = dst_tensor.desc.calculate_fan_in_out();
-            let seed = rand::random::<u32>();
-            let gain = 2.0f32; // default gain for He init (variance scaling)
+        let push_constants = InitHePushConstants {
+            total_elements: dst_elems as u32,
+            fan_in: fan_in as u32,
+            seed,
+            gain,
+        };
 
-            let push_constants = InitHePushConstants {
-                total_elements: dst_elems as u32,
-                fan_in: fan_in as u32,
-                seed,
-                gain,
-            };
+        let pc_bytes = as_bytes(&push_constants);
+        gpu.bind_push_constants(command_buffer, pc_bytes);
 
-            let pc_bytes = as_bytes(&push_constants);
+        // Dispatch
+        let workgroup_size = 256u32;
+        let num_workgroups = (dst_elems as u32).div_ceil(workgroup_size);
+        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
 
-            gpu.get_device().cmd_push_constants(
-                command_buffer,
-                gpu.get_layout(),
-                vk::ShaderStageFlags::COMPUTE,
-                0,
-                pc_bytes,
-            );
-
-            let workgroup_size = 256u32;
-            let num_workgroups = (dst_elems as u32).div_ceil(workgroup_size);
-            gpu.get_device()
-                .cmd_dispatch(command_buffer, num_workgroups, 1, 1);
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
-        }
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

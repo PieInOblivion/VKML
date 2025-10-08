@@ -9,7 +9,10 @@ use std::{
 };
 use vulkanalia::{
     Device, Instance,
-    vk::{self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1},
+    vk::{
+        self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1,
+        KhrPushDescriptorExtension,
+    },
 };
 
 use crate::{
@@ -549,9 +552,7 @@ impl Gpu {
         let max_x = self.max_workgroup_size[0];
 
         let mut size = INCREMENT;
-        while size < max_total
-            && size < max_x
-            && (size as u64) < total_elements {
+        while size < max_total && size < max_x && (size as u64) < total_elements {
             size += INCREMENT;
         }
 
@@ -573,7 +574,8 @@ impl Gpu {
         let mut tile_size = INCREMENT;
         while (tile_size + INCREMENT).pow(2) <= max_total
             && (tile_size + INCREMENT) <= max_dim_gpu
-            && (tile_size + INCREMENT) as u64 <= max_dim_op {
+            && (tile_size + INCREMENT) as u64 <= max_dim_op
+        {
             tile_size += INCREMENT;
         }
 
@@ -598,11 +600,166 @@ impl Gpu {
         let mut size = INCREMENT;
         while (size + INCREMENT).pow(3) <= max_total
             && (size + INCREMENT) <= max_dim_gpu
-            && (size + INCREMENT) as u64 <= max_dim_op {
+            && (size + INCREMENT) as u64 <= max_dim_op
+        {
             size += INCREMENT;
         }
 
         [size, size, size]
+    }
+
+    /// Begin recording a compute command buffer
+    pub fn begin_command_buffer(&self, command_buffer: vk::CommandBuffer) -> Result<(), VKMLError> {
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                ..Default::default()
+            };
+            self.get_device()
+                .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+        Ok(())
+    }
+
+    /// Bind up to 4 GPU storage buffers to descriptor set bindings 0-3
+    pub fn bind_storage_buffers(&self, command_buffer: vk::CommandBuffer, buffers: &[&GPUMemory]) {
+        assert!(buffers.len() <= 4, "Maximum 4 buffers supported");
+
+        unsafe {
+            let buffer_infos: Vec<_> = buffers
+                .iter()
+                .map(|mem| vk::DescriptorBufferInfo {
+                    buffer: mem.buffer,
+                    offset: 0,
+                    range: mem.size,
+                })
+                .collect();
+
+            let write_descriptor_sets: Vec<_> = buffer_infos
+                .iter()
+                .enumerate()
+                .map(|(i, info)| vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    next: ptr::null(),
+                    dst_set: vk::DescriptorSet::null(),
+                    dst_binding: i as u32,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    buffer_info: info,
+                    image_info: ptr::null(),
+                    texel_buffer_view: ptr::null(),
+                })
+                .collect();
+
+            self.get_device().cmd_push_descriptor_set_khr(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                self.get_layout(),
+                0,
+                &write_descriptor_sets,
+            );
+        }
+    }
+
+    /// Bind up to 4 GPU storage buffers (supporting Option<&GPUMemory>) to descriptor set bindings 0-3
+    /// Optional buffers will be bound as null buffers with size 0
+    pub fn bind_storage_buffers_optional(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        buffers: &[Option<&GPUMemory>],
+    ) {
+        assert!(buffers.len() <= 4, "Maximum 4 buffers supported");
+
+        unsafe {
+            let buffer_infos: Vec<_> = buffers
+                .iter()
+                .map(|mem_opt| {
+                    if let Some(mem) = mem_opt {
+                        vk::DescriptorBufferInfo {
+                            buffer: mem.buffer,
+                            offset: 0,
+                            range: mem.size,
+                        }
+                    } else {
+                        vk::DescriptorBufferInfo {
+                            buffer: vk::Buffer::null(),
+                            offset: 0,
+                            range: 0,
+                        }
+                    }
+                })
+                .collect();
+
+            let write_descriptor_sets: Vec<_> = buffer_infos
+                .iter()
+                .enumerate()
+                .map(|(i, info)| vk::WriteDescriptorSet {
+                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                    next: ptr::null(),
+                    dst_set: vk::DescriptorSet::null(),
+                    dst_binding: i as u32,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    buffer_info: info,
+                    image_info: ptr::null(),
+                    texel_buffer_view: ptr::null(),
+                })
+                .collect();
+
+            self.get_device().cmd_push_descriptor_set_khr(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                self.get_layout(),
+                0,
+                &write_descriptor_sets,
+            );
+        }
+    }
+
+    /// Bind a compute pipeline with the specified workgroup size
+    pub fn bind_compute_pipeline(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        operation: GPUMemoryOperation,
+    ) {
+        unsafe {
+            let pipeline = self.get_or_create_pipeline(operation);
+            self.get_device().cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline,
+            );
+        }
+    }
+
+    /// Push constants to the compute shader
+    pub fn bind_push_constants(&self, command_buffer: vk::CommandBuffer, data: &[u8]) {
+        unsafe {
+            self.get_device().cmd_push_constants(
+                command_buffer,
+                self.get_layout(),
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                data,
+            );
+        }
+    }
+
+    /// Dispatch compute shader work
+    pub fn dispatch(&self, command_buffer: vk::CommandBuffer, x: u32, y: u32, z: u32) {
+        unsafe {
+            self.get_device().cmd_dispatch(command_buffer, x, y, z);
+        }
+    }
+
+    /// End command buffer recording
+    pub fn end_command_buffer(&self, command_buffer: vk::CommandBuffer) -> Result<(), VKMLError> {
+        unsafe {
+            self.get_device().end_command_buffer(command_buffer)?;
+        }
+        Ok(())
     }
 
     // TODO: To use these workgroup sizes in shaders:

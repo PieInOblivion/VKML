@@ -7,9 +7,7 @@ use crate::{
     tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct InitConstantInstruction {
@@ -53,111 +51,75 @@ impl Instruction for InitConstantInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Use generic constant-init compute shader that writes elements up to 8 bytes
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
+        // Bind pipeline first so push-descriptors are associated with the correct layout
+        gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::InitConstant);
 
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer: dst_mem.buffer,
-                offset: 0,
-                range: dst_mem.size,
-            };
+        // bind dst buffer at binding 0
+        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
 
-            let write_descriptor_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: std::ptr::null(),
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_info,
-                image_info: std::ptr::null(),
-                texel_buffer_view: std::ptr::null(),
-            };
-
-            // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
-            let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::InitConstant);
-
-            gpu.get_device().cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                pipeline,
-            );
-
-            gpu.get_device().cmd_push_descriptor_set_khr(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                gpu.get_layout(),
-                0,
-                &[write_descriptor_set],
-            );
-
-            // Determine element size for this tensor and pass it to the GPU so the shader
-            // can write using the correct stride/width. Panic if we don't know the size.
-            let elem_size_usize = dst_tensor.desc.data_type().size_in_bytes().unwrap_or_else(|| panic!("InitConstant create_command_buffer: unknown element size for DataType {:?}",
-                dst_tensor.desc.data_type()));
-            let elem_size = elem_size_usize as u32;
-
-            // Validate element size (host-side defense). We support up to 8 bytes per element.
-            if elem_size_usize == 0 || elem_size_usize > 8 {
+        // Determine element size for this tensor and pass it to the GPU so the shader
+        // can write using the correct stride/width. Panic if we don't know the size.
+        let elem_size_usize = dst_tensor
+            .desc
+            .data_type()
+            .size_in_bytes()
+            .unwrap_or_else(|| {
                 panic!(
-                    "InitConstant create_command_buffer: unsupported element size {} (must be 1..=8)",
-                    elem_size_usize
-                );
-            }
+                    "InitConstant create_command_buffer: unknown element size for DataType {:?}",
+                    dst_tensor.desc.data_type()
+                )
+            });
+        let elem_size = elem_size_usize as u32;
 
-            // Compute total bytes from the tensor descriptor (preferred source of truth)
-            let total_bytes_usize = dst_tensor.desc.size_in_bytes();
-            if total_bytes_usize == 0 {
-                // nothing to do
-                return Ok(());
-            }
-            if total_bytes_usize > u32::MAX as usize {
-                panic!(
-                    "InitConstant create_command_buffer: total bytes {} too large (must fit in u32)",
-                    total_bytes_usize
-                );
-            }
-
-            let total_words = total_bytes_usize.div_ceil(4) as u32;
-
-            // Build a little-endian u64 from the first up to 8 bytes of `self.constant`.
-            // Use `.get()` with a default of 0 so GPU path is tolerant of shorter inputs.
-            let mut value_u64: u64 = 0;
-            for i in 0..8usize {
-                let b = *self.constant.get(i).unwrap_or(&0) as u64;
-                value_u64 |= b << (8 * i);
-            }
-
-            let push_constants = InitConstantPushConstants {
-                elem_size,
-                value_lo: (value_u64 & 0xFFFFFFFF) as u32,
-                value_hi: (value_u64 >> 32) as u32,
-            };
-
-            let pc_bytes = as_bytes(&push_constants);
-
-            gpu.get_device().cmd_push_constants(
-                command_buffer,
-                gpu.get_layout(),
-                vk::ShaderStageFlags::COMPUTE,
-                0,
-                pc_bytes,
+        // Validate element size (host-side defense). We support up to 8 bytes per element.
+        if elem_size_usize == 0 || elem_size_usize > 8 {
+            panic!(
+                "InitConstant create_command_buffer: unsupported element size {} (must be 1..=8)",
+                elem_size_usize
             );
-
-            let workgroup_size = 256u32;
-            let num_workgroups = total_words.div_ceil(workgroup_size);
-            gpu.get_device()
-                .cmd_dispatch(command_buffer, num_workgroups, 1, 1);
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
         }
+
+        // Compute total bytes from the tensor descriptor (preferred source of truth)
+        let total_bytes_usize = dst_tensor.desc.size_in_bytes();
+        if total_bytes_usize == 0 {
+            // nothing to do
+            return Ok(());
+        }
+        if total_bytes_usize > u32::MAX as usize {
+            panic!(
+                "InitConstant create_command_buffer: total bytes {} too large (must fit in u32)",
+                total_bytes_usize
+            );
+        }
+
+        let total_words = total_bytes_usize.div_ceil(4) as u32;
+
+        // Build a little-endian u64 from the first up to 8 bytes of `self.constant`.
+        // Use `.get()` with a default of 0 so GPU path is tolerant of shorter inputs.
+        let mut value_u64: u64 = 0;
+        for i in 0..8usize {
+            let b = *self.constant.get(i).unwrap_or(&0) as u64;
+            value_u64 |= b << (8 * i);
+        }
+
+        let push_constants = InitConstantPushConstants {
+            elem_size,
+            value_lo: (value_u64 & 0xFFFFFFFF) as u32,
+            value_hi: (value_u64 >> 32) as u32,
+        };
+
+        let pc_bytes = as_bytes(&push_constants);
+
+        gpu.bind_push_constants(command_buffer, pc_bytes);
+
+        let workgroup_size = 256u32;
+        let num_workgroups = total_words.div_ceil(workgroup_size);
+        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
+
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

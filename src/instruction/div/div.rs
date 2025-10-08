@@ -11,9 +11,7 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct DivInstruction {
@@ -132,117 +130,32 @@ impl Instruction for DivInstruction {
 
         let push_constant_bytes = as_bytes(&push_const_values);
 
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        // begin command buffer
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Choose operation and element size based on tensor DataType
+        let op_datatype = dst_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            DataType::Float => GPUMemoryOperation::Divide_F32,
+            _ => {
+                return Err(format!("GPU Div unimplemented for DataType {:?}", op_datatype).into());
+            }
+        };
 
-            let buffer_infos = [
-                vk::DescriptorBufferInfo {
-                    buffer: src1_mem.buffer,
-                    offset: 0,
-                    range: src1_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: src2_mem.buffer,
-                    offset: 0,
-                    range: src2_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: dst_mem.buffer,
-                    offset: 0,
-                    range: dst_mem.size,
-                },
-            ];
+        // Bind pipeline and descriptors (src1=0, src2=1, dst=2)
+        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
 
-            let write_descriptor_sets = [
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[0],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 1,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[1],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[2],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-            ];
+        // Push constants
+        gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-            // Choose operation and element size based on tensor DataType
-            let op_datatype = dst_tensor.desc.data_type();
-            let gpu_op = match op_datatype {
-                DataType::Float => GPUMemoryOperation::Divide_F32,
-                _ => {
-                    return Err(
-                        format!("GPU Div unimplemented for DataType {:?}", op_datatype).into(),
-                    );
-                }
-            };
+        // Dispatch
+        let workgroup_size = 256u64;
+        let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
+        let num_workgroups = num_elements.div_ceil(workgroup_size) as u32;
+        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
 
-            let pipeline = gpu.get_or_create_pipeline(gpu_op);
-
-            gpu.get_device().cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                pipeline,
-            );
-
-            gpu.get_device().cmd_push_descriptor_set_khr(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                gpu.get_layout(),
-                0,
-                &write_descriptor_sets,
-            );
-
-            // Push constants to the shader
-            gpu.get_device().cmd_push_constants(
-                command_buffer,
-                gpu.get_layout(),
-                vk::ShaderStageFlags::COMPUTE,
-                0,
-                push_constant_bytes,
-            );
-
-            let workgroup_size = 256;
-            let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
-            let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
-
-            gpu.get_device()
-                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
-        }
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

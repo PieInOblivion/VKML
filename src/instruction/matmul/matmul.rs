@@ -8,9 +8,7 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct MatMulInstruction {
@@ -398,178 +396,113 @@ fn create_generic_matmul_command_buffer(
     src2_tensor: &Tensor,
     dst_tensor: &Tensor,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    unsafe {
-        let src1_gpu_mem = src1_tensor.get_gpu_memory_or_panic();
-        let src2_gpu_mem = src2_tensor.get_gpu_memory_or_panic();
-        let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
+    let src1_gpu_mem = src1_tensor.get_gpu_memory_or_panic();
+    let src2_gpu_mem = src2_tensor.get_gpu_memory_or_panic();
+    let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        // Begin command buffer
-        let begin_info = vk::CommandBufferBeginInfo {
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            ..Default::default()
-        };
-        gpu.get_device()
-            .begin_command_buffer(command_buffer, &begin_info)?;
+    // Begin command buffer using helper
+    gpu.begin_command_buffer(command_buffer)?;
 
-        // Get pipeline
-        let pipeline = gpu.get_or_create_pipeline(GPUMemoryOperation::MatMul_F32);
+    // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
+    let src1_dims = src1_tensor.desc.dims();
+    let src2_dims = src2_tensor.desc.dims();
+    let dst_dims = dst_tensor.desc.dims();
 
-        // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
-        let src1_dims = src1_tensor.desc.dims();
-        let src2_dims = src2_tensor.desc.dims();
-        let dst_dims = dst_tensor.desc.dims();
+    let src1_dims_usize: Vec<usize> = src1_dims.iter().map(|&d| d as usize).collect();
+    let src2_dims_usize: Vec<usize> = src2_dims.iter().map(|&d| d as usize).collect();
+    let dst_dims_usize: Vec<usize> = dst_dims.iter().map(|&d| d as usize).collect();
 
-        let src1_dims_usize: Vec<usize> = src1_dims.iter().map(|&d| d as usize).collect();
-        let src2_dims_usize: Vec<usize> = src2_dims.iter().map(|&d| d as usize).collect();
-        let dst_dims_usize: Vec<usize> = dst_dims.iter().map(|&d| d as usize).collect();
+    let src1_strides = src1_tensor.desc.strides();
+    let src2_strides = src2_tensor.desc.strides();
+    let dst_strides = dst_tensor.desc.strides();
 
-        let src1_strides = src1_tensor.desc.strides();
-        let src2_strides = src2_tensor.desc.strides();
-        let dst_strides = dst_tensor.desc.strides();
+    let (m, k, n, a_m_axis, a_k_axis, b_k_axis, b_n_axis) =
+        analyze_matmul_dimensions(&src1_dims_usize, &src2_dims_usize, &dst_dims_usize)?;
 
-        let (m, k, n, a_m_axis, a_k_axis, b_k_axis, b_n_axis) =
-            analyze_matmul_dimensions(&src1_dims_usize, &src2_dims_usize, &dst_dims_usize)?;
-
-        let pack_pairs = |vals: &[usize]| -> [u32; 3] {
-            let mut out = [0u32; 3];
-            for i in 0..3 {
-                let lo_idx = i * 2;
-                let hi_idx = lo_idx + 1;
-                let lo = if lo_idx < vals.len() {
-                    vals[lo_idx] as u32
-                } else {
-                    0u32
-                } & 0xFFFFu32;
-                let hi = if hi_idx < vals.len() {
-                    vals[hi_idx] as u32
-                } else {
-                    0u32
-                } & 0xFFFFu32;
-                out[i] = (hi << 16) | lo;
-            }
-            out
-        };
-
-        let a_shape_packed = pack_pairs(&src1_dims_usize);
-        let b_shape_packed = pack_pairs(&src2_dims_usize);
-        let c_shape_packed = pack_pairs(&dst_dims_usize);
-        let a_strides_packed = pack_pairs(&src1_strides);
-        let b_strides_packed = pack_pairs(&src2_strides);
-        let c_strides_packed = pack_pairs(&dst_strides);
-
-        // Build push-constant array in the same order as GLSL struct (packed arrays)
-        let mut pc: Vec<u32> = Vec::new();
-        pc.push(src1_dims_usize.len() as u32);
-        pc.push(src2_dims_usize.len() as u32);
-        pc.push(dst_dims_usize.len() as u32);
-        pc.push(m as u32);
-        pc.push(k as u32);
-        pc.push(n as u32);
-        let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
-        pc.push(batch_dims_count as u32);
-        pc.push(a_k_axis as u32);
-        pc.push(b_k_axis as u32);
-        pc.push(a_m_axis as u32);
-        pc.push(b_n_axis as u32);
-
-        pc.extend_from_slice(&a_shape_packed);
-        pc.extend_from_slice(&b_shape_packed);
-        pc.extend_from_slice(&c_shape_packed);
-        pc.extend_from_slice(&a_strides_packed);
-        pc.extend_from_slice(&b_strides_packed);
-        pc.extend_from_slice(&c_strides_packed);
-
-        let src1_buffer_info = vk::DescriptorBufferInfo {
-            buffer: src1_gpu_mem.buffer,
-            offset: 0,
-            range: src1_gpu_mem.size,
-        };
-        let src2_buffer_info = vk::DescriptorBufferInfo {
-            buffer: src2_gpu_mem.buffer,
-            offset: 0,
-            range: src2_gpu_mem.size,
-        };
-        let dst_buffer_info = vk::DescriptorBufferInfo {
-            buffer: dst_gpu_mem.buffer,
-            offset: 0,
-            range: dst_gpu_mem.size,
-        };
-
-        let write_descriptor_sets = [
-            vk::WriteDescriptorSet {
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 0,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1,
-                buffer_info: &src1_buffer_info,
-                ..Default::default()
-            },
-            vk::WriteDescriptorSet {
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1,
-                buffer_info: &src2_buffer_info,
-                ..Default::default()
-            },
-            vk::WriteDescriptorSet {
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 2,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1,
-                buffer_info: &dst_buffer_info,
-                ..Default::default()
-            },
-        ];
-        gpu.get_device().cmd_bind_pipeline(
-            command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            pipeline,
-        );
-        gpu.get_device().cmd_push_descriptor_set_khr(
-            command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            gpu.get_layout(),
-            0,
-            &write_descriptor_sets,
-        );
-
-        // push constants (u32 array as bytes in native-endian)
-        let mut pc_bytes: Vec<u8> = Vec::with_capacity(pc.len() * 4);
-        for v in &pc {
-            pc_bytes.extend_from_slice(&v.to_ne_bytes());
+    let pack_pairs = |vals: &[usize]| -> [u32; 3] {
+        let mut out = [0u32; 3];
+        for i in 0..3 {
+            let lo_idx = i * 2;
+            let hi_idx = lo_idx + 1;
+            let lo = if lo_idx < vals.len() {
+                vals[lo_idx] as u32
+            } else {
+                0u32
+            } & 0xFFFFu32;
+            let hi = if hi_idx < vals.len() {
+                vals[hi_idx] as u32
+            } else {
+                0u32
+            } & 0xFFFFu32;
+            out[i] = (hi << 16) | lo;
         }
-        gpu.get_device().cmd_push_constants(
-            command_buffer,
-            gpu.get_layout(),
-            vk::ShaderStageFlags::COMPUTE,
-            0,
-            pc_bytes.as_slice(),
-        );
+        out
+    };
 
-        // Calculate batch size for dispatch (product of C's batch dimensions)
-        let mut batch_size_val = 1usize;
-        if dst_dims_usize.len() > 2 {
-            for i in 0..(dst_dims_usize.len() - 2) {
-                batch_size_val *= dst_dims_usize[i];
-            }
-        }
+    let a_shape_packed = pack_pairs(&src1_dims_usize);
+    let b_shape_packed = pack_pairs(&src2_dims_usize);
+    let c_shape_packed = pack_pairs(&dst_dims_usize);
+    let a_strides_packed = pack_pairs(&src1_strides);
+    let b_strides_packed = pack_pairs(&src2_strides);
+    let c_strides_packed = pack_pairs(&dst_strides);
 
-        let workgroup_size_x = 16; // from shader
-        let workgroup_size_y = 16; // from shader
-        let workgroup_size_z = 1; // from shader layout(local_size_z = 1)
+    // Build push-constant array in the same order as GLSL struct (packed arrays)
+    let mut pc: Vec<u32> = Vec::new();
+    pc.push(src1_dims_usize.len() as u32);
+    pc.push(src2_dims_usize.len() as u32);
+    pc.push(dst_dims_usize.len() as u32);
+    pc.push(m as u32);
+    pc.push(k as u32);
+    pc.push(n as u32);
+    let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
+    pc.push(batch_dims_count as u32);
+    pc.push(a_k_axis as u32);
+    pc.push(b_k_axis as u32);
+    pc.push(a_m_axis as u32);
+    pc.push(b_n_axis as u32);
 
-        let num_groups_x = (n as u32).div_ceil(workgroup_size_x);
-        let num_groups_y = (m as u32).div_ceil(workgroup_size_y);
-        let num_groups_z = (batch_size_val as u32).div_ceil(workgroup_size_z); // if workgroup_size_z is 1, this is just batch_size_val
+    pc.extend_from_slice(&a_shape_packed);
+    pc.extend_from_slice(&b_shape_packed);
+    pc.extend_from_slice(&c_shape_packed);
+    pc.extend_from_slice(&a_strides_packed);
+    pc.extend_from_slice(&b_strides_packed);
+    pc.extend_from_slice(&c_strides_packed);
 
-        gpu.get_device()
-            .cmd_dispatch(command_buffer, num_groups_x, num_groups_y, num_groups_z);
+    // Bind pipeline and storage buffers via helpers (ensures correct ordering and debug logging)
+    gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MatMul_F32);
+    gpu.bind_storage_buffers(
+        command_buffer,
+        &[&src1_gpu_mem, &src2_gpu_mem, &dst_gpu_mem],
+    );
 
-        gpu.get_device().end_command_buffer(command_buffer)?;
-
-        Ok(())
+    // push constants (u32 array as bytes in native-endian)
+    let mut pc_bytes: Vec<u8> = Vec::with_capacity(pc.len() * 4);
+    for v in &pc {
+        pc_bytes.extend_from_slice(&v.to_ne_bytes());
     }
+    gpu.bind_push_constants(command_buffer, pc_bytes.as_slice());
+
+    // Calculate batch size for dispatch (product of C's batch dimensions)
+    let mut batch_size_val = 1usize;
+    if dst_dims_usize.len() > 2 {
+        for i in 0..(dst_dims_usize.len() - 2) {
+            batch_size_val *= dst_dims_usize[i];
+        }
+    }
+
+    let workgroup_size_x = 16; // from shader
+    let workgroup_size_y = 16; // from shader
+    let workgroup_size_z = 1; // from shader layout(local_size_z = 1)
+
+    let num_groups_x = (n as u32).div_ceil(workgroup_size_x);
+    let num_groups_y = (m as u32).div_ceil(workgroup_size_y);
+    let num_groups_z = (batch_size_val as u32).div_ceil(workgroup_size_z); // if workgroup_size_z is 1, this is just batch_size_val
+
+    gpu.dispatch(command_buffer, num_groups_x, num_groups_y, num_groups_z);
+
+    gpu.end_command_buffer(command_buffer)?;
+
+    Ok(())
 }
 
 fn analyze_matmul_dimensions(
@@ -662,116 +595,34 @@ fn create_specialized_matmul_command_buffer(
     dst_tensor: &Tensor,
     operation: GPUMemoryOperation,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    unsafe {
-        let src1_mem = src1_tensor.get_gpu_memory_or_panic();
-        let src2_mem = src2_tensor.get_gpu_memory_or_panic();
-        let dst_mem = dst_tensor.get_gpu_memory_or_panic();
+    let src1_mem = src1_tensor.get_gpu_memory_or_panic();
+    let src2_mem = src2_tensor.get_gpu_memory_or_panic();
+    let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let begin_info = vk::CommandBufferBeginInfo {
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            ..Default::default()
-        };
-        gpu.get_device()
-            .begin_command_buffer(command_buffer, &begin_info)?;
+    // Begin command buffer using helper
+    gpu.begin_command_buffer(command_buffer)?;
 
-        let buffer_infos = [
-            vk::DescriptorBufferInfo {
-                buffer: src1_mem.buffer,
-                offset: 0,
-                range: src1_mem.size,
-            },
-            vk::DescriptorBufferInfo {
-                buffer: src2_mem.buffer,
-                offset: 0,
-                range: src2_mem.size,
-            },
-            vk::DescriptorBufferInfo {
-                buffer: dst_mem.buffer,
-                offset: 0,
-                range: dst_mem.size,
-            },
-        ];
+    // Bind the specialised pipeline and storage buffers (src1=0, src2=1, dst=2)
+    gpu.bind_compute_pipeline(command_buffer, operation);
+    gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
 
-        let write_descriptor_sets = [
-            vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: std::ptr::null(),
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_infos[0],
-                image_info: std::ptr::null(),
-                texel_buffer_view: std::ptr::null(),
-            },
-            vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: std::ptr::null(),
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_infos[1],
-                image_info: std::ptr::null(),
-                texel_buffer_view: std::ptr::null(),
-            },
-            vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                next: std::ptr::null(),
-                dst_set: vk::DescriptorSet::null(),
-                dst_binding: 2,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                buffer_info: &buffer_infos[2],
-                image_info: std::ptr::null(),
-                texel_buffer_view: std::ptr::null(),
-            },
-        ];
+    // Configure operation-specific parameters and dispatch dimensions
+    let (push_constants, dispatch_x, dispatch_y, dispatch_z) =
+        configure_matmul_operation(operation, src1_tensor, src2_tensor, dst_tensor)?;
 
-        let pipeline = gpu.get_or_create_pipeline(operation);
-
-        gpu.get_device().cmd_bind_pipeline(
-            command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            pipeline,
-        );
-
-        gpu.get_device().cmd_push_descriptor_set_khr(
-            command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            gpu.get_layout(),
-            0,
-            &write_descriptor_sets,
-        );
-
-        // Configure operation-specific parameters and dispatch dimensions
-        let (push_constants, dispatch_x, dispatch_y, dispatch_z) =
-            configure_matmul_operation(operation, src1_tensor, src2_tensor, dst_tensor)?;
-
-        // Push constants to the shader. Convert Vec<u32> into a contiguous u8 slice
-        // by serializing each u32 in native-endian order.
-        let mut pc_bytes_vec: Vec<u8> =
-            Vec::with_capacity(push_constants.len() * std::mem::size_of::<u32>());
-        for v in &push_constants {
-            pc_bytes_vec.extend_from_slice(&v.to_ne_bytes());
-        }
-
-        gpu.get_device().cmd_push_constants(
-            command_buffer,
-            gpu.get_layout(),
-            vk::ShaderStageFlags::COMPUTE,
-            0,
-            pc_bytes_vec.as_slice(),
-        );
-
-        gpu.get_device()
-            .cmd_dispatch(command_buffer, dispatch_x, dispatch_y, dispatch_z);
-
-        gpu.get_device().end_command_buffer(command_buffer)?;
-
-        Ok(())
+    // Serialize push-constants (Vec<u32> -> &[u8])
+    let mut pc_bytes_vec: Vec<u8> =
+        Vec::with_capacity(push_constants.len() * std::mem::size_of::<u32>());
+    for v in &push_constants {
+        pc_bytes_vec.extend_from_slice(&v.to_ne_bytes());
     }
+
+    // Push constants and dispatch via helpers
+    gpu.bind_push_constants(command_buffer, pc_bytes_vec.as_slice());
+    gpu.dispatch(command_buffer, dispatch_x, dispatch_y, dispatch_z);
+
+    // End command buffer
+    gpu.end_command_buffer(command_buffer)?;
+
+    Ok(())
 }

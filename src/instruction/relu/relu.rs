@@ -8,13 +8,8 @@ use crate::{
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
-use std::{
-    fmt::{Debug, Formatter, Result as FmtResult},
-    ptr,
-};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct ReLUInstruction {
@@ -58,95 +53,31 @@ impl Instruction for ReLUInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Choose operation based on DataType (only Float supported)
+        let op_datatype = dst_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            DataType::Float => GPUMemoryOperation::ReLU_F32,
+            _ => {
+                return Err(
+                    format!("GPU ReLU unimplemented for DataType {:?}", op_datatype).into(),
+                );
+            }
+        };
 
-            let buffer_infos = [
-                // src buffer (binding 0)
-                vk::DescriptorBufferInfo {
-                    buffer: src_mem.buffer,
-                    offset: 0,
-                    range: src_mem.size,
-                },
-                // dst buffer (binding 2)
-                vk::DescriptorBufferInfo {
-                    buffer: dst_mem.buffer,
-                    offset: 0,
-                    range: dst_mem.size,
-                },
-            ];
+        // Bind pipeline first so descriptor push is associated with the correct layout
+        gpu.bind_compute_pipeline(command_buffer, gpu_op);
 
-            let write_descriptor_sets = [
-                // src buffer descriptor
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[0],
-                    image_info: ptr::null(),
-                    texel_buffer_view: ptr::null(),
-                },
-                // dst buffer descriptor
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[1],
-                    image_info: ptr::null(),
-                    texel_buffer_view: ptr::null(),
-                },
-            ];
+        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
-            // Choose operation based on DataType (only Float supported)
-            let op_datatype = dst_tensor.desc.data_type();
-            let gpu_op = match op_datatype {
-                DataType::Float => GPUMemoryOperation::ReLU_F32,
-                _ => {
-                    return Err(
-                        format!("GPU ReLU unimplemented for DataType {:?}", op_datatype).into(),
-                    );
-                }
-            };
+        let workgroup_size = 256;
+        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+        let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
 
-            let pipeline = gpu.get_or_create_pipeline(gpu_op);
+        gpu.dispatch(command_buffer, num_workgroups as u32, 1, 1);
 
-            gpu.get_device().cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                pipeline,
-            );
-
-            gpu.get_device().cmd_push_descriptor_set_khr(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                gpu.get_layout(),
-                0,
-                &write_descriptor_sets,
-            );
-
-            let workgroup_size = 256;
-            let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-            let num_workgroups = num_elements.div_ceil(workgroup_size as u64);
-
-            gpu.get_device()
-                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
-        }
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

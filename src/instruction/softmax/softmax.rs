@@ -9,13 +9,8 @@ use crate::{
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
-use std::{
-    fmt::{Debug, Formatter, Result as FmtResult},
-    ptr,
-};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct SoftmaxInstruction {
@@ -86,114 +81,41 @@ impl Instruction for SoftmaxInstruction {
             dim
         );
 
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        // Begin command buffer
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        // Choose operation based on data type
+        let op_datatype = src_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            DataType::Float => GPUMemoryOperation::Softmax_F32,
+            _ => {
+                return Err(
+                    format!("GPU Softmax unimplemented for DataType {:?}", op_datatype).into(),
+                );
+            }
+        };
 
-            let buffer_infos = [
-                // src buffer (binding 0)
-                vk::DescriptorBufferInfo {
-                    buffer: src_mem.buffer,
-                    offset: 0,
-                    range: src_mem.size,
-                },
-                // dst buffer (binding 2)
-                vk::DescriptorBufferInfo {
-                    buffer: dst_mem.buffer,
-                    offset: 0,
-                    range: dst_mem.size,
-                },
-            ];
+        // Bind pipeline and descriptors (src=0, dst=1)
+        gpu.bind_compute_pipeline(command_buffer, gpu_op);
+        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
-            let write_descriptor_sets = [
-                // src buffer descriptor
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[0],
-                    image_info: ptr::null(),
-                    texel_buffer_view: ptr::null(),
-                },
-                // dst buffer descriptor
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[1],
-                    image_info: ptr::null(),
-                    texel_buffer_view: ptr::null(),
-                },
-            ];
+        let feature_size = dims[dim] as usize;
+        let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
 
-            let op_datatype = src_tensor.desc.data_type();
-            let gpu_op = match op_datatype {
-                DataType::Float => GPUMemoryOperation::Softmax_F32,
-                _ => {
-                    return Err(format!(
-                        "GPU Softmax unimplemented for DataType {:?}",
-                        op_datatype
-                    )
-                    .into());
-                }
-            };
+        // Create push constants struct
+        let push_constants = SoftmaxPushConstants {
+            batch_size: batch_size as u32,
+            feature_size: feature_size as u32,
+        };
 
-            let pipeline = gpu.get_or_create_pipeline(gpu_op);
+        let pc_bytes = as_bytes(&push_constants);
+        gpu.bind_push_constants(command_buffer, pc_bytes);
 
-            gpu.get_device().cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                pipeline,
-            );
+        // Calculate dispatch size based on batch size (one workgroup per batch)
+        let num_workgroups = (batch_size as u64).div_ceil(256) as u32;
+        gpu.dispatch(command_buffer, num_workgroups, 1, 1);
 
-            gpu.get_device().cmd_push_descriptor_set_khr(
-                command_buffer,
-                vk::PipelineBindPoint::COMPUTE,
-                gpu.get_layout(),
-                0,
-                &write_descriptor_sets,
-            );
-
-            let feature_size = dims[dim] as usize;
-            let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
-
-            // Create push constants struct
-            let push_constants = SoftmaxPushConstants {
-                batch_size: batch_size as u32,
-                feature_size: feature_size as u32,
-            };
-
-            let pc_bytes = as_bytes(&push_constants);
-
-            gpu.get_device().cmd_push_constants(
-                command_buffer,
-                gpu.get_layout(),
-                vk::ShaderStageFlags::COMPUTE,
-                0,
-                pc_bytes,
-            );
-
-            // Calculate dispatch size based on batch size (one workgroup per batch)
-            let num_workgroups = (batch_size as u64).div_ceil(256);
-
-            gpu.get_device()
-                .cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
-        }
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

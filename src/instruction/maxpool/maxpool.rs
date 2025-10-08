@@ -1,5 +1,6 @@
 use crate::ComputeManager;
 use crate::instruction::AutoPad;
+use crate::instruction::gpu_operations::GPUMemoryOperation;
 use crate::instruction::maxpool::push_constants::{
     MaxPool1DPushConstants, MaxPool2DPushConstants, MaxPool3DPushConstants,
 };
@@ -12,9 +13,7 @@ use crate::{
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk::Handle;
-use vulkanalia::vk::KhrPushDescriptorExtension;
-use vulkanalia::{vk, vk::DeviceV1_0};
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct MaxPoolInstruction {
@@ -135,266 +134,155 @@ impl Instruction for MaxPoolInstruction {
 
         let src_desc = &src_tensor.desc;
 
-        unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
+        gpu.begin_command_buffer(command_buffer)?;
 
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
+        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
 
-            let buffer_infos = [
-                vk::DescriptorBufferInfo {
-                    buffer: src_mem.buffer,
-                    offset: 0,
-                    range: src_mem.size,
-                },
-                vk::DescriptorBufferInfo {
-                    buffer: dst_mem.buffer,
-                    offset: 0,
-                    range: dst_mem.size,
-                },
-            ];
+        // choose shader based on spatial rank
+        let spatial_rank = if src_desc.ndim() >= 2 {
+            src_desc.ndim() - 2
+        } else {
+            0
+        };
 
-            let write_descriptor_sets = [
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[0],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-                vk::WriteDescriptorSet {
-                    s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                    next: std::ptr::null(),
-                    dst_set: vk::DescriptorSet::null(),
-                    dst_binding: 2,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    buffer_info: &buffer_infos[1],
-                    image_info: std::ptr::null(),
-                    texel_buffer_view: std::ptr::null(),
-                },
-            ];
+        match spatial_rank {
+            0 | 1 => {
+                let src_dims = src_desc.dims();
+                let input_len = if src_dims.len() >= 3 {
+                    src_dims[2] as u32
+                } else {
+                    1
+                };
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
+                let output_len = if dst_dims.len() >= 3 {
+                    dst_dims[2] as u32
+                } else {
+                    1
+                };
 
-            // choose shader based on spatial rank
-            let spatial_rank = if src_desc.ndim() >= 2 {
-                src_desc.ndim() - 2
-            } else {
-                0
-            };
+                let pc = MaxPool1DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    input_len,
+                    output_len,
+                    kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    stride: self.strides.first().copied().unwrap_or(1) as u32,
+                    dilation: self.dilations.first().copied().unwrap_or(1) as u32,
+                    pad_begin: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.first().copied().unwrap_or(0) as u32
+                    },
+                };
 
-            match spatial_rank {
-                0 | 1 => {
-                    let src_dims = src_desc.dims();
-                    let input_len = if src_dims.len() >= 3 {
-                        src_dims[2] as u32
-                    } else {
-                        1
-                    };
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-                    let output_len = if dst_dims.len() >= 3 {
-                        dst_dims[2] as u32
-                    } else {
-                        1
-                    };
+                let push_constant_bytes = as_bytes(&pc);
 
-                    let pc = MaxPool1DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        input_len,
-                        output_len,
-                        kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        stride: self.strides.first().copied().unwrap_or(1) as u32,
-                        dilation: self.dilations.first().copied().unwrap_or(1) as u32,
-                        pad_begin: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.first().copied().unwrap_or(0) as u32
-                        },
-                    };
+                // bind pipeline before descriptor push
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool1D_F32);
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
-                    let push_constant_bytes = as_bytes(&pc);
-
-                    let pipeline = gpu.get_or_create_pipeline(
-                        crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool1D_F32,
-                    );
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    let total: u64 =
-                        (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
-                    let workgroup_size = 256u64;
-                    let num_groups = total.div_ceil(workgroup_size) as u32;
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, num_groups, 1, 1);
-                }
-                2 => {
-                    let src_dims = src_desc.dims();
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-
-                    let pc = MaxPool2DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        in_h: src_dims[2] as u32,
-                        in_w: src_dims[3] as u32,
-                        out_h: dst_dims[2] as u32,
-                        out_w: dst_dims[3] as u32,
-                        k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        s_h: self.strides.first().copied().unwrap_or(1) as u32,
-                        s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.first().copied().unwrap_or(1) as u32,
-                        d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                        pad_h: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.first().copied().unwrap_or(0) as u32
-                        },
-                        pad_w: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.get(1).copied().unwrap_or(0) as u32
-                        },
-                    };
-
-                    let push_constant_bytes = as_bytes(&pc);
-
-                    let pipeline = gpu.get_or_create_pipeline(
-                        crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool2D_F32,
-                    );
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    let out_w = dst_dims[3] as u32;
-                    let out_h = dst_dims[2] as u32;
-                    let groups_x = out_w.div_ceil(16);
-                    let groups_y = out_h.div_ceil(16);
-                    let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * c
-
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
-                }
-                3 => {
-                    let src_dims = src_desc.dims();
-                    let dst_desc = &dst_tensor.desc;
-                    let dst_dims = dst_desc.dims();
-
-                    let pc = MaxPool3DPushConstants {
-                        n: src_dims[0] as u32,
-                        c: src_dims[1] as u32,
-                        in_d: src_dims[2] as u32,
-                        in_h: src_dims[3] as u32,
-                        in_w: src_dims[4] as u32,
-                        out_d: dst_dims[2] as u32,
-                        out_h: dst_dims[3] as u32,
-                        out_w: dst_dims[4] as u32,
-                        k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
-                        k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
-                        k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
-                        s_d: self.strides.first().copied().unwrap_or(1) as u32,
-                        s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
-                        s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
-                        d_d: self.dilations.first().copied().unwrap_or(1) as u32,
-                        d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                        d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
-                        pad_d: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.first().copied().unwrap_or(0) as u32
-                        },
-                        pad_h: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.get(1).copied().unwrap_or(0) as u32
-                        },
-                        pad_w: {
-                            let (pb, _pe) = self.compute_pads(src_desc);
-                            pb.get(2).copied().unwrap_or(0) as u32
-                        },
-                    };
-
-                    let push_constant_bytes = as_bytes(&pc);
-
-                    let pipeline = gpu.get_or_create_pipeline(
-                        crate::instruction::gpu_operations::GPUMemoryOperation::MaxPool3D_F32,
-                    );
-
-                    gpu.get_device().cmd_bind_pipeline(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pipeline,
-                    );
-                    gpu.get_device().cmd_push_descriptor_set_khr(
-                        command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        gpu.get_layout(),
-                        0,
-                        &write_descriptor_sets,
-                    );
-                    gpu.get_device().cmd_push_constants(
-                        command_buffer,
-                        gpu.get_layout(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        push_constant_bytes,
-                    );
-
-                    let groups_x = (dst_dims[4] as u32).div_ceil(8);
-                    let groups_y = (dst_dims[3] as u32).div_ceil(8);
-                    let local_z = 4u32;
-                    let total_z =
-                        (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
-                    let groups_z = total_z.div_ceil(local_z);
-
-                    gpu.get_device()
-                        .cmd_dispatch(command_buffer, groups_x, groups_y, groups_z);
-                }
-                _ => panic!("Unsupported spatial rank {} for GPU MaxPool", spatial_rank),
+                let total: u64 = (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
+                let workgroup_size = 256u64;
+                let num_groups = total.div_ceil(workgroup_size) as u32;
+                gpu.dispatch(command_buffer, num_groups, 1, 1);
             }
+            2 => {
+                let src_dims = src_desc.dims();
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
 
-            gpu.get_device().end_command_buffer(command_buffer)?;
+                let pc = MaxPool2DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    in_h: src_dims[2] as u32,
+                    in_w: src_dims[3] as u32,
+                    out_h: dst_dims[2] as u32,
+                    out_w: dst_dims[3] as u32,
+                    k_h: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    k_w: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
+                    s_h: self.strides.first().copied().unwrap_or(1) as u32,
+                    s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
+                    d_h: self.dilations.first().copied().unwrap_or(1) as u32,
+                    d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
+                    pad_h: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.first().copied().unwrap_or(0) as u32
+                    },
+                    pad_w: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.get(1).copied().unwrap_or(0) as u32
+                    },
+                };
+
+                let push_constant_bytes = as_bytes(&pc);
+
+                // bind pipeline before descriptor push
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool2D_F32);
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+
+                let out_w = dst_dims[3] as u32;
+                let out_h = dst_dims[2] as u32;
+                let groups_x = out_w.div_ceil(16);
+                let groups_y = out_h.div_ceil(16);
+                let groups_z = (dst_dims[0] as u32) * (dst_dims[1] as u32); // n * c
+
+                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+            }
+            3 => {
+                let src_dims = src_desc.dims();
+                let dst_desc = &dst_tensor.desc;
+                let dst_dims = dst_desc.dims();
+
+                let pc = MaxPool3DPushConstants {
+                    n: src_dims[0] as u32,
+                    c: src_dims[1] as u32,
+                    in_d: src_dims[2] as u32,
+                    in_h: src_dims[3] as u32,
+                    in_w: src_dims[4] as u32,
+                    out_d: dst_dims[2] as u32,
+                    out_h: dst_dims[3] as u32,
+                    out_w: dst_dims[4] as u32,
+                    k_d: self.kernel_shape.first().copied().unwrap_or(1) as u32,
+                    k_h: self.kernel_shape.get(1).copied().unwrap_or(1) as u32,
+                    k_w: self.kernel_shape.get(2).copied().unwrap_or(1) as u32,
+                    s_d: self.strides.first().copied().unwrap_or(1) as u32,
+                    s_h: self.strides.get(1).copied().unwrap_or(1) as u32,
+                    s_w: self.strides.get(2).copied().unwrap_or(1) as u32,
+                    d_d: self.dilations.first().copied().unwrap_or(1) as u32,
+                    d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
+                    d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
+                    pad_d: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.first().copied().unwrap_or(0) as u32
+                    },
+                    pad_h: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.get(1).copied().unwrap_or(0) as u32
+                    },
+                    pad_w: {
+                        let (pb, _pe) = self.compute_pads(src_desc);
+                        pb.get(2).copied().unwrap_or(0) as u32
+                    },
+                };
+
+                let push_constant_bytes = as_bytes(&pc);
+
+                // bind pipeline before descriptor push
+                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool3D_F32);
+                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+
+                let groups_x = (dst_dims[4] as u32).div_ceil(8);
+                let groups_y = (dst_dims[3] as u32).div_ceil(8);
+                let local_z = 4u32;
+                let total_z = (dst_dims[2] as u32) * (dst_dims[0] as u32) * (dst_dims[1] as u32);
+                let groups_z = total_z.div_ceil(local_z);
+
+                gpu.dispatch(command_buffer, groups_x, groups_y, groups_z);
+            }
+            _ => panic!("Unsupported spatial rank {} for GPU MaxPool", spatial_rank),
         }
+
+        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }
