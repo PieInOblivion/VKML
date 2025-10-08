@@ -4,7 +4,7 @@ use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, softmax::f32_cpu::f32_cpu,
+        gpu_operations::GPUOperation, instruction::Instruction, softmax::f32_cpu::f32_cpu,
     },
     tensor_graph::tensor_graph::TensorId,
 };
@@ -87,7 +87,7 @@ impl Instruction for SoftmaxInstruction {
         // Choose operation based on data type
         let op_datatype = src_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Softmax_F32,
+            DataType::Float => GPUOperation::Softmax_F32,
             _ => {
                 return Err(
                     format!("GPU Softmax unimplemented for DataType {:?}", op_datatype).into(),

@@ -4,8 +4,7 @@ use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{
-        gpu_operations::GPUMemoryOperation, init_uniform::f32_cpu::f32_cpu,
-        instruction::Instruction,
+        gpu_operations::GPUOperation, init_uniform::f32_cpu::f32_cpu, instruction::Instruction,
     },
     tensor_graph::tensor_graph::TensorId,
 };
@@ -58,7 +57,7 @@ impl Instruction for InitUniformInstruction {
         // Choose operation based on data type
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            onnx_extractor::DataType::Float => GPUMemoryOperation::InitUniform_F32,
+            onnx_extractor::DataType::Float => GPUOperation::InitUniform_F32,
             _ => {
                 return Err(format!(
                     "GPU InitUniform unimplemented for DataType {:?}",

@@ -3,9 +3,7 @@ use crate::instruction::mul::push_constants::MulPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, mul::f32_cpu::f32_cpu,
-    },
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction, mul::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -141,7 +139,7 @@ impl Instruction for MulInstruction {
         // Choose operation and element size based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Multiply_F32,
+            DataType::Float => GPUOperation::Multiply_F32,
             _ => {
                 return Err(format!("GPU Mul unimplemented for DataType {:?}", op_datatype).into());
             }

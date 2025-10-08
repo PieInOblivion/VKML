@@ -3,9 +3,7 @@ use crate::instruction::add::push_constants::AddPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        add::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
-    },
+    instruction::{add::f32_cpu::f32_cpu, gpu_operations::GPUOperation, instruction::Instruction},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -141,7 +139,7 @@ impl Instruction for AddInstruction {
         // Choose operation and element size based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Addition_F32,
+            DataType::Float => GPUOperation::Addition_F32,
             _ => {
                 return Err(format!("GPU Add unimplemented for DataType {:?}", op_datatype).into());
             }

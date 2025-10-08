@@ -3,9 +3,7 @@ use crate::instruction::max::push_constants::MaxPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, max::f32_cpu::f32_cpu,
-    },
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction, max::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -135,7 +133,7 @@ impl Instruction for MaxInstruction {
         // Choose operation and element size based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Maximum_F32,
+            DataType::Float => GPUOperation::Maximum_F32,
             _ => {
                 return Err(format!("GPU Max unimplemented for DataType {:?}", op_datatype).into());
             }

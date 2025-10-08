@@ -2,7 +2,7 @@ use crate::instruction::matmul::f32_cpu::f32_cpu;
 use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction},
     tensor::tensor::Tensor,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -62,7 +62,7 @@ impl Instruction for MatMulInstruction {
         let src2_dims = src2_tensor.desc.dims();
         let operation = determine_matmul_variant(src1_dims, src2_dims);
 
-        if operation == GPUMemoryOperation::MatMul_F32 {
+        if operation == GPUOperation::MatMul_F32 {
             // Use generic fallback for unsupported dimension combinations
             create_generic_matmul_command_buffer(
                 gpu,
@@ -118,7 +118,7 @@ impl Instruction for MatMulInstruction {
     }
 }
 
-fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOperation {
+fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUOperation {
     const MAX_DIMS: usize = 6;
 
     let a_rank = src1_dims.len();
@@ -140,20 +140,20 @@ fn determine_matmul_variant(src1_dims: &[i64], src2_dims: &[i64]) -> GPUMemoryOp
 
     // Prefer specialised kernels for common small-rank combinations for performance.
     match (a_rank, b_rank) {
-        (1, 2) => GPUMemoryOperation::MatMul1D2D_F32,
-        (2, 1) => GPUMemoryOperation::MatMul2D1D_F32,
-        (2, 2) => GPUMemoryOperation::MatMul2D2D_F32,
-        (2, 3) => GPUMemoryOperation::MatMul2D3D_F32,
-        (3, 2) => GPUMemoryOperation::MatMul3D2D_F32,
-        (3, 3) => GPUMemoryOperation::MatMul3D3D_F32,
-        (3, 1) => GPUMemoryOperation::MatMul3D1D_F32,
-        (1, 3) => GPUMemoryOperation::MatMul1D3D_F32,
-        _ => GPUMemoryOperation::MatMul_F32,
+        (1, 2) => GPUOperation::MatMul1D2D_F32,
+        (2, 1) => GPUOperation::MatMul2D1D_F32,
+        (2, 2) => GPUOperation::MatMul2D2D_F32,
+        (2, 3) => GPUOperation::MatMul2D3D_F32,
+        (3, 2) => GPUOperation::MatMul3D2D_F32,
+        (3, 3) => GPUOperation::MatMul3D3D_F32,
+        (3, 1) => GPUOperation::MatMul3D1D_F32,
+        (1, 3) => GPUOperation::MatMul1D3D_F32,
+        _ => GPUOperation::MatMul_F32,
     }
 }
 
 fn configure_matmul_operation(
-    operation: GPUMemoryOperation,
+    operation: GPUOperation,
     src1_tensor: &Tensor,
     src2_tensor: &Tensor,
     dst_tensor: &Tensor,
@@ -166,7 +166,7 @@ fn configure_matmul_operation(
     let dst_strides = dst_tensor.desc.strides();
 
     match operation {
-        GPUMemoryOperation::MatMul1D2D_F32 => {
+        GPUOperation::MatMul1D2D_F32 => {
             // [k] × [k,n] → [n]
             let k = src1_dims[0];
             let n = src2_dims[1];
@@ -186,7 +186,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, 1, 1))
         }
 
-        GPUMemoryOperation::MatMul2D1D_F32 => {
+        GPUOperation::MatMul2D1D_F32 => {
             // [m,k] × [k] → [m]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -206,7 +206,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, 1, 1))
         }
 
-        GPUMemoryOperation::MatMul2D2D_F32 => {
+        GPUOperation::MatMul2D2D_F32 => {
             // [m,k] × [k,n] → [m,n]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -232,7 +232,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
 
-        GPUMemoryOperation::MatMul2D3D_F32 => {
+        GPUOperation::MatMul2D3D_F32 => {
             // [m,k] × [batch,k,n] → [batch,m,n]
             let m = src1_dims[0];
             let k = src1_dims[1];
@@ -264,7 +264,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D2D_F32 => {
+        GPUOperation::MatMul3D2D_F32 => {
             // [batch,m,k] × [k,n] → [batch,m,n]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -296,7 +296,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D3D_F32 => {
+        GPUOperation::MatMul3D3D_F32 => {
             // [batch,m,k] × [batch,k,n] → [batch,m,n]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -329,7 +329,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, num_groups_z))
         }
 
-        GPUMemoryOperation::MatMul3D1D_F32 => {
+        GPUOperation::MatMul3D1D_F32 => {
             // [batch,m,k] × [k] → [batch,m]
             let batch = src1_dims[0];
             let m = src1_dims[1];
@@ -355,7 +355,7 @@ fn configure_matmul_operation(
             Ok((push_constants, num_groups_x, num_groups_y, 1))
         }
 
-        GPUMemoryOperation::MatMul1D3D_F32 => {
+        GPUOperation::MatMul1D3D_F32 => {
             // [k] × [batch,k,n] → [batch,n]
             let k = src1_dims[0];
             let batch = src2_dims[0];
@@ -469,7 +469,7 @@ fn create_generic_matmul_command_buffer(
     pc.extend_from_slice(&c_strides_packed);
 
     // Bind pipeline and storage buffers via helpers (ensures correct ordering and debug logging)
-    gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MatMul_F32);
+    gpu.bind_compute_pipeline(command_buffer, GPUOperation::MatMul_F32);
     gpu.bind_storage_buffers(
         command_buffer,
         &[&src1_gpu_mem, &src2_gpu_mem, &dst_gpu_mem],
@@ -593,7 +593,7 @@ fn create_specialized_matmul_command_buffer(
     src1_tensor: &Tensor,
     src2_tensor: &Tensor,
     dst_tensor: &Tensor,
-    operation: GPUMemoryOperation,
+    operation: GPUOperation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let src1_mem = src1_tensor.get_gpu_memory_or_panic();
     let src2_mem = src2_tensor.get_gpu_memory_or_panic();

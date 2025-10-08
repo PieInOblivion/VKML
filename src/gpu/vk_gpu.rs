@@ -17,7 +17,7 @@ use vulkanalia::{
 
 use crate::{
     compute::memory_tracker::MemoryTracker,
-    instruction::gpu_operations::GPUMemoryOperation,
+    instruction::gpu_operations::GPUOperation,
     utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
 
@@ -214,7 +214,7 @@ impl Gpu {
                 memory_properties.memory_heaps[device_local_heap_index as usize].size
             };
 
-            let pipelines = (0..GPUMemoryOperation::VARIANT_COUNT)
+            let pipelines = (0..GPUOperation::VARIANT_COUNT)
                 .map(|_| OnceLock::new())
                 .collect();
 
@@ -428,7 +428,7 @@ impl Gpu {
         }
     }
 
-    fn create_and_get_pipeline(&self, op: GPUMemoryOperation, shader_code: &[u8]) -> vk::Pipeline {
+    fn create_and_get_pipeline(&self, op: GPUOperation, shader_code: &[u8]) -> vk::Pipeline {
         let pipeline_ref = self.pipelines[op as usize].get_or_init(|| {
             self.create_pipeline(shader_code)
                 .expect_msg(&format!("Pipeline creation failed {:?}", op))
@@ -437,11 +437,11 @@ impl Gpu {
         *pipeline_ref
     }
 
-    fn get_pipeline_for_op(&self, op: GPUMemoryOperation) -> Option<vk::Pipeline> {
+    fn get_pipeline_for_op(&self, op: GPUOperation) -> Option<vk::Pipeline> {
         self.pipelines[op as usize].get().copied()
     }
 
-    pub fn get_or_create_pipeline(&self, op: GPUMemoryOperation) -> vk::Pipeline {
+    pub fn get_or_create_pipeline(&self, op: GPUOperation) -> vk::Pipeline {
         if let Some(pipeline) = self.get_pipeline_for_op(op) {
             pipeline
         } else {
@@ -722,7 +722,7 @@ impl Gpu {
     pub fn bind_compute_pipeline(
         &self,
         command_buffer: vk::CommandBuffer,
-        operation: GPUMemoryOperation,
+        operation: GPUOperation,
     ) {
         unsafe {
             let pipeline = self.get_or_create_pipeline(operation);

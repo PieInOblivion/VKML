@@ -2,7 +2,7 @@ use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
     instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
+        gpu_operations::GPUOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
     },
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
@@ -58,7 +58,7 @@ impl Instruction for SigmoidInstruction {
         // Choose operation based on data type
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Sigmoid_F32,
+            DataType::Float => GPUOperation::Sigmoid_F32,
             _ => {
                 return Err(
                     format!("GPU Sigmoid unimplemented for DataType {:?}", op_datatype).into(),

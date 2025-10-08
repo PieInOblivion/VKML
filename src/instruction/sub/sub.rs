@@ -3,9 +3,7 @@ use crate::instruction::sub::push_constants::SubPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, sub::f32_cpu::f32_cpu,
-    },
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction, sub::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -139,7 +137,7 @@ impl Instruction for SubInstruction {
         // Choose operation based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::Subtract_F32,
+            DataType::Float => GPUOperation::Subtract_F32,
             _ => {
                 return Err(format!("GPU Sub unimplemented for DataType {:?}", op_datatype).into());
             }

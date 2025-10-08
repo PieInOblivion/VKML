@@ -3,7 +3,7 @@ use crate::instruction::init_constant::push_constants::InitConstantPushConstants
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{gpu_operations::GPUMemoryOperation, instruction::Instruction},
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction},
     tensor_graph::tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
@@ -55,7 +55,7 @@ impl Instruction for InitConstantInstruction {
 
         // Use the generic InitConstant GPU operation for supported sizes (1..=8 bytes)
         // Bind pipeline first so push-descriptors are associated with the correct layout
-        gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::InitConstant);
+        gpu.bind_compute_pipeline(command_buffer, GPUOperation::InitConstant);
 
         // bind dst buffer at binding 0
         gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);

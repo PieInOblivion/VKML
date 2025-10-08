@@ -1,9 +1,7 @@
 use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
-    instruction::{
-        gpu_operations::GPUMemoryOperation, instruction::Instruction, relu::f32_cpu::f32_cpu,
-    },
+    instruction::{gpu_operations::GPUOperation, instruction::Instruction, relu::f32_cpu::f32_cpu},
     tensor::desc::TensorDesc,
     tensor_graph::tensor_graph::TensorId,
 };
@@ -58,7 +56,7 @@ impl Instruction for ReLUInstruction {
         // Choose operation based on DataType (only Float supported)
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
-            DataType::Float => GPUMemoryOperation::ReLU_F32,
+            DataType::Float => GPUOperation::ReLU_F32,
             _ => {
                 return Err(
                     format!("GPU ReLU unimplemented for DataType {:?}", op_datatype).into(),

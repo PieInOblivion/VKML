@@ -1,6 +1,6 @@
 use crate::ComputeManager;
 use crate::instruction::AutoPad;
-use crate::instruction::gpu_operations::GPUMemoryOperation;
+use crate::instruction::gpu_operations::GPUOperation;
 use crate::instruction::maxpool::push_constants::{
     MaxPool1DPushConstants, MaxPool2DPushConstants, MaxPool3DPushConstants,
 };
@@ -178,7 +178,7 @@ impl Instruction for MaxPoolInstruction {
                 let push_constant_bytes = as_bytes(&pc);
 
                 // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool1D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool1D_F32);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 let total: u64 = (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
@@ -217,7 +217,7 @@ impl Instruction for MaxPoolInstruction {
                 let push_constant_bytes = as_bytes(&pc);
 
                 // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool2D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool2D_F32);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 let out_w = dst_dims[3] as u32;
@@ -268,7 +268,7 @@ impl Instruction for MaxPoolInstruction {
                 let push_constant_bytes = as_bytes(&pc);
 
                 // bind pipeline before descriptor push
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::MaxPool3D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool3D_F32);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 let groups_x = (dst_dims[4] as u32).div_ceil(8);

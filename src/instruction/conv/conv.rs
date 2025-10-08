@@ -6,9 +6,7 @@ use crate::tensor::desc::TensorDesc;
 use crate::utils::bytes::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        conv::f32_cpu::f32_cpu, gpu_operations::GPUMemoryOperation, instruction::Instruction,
-    },
+    instruction::{conv::f32_cpu::f32_cpu, gpu_operations::GPUOperation, instruction::Instruction},
     tensor_graph::tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
@@ -226,7 +224,7 @@ impl Instruction for ConvInstruction {
                 let push_constant_bytes = as_bytes(&pc_values);
 
                 // Bind pipeline and descriptors (preserve optional bias binding)
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv1D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv1D_F32);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
@@ -268,7 +266,7 @@ impl Instruction for ConvInstruction {
 
                 let push_constant_bytes = as_bytes(&pc_values);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv2D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv2D_F32);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
@@ -327,7 +325,7 @@ impl Instruction for ConvInstruction {
 
                 let push_constant_bytes = as_bytes(&pc_values);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUMemoryOperation::Conv3D_F32);
+                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv3D_F32);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
