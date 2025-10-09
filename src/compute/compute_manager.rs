@@ -850,6 +850,10 @@ impl ComputeManager {
         print_tensorgraph_stats::print_tensor_flow(self);
     }
 
+    pub fn print_gpu_pool(&self) {
+        println!("{:?}", self.gpus)
+    }
+
     pub fn tensor_read(&self, tensor_id: usize) -> &Tensor {
         unsafe { self.tensors[tensor_id].as_ref() }
     }
