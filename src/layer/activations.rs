@@ -85,13 +85,7 @@ impl Layer for ActivationLayer {
         }
 
         let input_shape = input_shapes[0];
-        let mut tensors = Vec::new();
-
-        // input = 0
-        tensors.push(input_shape.clone());
-
-        // output = 1
-        tensors.push(input_shape.clone());
+        let tensors = vec![input_shape.clone(), input_shape.clone()];
 
         let activation_instruction = match &self.activation_type {
             ActivationType::ReLU => instruction::relu(0, 1),

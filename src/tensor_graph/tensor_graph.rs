@@ -117,7 +117,7 @@ impl TensorGraph {
 
             // Create global tensors for this layer's *newly defined* local tensors
             for (local_idx, local_tensor_desc) in layer_exec.tensors.iter().enumerate() {
-                if layer_exec.input_mappings.get(&local_idx).is_none() {
+                if !layer_exec.input_mappings.contains_key(&local_idx) {
                     // Only if not an input reference
                     let global_tensor_id = tensor_descs.len();
                     global_tensor_map.insert((layer_id, local_idx), global_tensor_id);

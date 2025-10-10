@@ -97,16 +97,11 @@ impl Layer for ElementWiseLayer {
             }
         }
 
-        let mut tensors = Vec::new();
-
-        // Add the first input tensor
-        tensors.push(first_shape.clone());
-
-        // Add the second input tensor
-        tensors.push(first_shape.clone());
-
-        // Add output tensor
-        tensors.push(first_shape.clone());
+        let tensors = vec![
+            first_shape.clone(),
+            first_shape.clone(),
+            first_shape.clone(),
+        ];
 
         // Create element-wise instruction
         let element_wise_instruction = match self.operation {
