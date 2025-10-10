@@ -470,10 +470,7 @@ fn create_generic_matmul_command_buffer(
 
     let local_size = gpu.optimal_workgroup_size_2d(n as u64, m as u64);
     gpu.bind_compute_pipeline(command_buffer, GPUOperation::MatMul_F32, local_size);
-    gpu.bind_storage_buffers(
-        command_buffer,
-        &[&src1_gpu_mem, &src2_gpu_mem, &dst_gpu_mem],
-    );
+    gpu.bind_storage_buffers(command_buffer, &[src1_gpu_mem, src2_gpu_mem, dst_gpu_mem]);
 
     // push constants (u32 array as bytes in native-endian)
     let mut pc_bytes: Vec<u8> = Vec::with_capacity(pc.len() * 4);
@@ -614,7 +611,7 @@ fn create_specialized_matmul_command_buffer(
     };
 
     gpu.bind_compute_pipeline(command_buffer, operation, local_size);
-    gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
+    gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
     // Configure operation-specific parameters and dispatch dimensions
     let (push_constants, dispatch_x, dispatch_y, dispatch_z) =

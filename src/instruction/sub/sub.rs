@@ -146,7 +146,7 @@ impl Instruction for SubInstruction {
         // Choose a 1D local workgroup size and bind pipeline/descriptors
         let local_size = gpu.optimal_workgroup_size_1d(total_elements);
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-        gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
         // Push constants
         gpu.bind_push_constants(command_buffer, push_constant_bytes);

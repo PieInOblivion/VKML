@@ -116,7 +116,7 @@ impl Instruction for InitConstantInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
 
         // bind dst buffer at binding 0
-        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
         // push constants and dispatch
         gpu.bind_push_constants(command_buffer, pc_bytes);

@@ -74,7 +74,7 @@ impl Instruction for ReLUInstruction {
         // Bind pipeline first so descriptor push is associated with the correct layout
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
 
-        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);

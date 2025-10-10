@@ -126,13 +126,7 @@ impl Instruction for ConcatInstruction {
 
         match op_datatype {
             DataType::Float => {
-                f32_cpu(
-                    &src_bytes_vec,
-                    &src_dims_vec,
-                    self.dim,
-                    &dst_desc,
-                    dst_bytes,
-                );
+                f32_cpu(&src_bytes_vec, &src_dims_vec, self.dim, dst_desc, dst_bytes);
             }
             _ => unimplemented!(
                 "concat.rs unimplemented cpu instruction for DataType {:?}",

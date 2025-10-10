@@ -112,7 +112,7 @@ impl Instruction for SoftmaxInstruction {
 
         // Bind pipeline and descriptors (src=0, dst=1)
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // Push constants
         gpu.bind_push_constants(command_buffer, pc_bytes);

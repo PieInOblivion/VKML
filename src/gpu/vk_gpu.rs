@@ -425,7 +425,7 @@ impl Gpu {
             let spec_info = vk::SpecializationInfo {
                 map_entry_count: spec_entries.len() as u32,
                 map_entries: spec_entries.as_ptr(),
-                data_size: (local_size.len() * std::mem::size_of::<u32>()) as usize,
+                data_size: (local_size.len() * std::mem::size_of::<u32>()),
                 data: local_size.as_ptr() as *const c_void,
             };
 
@@ -585,7 +585,7 @@ impl Gpu {
     ) -> [u32; 3] {
         fn div_ceil(value: u64, divisor: u64) -> u64 {
             debug_assert!(divisor > 0);
-            (value + divisor - 1) / divisor
+            value.div_ceil(divisor)
         }
 
         fn build_candidates(limit: u32, increment: u32) -> Vec<u32> {
@@ -625,7 +625,7 @@ impl Gpu {
             if value == 0 {
                 return [1, 1, 1];
             }
-            target_elements = target_elements.checked_mul(value).unwrap_or(u64::MAX);
+            target_elements = target_elements.saturating_mul(value);
         }
 
         let max_sizes = self.max_workgroup_size;
@@ -879,9 +879,9 @@ impl Gpu {
 
     /// Dispatch compute shader work
     pub fn dispatch(&self, cb: vk::CommandBuffer, local_size: [u32; 3], work_size: [u64; 3]) {
-        let dispatch_x = ((work_size[0] + local_size[0] as u64 - 1) / local_size[0] as u64) as u32;
-        let dispatch_y = ((work_size[1] + local_size[1] as u64 - 1) / local_size[1] as u64) as u32;
-        let dispatch_z = ((work_size[2] + local_size[2] as u64 - 1) / local_size[2] as u64) as u32;
+        let dispatch_x = work_size[0].div_ceil(local_size[0] as u64) as u32;
+        let dispatch_y = work_size[1].div_ceil(local_size[1] as u64) as u32;
+        let dispatch_z = work_size[2].div_ceil(local_size[2] as u64) as u32;
         // TODO: REMOVE DEBUG PRINTS
         println!("local_size: {:?}", &local_size);
         println!("work_size: {:?}", &work_size);
@@ -939,8 +939,8 @@ impl Gpu {
 
             let wait_sems: Vec<vk::Semaphore> = wait_semaphores.iter().map(|(s, _)| *s).collect();
             let wait_values: Vec<u64> = wait_semaphores.iter().map(|(_, v)| *v).collect();
-            let signal_sems = vec![timeline_sem];
-            let signal_values = vec![signal_value];
+            let signal_sems = [timeline_sem];
+            let signal_values = [signal_value];
 
             let mut timeline_info = vk::TimelineSemaphoreSubmitInfo {
                 s_type: vk::StructureType::TIMELINE_SEMAPHORE_SUBMIT_INFO,

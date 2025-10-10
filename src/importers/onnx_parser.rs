@@ -27,10 +27,10 @@ impl OnnxParser {
             let mut dims = onnx_tensor.shape.clone();
 
             // Replace -1 in first dimension with batch_size
-            if let Some(first) = dims.first_mut() {
-                if *first == -1 {
-                    *first = batch_size;
-                }
+            if let Some(first) = dims.first_mut()
+                && *first == -1
+            {
+                *first = batch_size;
             }
 
             let onnx_tensor_desc = TensorDesc::new(dims, onnx_tensor.data_type);

@@ -136,7 +136,7 @@ impl Instruction for MaxPoolInstruction {
 
         gpu.begin_command_buffer(command_buffer)?;
 
-        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // choose shader based on spatial rank
         let spatial_rank = if src_desc.ndim() >= 2 {

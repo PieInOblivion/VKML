@@ -99,7 +99,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
                             if output_tensor_id < cm.tensors.len() {
                                 let tensor = cm.tensor_read(output_tensor_id);
                                 let dims = tensor.desc.dims();
-                                return Some(format_dimensions(&dims));
+                                return Some(format_dimensions(dims));
                             }
                         }
                         None
@@ -110,7 +110,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let output_shapes_str = if output_tensor < cm.tensors.len() {
                 let tensor = cm.tensor_read(output_tensor);
-                format_dimensions(&tensor.desc.dims())
+                format_dimensions(tensor.desc.dims())
             } else {
                 "Unknown".to_string()
             };

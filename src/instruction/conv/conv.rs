@@ -231,7 +231,7 @@ impl Instruction for ConvInstruction {
                 gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv1D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
-                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                    &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
@@ -278,7 +278,7 @@ impl Instruction for ConvInstruction {
                 gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv2D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
-                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                    &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
@@ -341,7 +341,7 @@ impl Instruction for ConvInstruction {
                 gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv3D_F32, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
-                    &[Some(&src_mem), Some(&weights_mem), Some(&dst_mem), bias_mem],
+                    &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);

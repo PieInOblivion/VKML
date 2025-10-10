@@ -72,7 +72,7 @@ impl Instruction for SigmoidInstruction {
         // Choose local workgroup and bind pipeline
         let local_size = gpu.optimal_workgroup_size_1d(num_elements);
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-        gpu.bind_storage_buffers(command_buffer, &[&src_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
@@ -99,11 +99,11 @@ impl Instruction for SigmoidInstruction {
         let a = src_tensor.desc.dims();
         let c = dst_tensor.desc.dims().to_vec();
 
-        let bc = TensorDesc::broadcast_shape(&a, &c)
+        let bc = TensorDesc::broadcast_shape(a, &c)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, c));
         assert_eq!(bc.as_slice(), c, "Broadcast {:?} != dst {:?}", bc, c);
 
-        let sa = TensorDesc::broadcast_strides(&a, &c);
+        let sa = TensorDesc::broadcast_strides(a, &c);
 
         let op_datatype = dst_tensor.desc.data_type();
 

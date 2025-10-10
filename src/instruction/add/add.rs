@@ -151,7 +151,7 @@ impl Instruction for AddInstruction {
 
         // Bind pipeline first so descriptor push is associated with the pipeline layout
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-        gpu.bind_storage_buffers(command_buffer, &[&src1_mem, &src2_mem, &dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
         // Push constants to the shader
         gpu.bind_push_constants(command_buffer, push_constant_bytes);
@@ -185,7 +185,7 @@ impl Instruction for AddInstruction {
         let b = src2_tensor.desc.dims();
         let c = dst_tensor.desc.dims().to_vec();
 
-        let bc = TensorDesc::broadcast_shape(&a, &b)
+        let bc = TensorDesc::broadcast_shape(a, b)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);
 

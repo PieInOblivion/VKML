@@ -79,7 +79,7 @@ impl Instruction for InitHeInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
 
         // Bind descriptor (dst at binding 0)
-        gpu.bind_storage_buffers(command_buffer, &[&dst_mem]);
+        gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
         // Push constants
         gpu.bind_push_constants(command_buffer, pc_bytes);

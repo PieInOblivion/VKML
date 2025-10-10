@@ -300,11 +300,12 @@ impl TensorGraph {
             let mut pred_set = HashSet::with_capacity(input_ids.len());
 
             for &t in &input_ids {
-                if let Some(&pred_op) = tensor_producers.get(&t) {
-                    if pred_op != curr_op && pred_set.insert(pred_op) {
-                        successors[pred_op].push(curr_op);
-                        predecessors[curr_op].push(pred_op);
-                    }
+                if let Some(&pred_op) = tensor_producers.get(&t)
+                    && pred_op != curr_op
+                    && pred_set.insert(pred_op)
+                {
+                    successors[pred_op].push(curr_op);
+                    predecessors[curr_op].push(pred_op);
                 }
             }
             in_degree[curr_op] = pred_set.len();
@@ -414,10 +415,10 @@ impl TensorGraph {
                     for &pred in &predecessors[op] {
                         if scheduled[pred] {
                             let pred_device = &op_devices[pred];
-                            if pred_device != &device {
-                                if let Some(&sem_val) = device_semaphore_values.get(pred_device) {
-                                    wait_set.insert((pred_device.clone(), sem_val));
-                                }
+                            if pred_device != &device
+                                && let Some(&sem_val) = device_semaphore_values.get(pred_device)
+                            {
+                                wait_set.insert((pred_device.clone(), sem_val));
                             }
                         }
                     }
