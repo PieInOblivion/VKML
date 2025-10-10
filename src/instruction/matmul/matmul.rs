@@ -447,19 +447,20 @@ fn create_generic_matmul_command_buffer(
     let c_strides_packed = pack_pairs(&dst_strides);
 
     // Build push-constant array in the same order as GLSL struct (packed arrays)
-    let mut pc: Vec<u32> = Vec::new();
-    pc.push(src1_dims_usize.len() as u32);
-    pc.push(src2_dims_usize.len() as u32);
-    pc.push(dst_dims_usize.len() as u32);
-    pc.push(m as u32);
-    pc.push(k as u32);
-    pc.push(n as u32);
     let batch_dims_count = dst_dims_usize.len().saturating_sub(2);
-    pc.push(batch_dims_count as u32);
-    pc.push(a_k_axis as u32);
-    pc.push(b_k_axis as u32);
-    pc.push(a_m_axis as u32);
-    pc.push(b_n_axis as u32);
+    let mut pc: Vec<u32> = vec![
+        src1_dims_usize.len() as u32,
+        src2_dims_usize.len() as u32,
+        dst_dims_usize.len() as u32,
+        m as u32,
+        k as u32,
+        n as u32,
+        batch_dims_count as u32,
+        a_k_axis as u32,
+        b_k_axis as u32,
+        a_m_axis as u32,
+        b_n_axis as u32,
+    ];
 
     pc.extend_from_slice(&a_shape_packed);
     pc.extend_from_slice(&b_shape_packed);
