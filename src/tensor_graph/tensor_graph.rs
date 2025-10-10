@@ -181,7 +181,7 @@ impl TensorGraph {
             let layer_exec = layer_executions.get(&layer_id).unwrap();
             for (local_idx, _) in layer_exec.tensors.iter().enumerate() {
                 // only newly defined tensors (not input refs)
-                if layer_exec.input_mappings.get(&local_idx).is_none() {
+                if !layer_exec.input_mappings.contains_key(&local_idx) {
                     let global_id = global_tensor_map[&(layer_id, local_idx)];
                     input_tensors_model.push(global_id);
                 }
@@ -425,7 +425,7 @@ impl TensorGraph {
                 }
                 let wait_semaphores: Vec<_> = wait_set.into_iter().collect();
 
-                let requires_host_wait = matches!(device, DeviceId::CPU);
+                let requires_host_wait = matches!(device, DeviceId::Cpu);
                 let signal_value = current_semaphore_value;
                 current_semaphore_value += 1;
 

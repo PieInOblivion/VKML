@@ -56,8 +56,8 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let shape = format!("{:?}", tensor.desc.dims());
 
                 let location = match &tensor.device {
-                    DeviceId::CPU => "CPU".to_string(),
-                    DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
+                    DeviceId::Cpu => "CPU".to_string(),
+                    DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
                 };
 
                 let producers: String = cm
@@ -88,8 +88,8 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 let shape = format!("{:?}", tensor.desc.dims());
 
                 let location = match &tensor.device {
-                    DeviceId::CPU => "CPU".to_string(),
-                    DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
+                    DeviceId::Cpu => "CPU".to_string(),
+                    DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
                 };
 
                 let consumers: Vec<String> = cm

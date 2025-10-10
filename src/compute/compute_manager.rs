@@ -215,9 +215,9 @@ impl ComputeManager {
         // Track available memory per device in the desired order (GPUs then CPU)
         let mut available_memory: Vec<(DeviceId, u64)> = Vec::new();
         for (idx, gpu) in self.gpus.gpus().iter().enumerate() {
-            available_memory.push((DeviceId::GPU(idx), gpu.available_memory()));
+            available_memory.push((DeviceId::Gpu(idx), gpu.available_memory()));
         }
-        available_memory.push((DeviceId::CPU, self.cpu.memory_tracking.get_available()));
+        available_memory.push((DeviceId::Cpu, self.cpu.memory_tracking.get_available()));
 
         // Helper to get tensor size
         let tensor_size =
@@ -429,8 +429,9 @@ impl ComputeManager {
         let transfer_positions: Vec<OperationId> =
             transfer_operations.iter().map(|(op, _)| *op).collect();
 
-        let mut inserted = 0usize;
-        for (insert_before_op, transfer_instr) in transfer_operations.drain(..) {
+        for (inserted, (insert_before_op, transfer_instr)) in
+            transfer_operations.drain(..).enumerate()
+        {
             let adjusted_pos = insert_before_op + inserted;
             let layer_id = self.tensor_graph.operation_to_layer[insert_before_op];
             self.tensor_graph
@@ -439,7 +440,6 @@ impl ComputeManager {
             self.tensor_graph
                 .operation_to_layer
                 .insert(adjusted_pos, layer_id);
-            inserted += 1;
         }
 
         // 3. Apply the tensor remappings to all operations. We need to account for how many
@@ -509,7 +509,7 @@ impl ComputeManager {
         let size_in_bytes = desc.size_in_bytes() as u64;
 
         match target_device {
-            DeviceId::CPU => {
+            DeviceId::Cpu => {
                 self.cpu.memory_tracking.allocate(size_in_bytes);
                 if let Some(boxed) = init_box {
                     if boxed.len() != desc.size_in_bytes() {
@@ -525,7 +525,7 @@ impl ComputeManager {
                     Ok(Tensor::new_cpu(desc.clone(), buf.into()))
                 }
             }
-            DeviceId::GPU(idx) => {
+            DeviceId::Gpu(idx) => {
                 let gpu = &self.gpus.get_gpu(*idx);
                 gpu.allocate_memory(size_in_bytes);
 
@@ -641,7 +641,7 @@ impl ComputeManager {
             .iter()
             .enumerate()
             .map(|(gpu_idx, gpu)| {
-                let device = DeviceId::GPU(gpu_idx);
+                let device = DeviceId::Gpu(gpu_idx);
                 let count = plan.chunks.iter().filter(|c| c.device == device).count() as u64;
                 if count > 0 {
                     gpu.allocate_semaphore_values(count)
@@ -682,7 +682,7 @@ impl ComputeManager {
                 let offset = device_offsets[gpu_idx];
                 plan.chunks
                     .iter()
-                    .filter(|c| matches!(c.device, DeviceId::GPU(idx) if idx == gpu_idx))
+                    .filter(|c| matches!(c.device, DeviceId::Gpu(idx) if idx == gpu_idx))
                     .map(|c| c.signal_value + offset)
                     .max()
                     .map(|max_value| (gpu_idx, max_value))
@@ -762,7 +762,7 @@ impl ComputeManager {
                 .wait_semaphores
                 .iter()
                 .filter_map(|(dev, val)| {
-                    if let DeviceId::GPU(wait_gpu_idx) = dev {
+                    if let DeviceId::Gpu(wait_gpu_idx) = dev {
                         let wait_offset = device_offsets[*wait_gpu_idx];
                         let wait_gpu = self.gpus.get_gpu(*wait_gpu_idx);
                         Some((
@@ -789,7 +789,7 @@ impl ComputeManager {
     fn execute_cpu_chunk(&self, chunk: &ExecutionChunk, device_offsets: &[u64]) {
         // Wait for any GPU dependencies first (with offsets applied)
         for (wait_dev, wait_val) in &chunk.wait_semaphores {
-            if let DeviceId::GPU(gpu_idx) = wait_dev {
+            if let DeviceId::Gpu(gpu_idx) = wait_dev {
                 let offset = device_offsets[*gpu_idx];
                 let gpu = self.gpus.get_gpu(*gpu_idx);
                 if let Err(e) = gpu.wait_for_timeline_value(*wait_val + offset) {
@@ -883,7 +883,7 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
     let target = unsafe {
         (*params.tensor_locations_ptr.add(params.index))
             .clone()
-            .unwrap_or(DeviceId::CPU)
+            .unwrap_or(DeviceId::Cpu)
     };
 
     let tensor = manager.allocate_tensor(desc, &target, init_box).unwrap();
@@ -919,12 +919,12 @@ struct ChunkExecutionParams<'a> {
 
 zp_define_task_fn!(chunk_execution_task, ChunkExecutionParams, |params| {
     match &params.chunk.device {
-        DeviceId::GPU(gpu_idx) => {
+        DeviceId::Gpu(gpu_idx) => {
             params
                 .compute_manager
                 .execute_gpu_chunk(params.chunk, *gpu_idx, params.device_offsets);
         }
-        DeviceId::CPU => {
+        DeviceId::Cpu => {
             params
                 .compute_manager
                 .execute_cpu_chunk(params.chunk, params.device_offsets);

@@ -882,9 +882,6 @@ impl Gpu {
         let dispatch_x = work_size[0].div_ceil(local_size[0] as u64) as u32;
         let dispatch_y = work_size[1].div_ceil(local_size[1] as u64) as u32;
         let dispatch_z = work_size[2].div_ceil(local_size[2] as u64) as u32;
-        // TODO: REMOVE DEBUG PRINTS
-        println!("local_size: {:?}", &local_size);
-        println!("work_size: {:?}", &work_size);
         unsafe {
             self.get_device()
                 .cmd_dispatch(cb, dispatch_x, dispatch_y, dispatch_z);

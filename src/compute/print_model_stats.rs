@@ -124,8 +124,8 @@ pub fn print_model_stats(cm: &ComputeManager) {
                 .sum();
 
             let device_location = match &cm.tensor_read(output_tensor).device {
-                DeviceId::CPU => "CPU".to_string(),
-                DeviceId::GPU(gpu_idx) => format!("GPU {}", gpu_idx),
+                DeviceId::Cpu => "CPU".to_string(),
+                DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
             };
 
             let layer_type = layer.layer.name();
@@ -409,7 +409,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         let tensor = cm.tensor_read(tensor_id);
         let raw = tensor.read();
         let gpu_idx = match &tensor.device {
-            DeviceId::GPU(idx) => Some(*idx),
+            DeviceId::Gpu(idx) => Some(*idx),
             _ => None,
         };
         let dtype = tensor.desc.data_type();

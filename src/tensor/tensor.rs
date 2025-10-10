@@ -9,8 +9,8 @@ use crate::{
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum DeviceId {
-    CPU,
-    GPU(usize),
+    Cpu,
+    Gpu(usize),
 }
 
 pub struct Tensor {
@@ -25,7 +25,7 @@ impl Tensor {
         let buf = CpuData::from_boxed_slice(host_data);
         Self {
             desc,
-            device: DeviceId::CPU,
+            device: DeviceId::Cpu,
             buffer: Box::new(buf),
         }
     }
@@ -35,17 +35,17 @@ impl Tensor {
         let buf = GpuData { memory };
         Self {
             desc,
-            device: DeviceId::GPU(gpu_idx),
+            device: DeviceId::Gpu(gpu_idx),
             buffer: Box::new(buf),
         }
     }
 
     pub fn is_cpu(&self) -> bool {
-        matches!(self.device, DeviceId::CPU)
+        matches!(self.device, DeviceId::Cpu)
     }
 
     pub fn is_gpu(&self) -> bool {
-        matches!(self.device, DeviceId::GPU(_))
+        matches!(self.device, DeviceId::Gpu(_))
     }
 
     pub fn read(&self) -> Box<[u8]> {
