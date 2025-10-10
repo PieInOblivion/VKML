@@ -12,7 +12,7 @@ use vulkanalia::{
     Device, Instance,
     vk::{
         self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1,
-        KhrPushDescriptorExtension,
+        KhrPushDescriptorExtensionDeviceCommands,
     },
 };
 
