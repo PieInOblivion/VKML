@@ -39,9 +39,9 @@ pub struct DevicePNext {
 
 #[derive(Clone, Debug, Default)]
 pub struct VkExtensions {
-    pub cooperative_matrix: bool,
-    pub memory_budget: bool,
-    pub push_descriptor: bool,
+    cooperative_matrix: bool,
+    memory_budget: bool,
+    push_descriptor: bool,
 }
 
 impl VkExtensions {
@@ -123,5 +123,9 @@ impl VkExtensions {
                 _holders: holders,
             },
         }
+    }
+
+    pub fn has_coop_matrix(&self) -> bool {
+        self.cooperative_matrix
     }
 }
