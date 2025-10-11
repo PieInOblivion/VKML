@@ -128,7 +128,17 @@ impl Instruction for GemmInstruction {
         // Choose optimal workgroup size for 2D matrix operation
         let local_size = gpu.optimal_workgroup_size_2d(n as u64, m as u64);
 
-        gpu.bind_compute_pipeline(command_buffer, GPUOperation::Gemm_F32, local_size);
+        let op_datatype = y_tensor.desc.data_type();
+        let gpu_op = match op_datatype {
+            DataType::Float => GPUOperation::Gemm_F32,
+            _ => {
+                return Err(
+                    format!("GPU GEMM unimplemented for DataType {:?}", op_datatype).into(),
+                );
+            }
+        };
+
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers(command_buffer, &storage_buffers);
 
         // Serialize push constants
