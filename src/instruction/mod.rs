@@ -4,6 +4,7 @@ use crate::{
         concat::concat::ConcatInstruction,
         conv::conv::{AutoPad, ConvInstruction},
         div::div::DivInstruction,
+        gemm::gemm::GemmInstruction,
         identity::identity::IdentityInstruction,
         init_constant::init_constant::InitConstantInstruction,
         init_he::init_he::InitHeInstruction,
@@ -29,6 +30,7 @@ pub mod add;
 pub mod concat;
 pub mod conv;
 pub mod div;
+pub mod gemm;
 pub mod gpu_operations;
 pub mod identity;
 pub mod init_constant;
@@ -185,5 +187,27 @@ pub fn transfer(
         dst,
         source_device,
         target_device,
+    })
+}
+
+pub fn gemm(
+    a: TensorId,
+    b: TensorId,
+    c: Option<TensorId>,
+    y: TensorId,
+    alpha: f32,
+    beta: f32,
+    trans_a: bool,
+    trans_b: bool,
+) -> Box<dyn Instruction> {
+    Box::new(GemmInstruction {
+        a,
+        b,
+        c,
+        y,
+        alpha,
+        beta,
+        trans_a,
+        trans_b,
     })
 }

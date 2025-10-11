@@ -1,0 +1,77 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; }; // Matrix A
+layout(std430, binding = 1) buffer InBufferB { float b[]; }; // Matrix B
+layout(std430, binding = 2) buffer InBufferC { float c[]; }; // Matrix C (optional)
+layout(std430, binding = 3) buffer OutBuffer { float y[]; }; // Result Y
+
+layout(push_constant) uniform PushConstants {
+    uint m;             // Height of result
+    uint k;             // Inner dimension
+    uint n;             // Width of result
+    uint stride_a0;     // Row stride for matrix A
+    uint stride_a1;     // Column stride for matrix A
+    uint stride_b0;     // Row stride for matrix B
+    uint stride_b1;     // Column stride for matrix B
+    uint stride_y0;     // Row stride for result Y
+    uint stride_y1;     // Column stride for result Y
+    uint trans_a;       // Transpose flag for A (0 or 1)
+    uint trans_b;       // Transpose flag for B (0 or 1)
+    float alpha;        // Scalar multiplier for A*B
+    float beta;         // Scalar multiplier for C
+    uint has_c;         // Whether C is provided (0 or 1)
+} params;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    // Check bounds
+    if (row >= params.m || col >= params.n) {
+        return;
+    }
+
+    float sum = 0.0;
+
+    // Matrix multiplication: compute element (row, col) of A*B
+    for (uint i = 0; i < params.k; i++) {
+        // Get A[row, i] considering transpose
+        uint a_idx;
+        if (params.trans_a != 0) {
+            // A is transposed: A[row, i] = A_stored[i, row]
+            a_idx = i * params.stride_a0 + row * params.stride_a1;
+        } else {
+            // A is not transposed: A[row, i] = A_stored[row, i]
+            a_idx = row * params.stride_a0 + i * params.stride_a1;
+        }
+
+        // Get B[i, col] considering transpose
+        uint b_idx;
+        if (params.trans_b != 0) {
+            // B is transposed: B[i, col] = B_stored[col, i]
+            b_idx = col * params.stride_b0 + i * params.stride_b1;
+        } else {
+            // B is not transposed: B[i, col] = B_stored[i, col]
+            b_idx = i * params.stride_b0 + col * params.stride_b1;
+        }
+
+        sum += a[a_idx] * b[b_idx];
+    }
+
+    // Compute Y[row, col] = alpha * sum + beta * C[row, col]
+    float result = params.alpha * sum;
+
+    if (params.has_c != 0) {
+        // Add beta * C[row, col]
+        // Assume C is broadcasted to (M, N)
+        // For simplicity, assume C is stored as (M, N)
+        uint c_idx = row * params.n + col;
+        result += params.beta * c[c_idx];
+    }
+
+    // Store result
+    uint y_idx = row * params.stride_y0 + col * params.stride_y1;
+    y[y_idx] = result;
+}

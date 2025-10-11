@@ -119,35 +119,51 @@ impl OnnxParser {
 
         let attributes = &onnx_op.attributes;
 
-        // Small helpers to extract attribute values
-        let attr_to_vec = |a: &AttributeValue| -> Option<Vec<i64>> {
-            match a {
-                AttributeValue::Ints(v) => Some(v.clone()),
-                AttributeValue::Int(i) => Some(vec![*i]),
-                _ => None,
-            }
-        };
-
-        let attr_to_int = |a: &AttributeValue| -> Option<i64> {
-            match a {
-                AttributeValue::Int(i) => Some(*i),
-                _ => None,
-            }
-        };
-
-        let attr_to_string = |a: &AttributeValue| -> Option<String> {
-            match a {
-                AttributeValue::String(s) => Some(s.clone()),
-                _ => None,
-            }
-        };
-
         match &*onnx_op.op_type {
             "MatMul" => Ok(instruction::matmul(
                 input_ids[0],
                 input_ids[1],
                 output_ids[0],
             )),
+            "Gemm" => {
+                // GEMM: General Matrix Multiplication
+                // Y = alpha * A' * B' + beta * C
+                // Required inputs: A, B
+                // Optional input: C (can be empty string in ONNX)
+                // Attributes: alpha (default 1.0), beta (default 1.0), transA (default 0), transB (default 0)
+
+                let alpha = attributes
+                    .get("alpha")
+                    .and_then(attr_to_float)
+                    .unwrap_or(1.0);
+
+                let beta = attributes
+                    .get("beta")
+                    .and_then(attr_to_float)
+                    .unwrap_or(1.0);
+
+                let trans_a = attributes.get("transA").and_then(attr_to_int).unwrap_or(0) != 0;
+
+                let trans_b = attributes.get("transB").and_then(attr_to_int).unwrap_or(0) != 0;
+
+                // C is optional - check if we have 3 inputs
+                let c_id = if input_ids.len() >= 3 {
+                    Some(input_ids[2])
+                } else {
+                    None
+                };
+
+                Ok(instruction::gemm(
+                    input_ids[0],  // A
+                    input_ids[1],  // B
+                    c_id,          // C (optional)
+                    output_ids[0], // Y
+                    alpha,
+                    beta,
+                    trans_a,
+                    trans_b,
+                ))
+            }
             "Concat" => {
                 let axis = if let Some(a) = attributes.get("axis") {
                     attr_to_int(a).ok_or_else(|| {
@@ -356,5 +372,35 @@ impl OnnxParser {
                 unsupported
             ))),
         }
+    }
+}
+
+// Helper functions to extract ONNX attribute values
+fn attr_to_vec(a: &AttributeValue) -> Option<Vec<i64>> {
+    match a {
+        AttributeValue::Ints(v) => Some(v.clone()),
+        AttributeValue::Int(i) => Some(vec![*i]),
+        _ => None,
+    }
+}
+
+fn attr_to_int(a: &AttributeValue) -> Option<i64> {
+    match a {
+        AttributeValue::Int(i) => Some(*i),
+        _ => None,
+    }
+}
+
+fn attr_to_string(a: &AttributeValue) -> Option<String> {
+    match a {
+        AttributeValue::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn attr_to_float(a: &AttributeValue) -> Option<f32> {
+    match a {
+        AttributeValue::Float(f) => Some(*f),
+        _ => None,
     }
 }

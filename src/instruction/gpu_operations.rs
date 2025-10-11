@@ -40,6 +40,8 @@ const INIT_HE_SHADER_F32: &[u8] = include_shader!("f32_init_he.spv");
 const INIT_UNIFORM_SHADER_F32: &[u8] = include_shader!("f32_init_uniform.spv");
 const INIT_CONSTANT_SHADER: &[u8] = include_shader!("init_constant.spv");
 
+const GEMM_SHADER_F32: &[u8] = include_shader!("f32_gemm.spv");
+
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUOperation {
@@ -71,11 +73,12 @@ pub enum GPUOperation {
     InitHe_F32,
     InitUniform_F32,
     InitConstant,
+    Gemm_F32,
 }
 
 impl GPUOperation {
     // NOTE: std::mem::variant_count is currently unstable
-    pub const VARIANT_COUNT: usize = 28;
+    //pub const VARIANT_COUNT: usize = 29;
 
     pub fn get_shader_bytes(&self) -> &[u8] {
         match self {
@@ -107,6 +110,7 @@ impl GPUOperation {
             GPUOperation::InitHe_F32 => INIT_HE_SHADER_F32,
             GPUOperation::InitUniform_F32 => INIT_UNIFORM_SHADER_F32,
             GPUOperation::InitConstant => INIT_CONSTANT_SHADER,
+            GPUOperation::Gemm_F32 => GEMM_SHADER_F32,
         }
     }
 
