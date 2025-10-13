@@ -179,7 +179,6 @@ impl Instruction for ConvInstruction {
             .as_ref()
             .map(|t| t.get_gpu_memory_or_panic());
 
-        // Begin command buffer
         gpu.begin_command_buffer(command_buffer)?;
 
         // Decide which shader/pipeline to use based on spatial rank and prepare push constants
@@ -352,9 +351,7 @@ impl Instruction for ConvInstruction {
             _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
         }
 
-        // End command buffer
         gpu.end_command_buffer(command_buffer)?;
-
         Ok(())
     }
 
