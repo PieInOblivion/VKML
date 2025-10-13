@@ -42,7 +42,7 @@ impl Instruction for SigmoidInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -54,10 +54,6 @@ impl Instruction for SigmoidInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
         // Prepare CPU-side values
         let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-
-        // begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation based on data type
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -76,8 +72,6 @@ impl Instruction for SigmoidInstruction {
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

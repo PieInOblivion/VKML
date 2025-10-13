@@ -48,7 +48,7 @@ impl Instruction for SubInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -130,10 +130,6 @@ impl Instruction for SubInstruction {
         };
 
         let push_constant_bytes = as_bytes(&push_const_values);
-
-        // Use centralized command helpers to build the command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -155,8 +151,6 @@ impl Instruction for SubInstruction {
 
         // Dispatch using local_size and the full work size
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

@@ -145,7 +145,7 @@ impl Instruction for ConvInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -163,7 +163,7 @@ impl Instruction for ConvInstruction {
         let m_val = dst_desc_tmp.dims()[1];
         if self.group < 1 || c_val % self.group != 0 || m_val % self.group != 0 {
             panic!(
-                "ConvInstruction.create_command_buffer: invalid group configuration: group={}, C={}, M={}",
+                "ConvInstruction.record_into_command_buffer: invalid group configuration: group={}, C={}, M={}",
                 self.group, c_val, m_val
             );
         }
@@ -178,8 +178,6 @@ impl Instruction for ConvInstruction {
         let bias_mem = bias_tensor_opt
             .as_ref()
             .map(|t| t.get_gpu_memory_or_panic());
-
-        gpu.begin_command_buffer(command_buffer)?;
 
         // Decide which shader/pipeline to use based on spatial rank and prepare push constants
         let src_desc = &src_tensor.desc;
@@ -316,7 +314,7 @@ impl Instruction for ConvInstruction {
                     group: {
                         if self.group < 1 {
                             panic!(
-                                "ConvInstruction.create_command_buffer: group must be >= 1, got {}",
+                                "ConvInstruction.record_into_command_buffer: group must be >= 1, got {}",
                                 self.group
                             );
                         }
@@ -351,7 +349,6 @@ impl Instruction for ConvInstruction {
             _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
         }
 
-        gpu.end_command_buffer(command_buffer)?;
         Ok(())
     }
 

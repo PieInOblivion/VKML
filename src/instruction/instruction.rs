@@ -14,8 +14,8 @@ pub trait Instruction: Debug {
     // Remap tensor IDs (used during graph construction)
     fn remap_tensor_ids(&mut self, new_inputs: &[TensorId], new_outputs: &[TensorId]);
 
-    // Create a Vulkan command buffer for this instruction
-    fn create_command_buffer(
+    // Record this instruction into an already begun command buffer
+    fn record_into_command_buffer(
         &self,
         _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,

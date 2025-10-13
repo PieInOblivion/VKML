@@ -40,7 +40,7 @@ impl Instruction for ReLUInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -53,10 +53,6 @@ impl Instruction for ReLUInstruction {
 
         // Prepare CPU-side values
         let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
-
-        // Begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation based on DataType (only Float supported)
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -78,8 +74,6 @@ impl Instruction for ReLUInstruction {
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

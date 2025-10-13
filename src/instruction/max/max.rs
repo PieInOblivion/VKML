@@ -48,7 +48,7 @@ impl Instruction for MaxInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -126,10 +126,6 @@ impl Instruction for MaxInstruction {
         };
 
         let push_constant_bytes = as_bytes(&push_const_values);
-
-        // begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation and element size based on tensor DataType
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -150,8 +146,6 @@ impl Instruction for MaxInstruction {
         let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
 
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

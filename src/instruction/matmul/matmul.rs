@@ -47,7 +47,7 @@ impl Instruction for MatMulInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -400,9 +400,6 @@ fn create_generic_matmul_command_buffer(
     let src2_gpu_mem = src2_tensor.get_gpu_memory_or_panic();
     let dst_gpu_mem = dst_tensor.get_gpu_memory_or_panic();
 
-    // Begin command buffer using helper
-    gpu.begin_command_buffer(command_buffer)?;
-
     // Prepare push-constant metadata (we limit shapes/strides to MAX_DIMS=6 to fit in 128 bytes)
     let src1_dims = src1_tensor.desc.dims();
     let src2_dims = src2_tensor.desc.dims();
@@ -494,8 +491,6 @@ fn create_generic_matmul_command_buffer(
         local_size,
         [n as u64, m as u64, batch_size_val as u64],
     );
-
-    gpu.end_command_buffer(command_buffer)?;
 
     Ok(())
 }
@@ -594,9 +589,6 @@ fn create_specialized_matmul_command_buffer(
     let src2_mem = src2_tensor.get_gpu_memory_or_panic();
     let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-    // Begin command buffer using helper
-    gpu.begin_command_buffer(command_buffer)?;
-
     // Choose local workgroup size appropriate for the specialised kernel later and bind pipeline
     // We'll pick based on the operation's expected tile sizes
     let local_size = match operation {
@@ -659,9 +651,6 @@ fn create_specialized_matmul_command_buffer(
     };
 
     gpu.dispatch(command_buffer, local_size, work_size);
-
-    // End command buffer
-    gpu.end_command_buffer(command_buffer)?;
 
     Ok(())
 }

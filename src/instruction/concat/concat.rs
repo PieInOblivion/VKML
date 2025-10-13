@@ -44,7 +44,7 @@ impl Instruction for ConcatInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,

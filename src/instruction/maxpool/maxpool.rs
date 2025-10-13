@@ -119,7 +119,7 @@ impl Instruction for MaxPoolInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -133,9 +133,6 @@ impl Instruction for MaxPoolInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         let src_desc = &src_tensor.desc;
-
-        gpu.begin_command_buffer(command_buffer)?;
-
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // choose shader based on spatial rank
@@ -282,8 +279,6 @@ impl Instruction for MaxPoolInstruction {
             }
             _ => panic!("Unsupported spatial rank {} for GPU MaxPool", spatial_rank),
         }
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

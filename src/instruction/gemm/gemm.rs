@@ -61,7 +61,7 @@ impl Instruction for GemmInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -75,9 +75,6 @@ impl Instruction for GemmInstruction {
         let a_gpu_mem = a_tensor.get_gpu_memory_or_panic();
         let b_gpu_mem = b_tensor.get_gpu_memory_or_panic();
         let y_gpu_mem = y_tensor.get_gpu_memory_or_panic();
-
-        // Begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
 
         let a_dims = a_tensor.desc.dims();
         let b_dims = b_tensor.desc.dims();
@@ -151,8 +148,6 @@ impl Instruction for GemmInstruction {
         // Dispatch with total work size (n x m)
         // gpu.dispatch will automatically compute workgroups by dividing by local_size
         gpu.dispatch(command_buffer, local_size, [n as u64, m as u64, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

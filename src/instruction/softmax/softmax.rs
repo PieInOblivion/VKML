@@ -59,7 +59,7 @@ impl Instruction for SoftmaxInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -91,10 +91,6 @@ impl Instruction for SoftmaxInstruction {
         };
 
         let pc_bytes = as_bytes(&push_constants);
-
-        // Begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation based on data type
         let op_datatype = src_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -119,8 +115,6 @@ impl Instruction for SoftmaxInstruction {
 
         // Calculate dispatch size based on batch size (one workgroup per batch)
         gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

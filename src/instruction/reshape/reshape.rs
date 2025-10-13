@@ -44,7 +44,7 @@ impl Instruction for ReshapeInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -58,14 +58,6 @@ impl Instruction for ReshapeInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
-
-            gpu.get_device()
-                .begin_command_buffer(command_buffer, &begin_info)?;
-
             // Copy regions - entire buffer
             let copy_region = vk::BufferCopy {
                 src_offset: 0,
@@ -79,8 +71,6 @@ impl Instruction for ReshapeInstruction {
                 dst_mem.buffer,
                 &[copy_region],
             );
-
-            gpu.get_device().end_command_buffer(command_buffer)?;
         }
 
         Ok(())

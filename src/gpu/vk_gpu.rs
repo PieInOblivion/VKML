@@ -408,17 +408,17 @@ impl Gpu {
                 vk::SpecializationMapEntry {
                     constant_id: 0,
                     offset: 0,
-                    size: std::mem::size_of::<u32>(),
+                    size: 4,
                 },
                 vk::SpecializationMapEntry {
                     constant_id: 1,
-                    offset: std::mem::size_of::<u32>() as u32,
-                    size: std::mem::size_of::<u32>(),
+                    offset: 4,
+                    size: 4,
                 },
                 vk::SpecializationMapEntry {
                     constant_id: 2,
-                    offset: (std::mem::size_of::<u32>() * 2) as u32,
-                    size: std::mem::size_of::<u32>(),
+                    offset: 8,
+                    size: 4,
                 },
             ];
 
@@ -895,35 +895,6 @@ impl Gpu {
         }
         Ok(())
     }
-
-    // TODO: To use these workgroup sizes in shaders:
-    //
-    // 1. Update shaders to use specialization constants instead of hardcoded sizes:
-    //    Change:
-    //      layout(local_size_x = 256) in;
-    //    To:
-    //      layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
-    //
-    // 2. When creating pipelines (in get_or_create_pipeline), pass specialization constants:
-    //      let workgroup_size = gpu.optimal_workgroup_size_1d(total_elements);
-    //      let spec_data = [workgroup_size, 1u32, 1u32];
-    //      let spec_entries = [
-    //          vk::SpecializationMapEntry { constant_id: 0, offset: 0, size: 4 },
-    //          vk::SpecializationMapEntry { constant_id: 1, offset: 4, size: 4 },
-    //          vk::SpecializationMapEntry { constant_id: 2, offset: 8, size: 4 },
-    //      ];
-    //      let spec_info = vk::SpecializationInfo {
-    //          map_entry_count: 3,
-    //          p_map_entries: spec_entries.as_ptr(),
-    //          data_size: 12,
-    //          p_data: spec_data.as_ptr() as *const c_void,
-    //      };
-    //      // Pass spec_info to vk::ComputePipelineCreateInfo.stage.specialization_info
-    //
-    // 3. Update dispatch calculations in create_command_buffer():
-    //      let workgroup_size = gpu.optimal_workgroup_size_1d(total_elements);
-    //      let num_workgroups = total_elements.div_ceil(workgroup_size as u64);
-    //      gpu.get_device().cmd_dispatch(command_buffer, num_workgroups as u32, 1, 1);
 
     pub fn submit_with_timeline_semaphore(
         &self,

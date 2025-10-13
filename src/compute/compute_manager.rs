@@ -701,14 +701,29 @@ impl ComputeManager {
             })?;
 
             let instruction = self.tensor_graph.get_instruction_or_panic(op_id);
+
+            gpu.begin_command_buffer(command_buffer).map_err(|err| {
+                VKMLError::VulkanError(format!(
+                    "Failed to begin command buffer for op {}: {}",
+                    op_id, err
+                ))
+            })?;
+
             instruction
-                .create_command_buffer(gpu, command_buffer, self)
+                .record_into_command_buffer(gpu, command_buffer, self)
                 .map_err(|err| {
                     VKMLError::VulkanError(format!(
-                        "Failed to record command buffer for op {}: {}",
+                        "Failed to record commands for op {}: {}",
                         op_id, err
                     ))
                 })?;
+
+            gpu.end_command_buffer(command_buffer).map_err(|err| {
+                VKMLError::VulkanError(format!(
+                    "Failed to end command buffer for op {}: {}",
+                    op_id, err
+                ))
+            })?;
 
             match self.cached_command_buffers[op_id].set(command_buffer) {
                 Ok(()) => Ok(command_buffer),

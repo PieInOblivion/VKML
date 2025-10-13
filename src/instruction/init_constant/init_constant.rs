@@ -41,7 +41,7 @@ impl Instruction for InitConstantInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -60,7 +60,7 @@ impl Instruction for InitConstantInstruction {
             .size_in_bytes()
             .unwrap_or_else(|| {
                 panic!(
-                    "InitConstant create_command_buffer: unknown element size for DataType {:?}",
+                    "InitConstant record_into_command_buffer: unknown element size for DataType {:?}",
                     dst_tensor.desc.data_type()
                 )
             });
@@ -69,7 +69,7 @@ impl Instruction for InitConstantInstruction {
         // Validate element size (host-side defense). We support up to 8 bytes per element.
         if elem_size_usize == 0 || elem_size_usize > 8 {
             panic!(
-                "InitConstant create_command_buffer: unsupported element size {} (must be 1..=8)",
+                "InitConstant record_into_command_buffer: unsupported element size {} (must be 1..=8)",
                 elem_size_usize
             );
         }
@@ -82,7 +82,7 @@ impl Instruction for InitConstantInstruction {
         }
         if total_bytes_usize > u32::MAX as usize {
             panic!(
-                "InitConstant create_command_buffer: total bytes {} too large (must fit in u32)",
+                "InitConstant record_into_command_buffer: total bytes {} too large (must fit in u32)",
                 total_bytes_usize
             );
         }
@@ -105,9 +105,6 @@ impl Instruction for InitConstantInstruction {
 
         let pc_bytes = as_bytes(&push_constants);
 
-        // begin command buffer and bind GPU resources
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation and workgroup
         let gpu_op = GPUOperation::InitConstant;
         let local_size = gpu.optimal_workgroup_size_1d(total_words as u64);
@@ -123,8 +120,6 @@ impl Instruction for InitConstantInstruction {
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [total_words as u64, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }

@@ -38,7 +38,7 @@ impl Instruction for InitXavierInstruction {
         }
     }
 
-    fn create_command_buffer(
+    fn record_into_command_buffer(
         &self,
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
@@ -62,10 +62,6 @@ impl Instruction for InitXavierInstruction {
         };
 
         let pc_bytes = as_bytes(&push_constants);
-
-        // begin command buffer
-        gpu.begin_command_buffer(command_buffer)?;
-
         // Choose operation based on data type
         let op_datatype = dst_tensor.desc.data_type();
         let gpu_op = match op_datatype {
@@ -91,8 +87,6 @@ impl Instruction for InitXavierInstruction {
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [dst_elems, 1, 1]);
-
-        gpu.end_command_buffer(command_buffer)?;
 
         Ok(())
     }
