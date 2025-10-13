@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{
-    Arc, Condvar, Mutex,
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    Arc, Condvar, Mutex, Weak,
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 use vulkanalia::vk;
@@ -14,23 +14,23 @@ use crate::utils::error::VKMLError;
 
 pub type ChunkId = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DynamicExecutionChunk {
     pub device: DeviceId,
     pub operations: Vec<OperationId>,
-    #[allow(dead_code)]
-    pub internal_dependencies: Vec<(usize, usize)>,
     pub predecessors: Vec<ChunkId>,
     pub dependents: Vec<ChunkId>,
     pub initial_dep_count: usize,
     pub is_output: bool,
+    pub needs_host_wait: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DynamicExecutionPlan {
     pub chunks: Vec<DynamicExecutionChunk>,
     pub operation_to_chunk: Vec<ChunkId>,
     pub output_chunks: Vec<ChunkId>,
+    pub root_chunks: Vec<ChunkId>,
 }
 
 impl DynamicExecutionPlan {
@@ -50,22 +50,35 @@ pub fn create_dynamic_execution_plan(
     }
 
     let op_count = tensor_graph.operations.len();
-    let mut tensor_producers: HashMap<usize, OperationId> = HashMap::new();
+    let tensor_count = tensor_graph.tensor_descs.len();
+    let mut tensor_producers: Vec<Option<OperationId>> = vec![None; tensor_count];
     for (op_idx, op) in tensor_graph.operations.iter().enumerate() {
         for &tid in &op.get_output_tensor_ids() {
-            tensor_producers.insert(tid, op_idx);
+            debug_assert!(tid < tensor_count, "tensor id out of range");
+            tensor_producers[tid] = Some(op_idx);
         }
     }
 
     let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
     let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
 
+    let mut seen_markers = vec![0u32; op_count];
+    let mut current_mark: u32 = 1;
+
     for op_idx in 0..op_count {
         let op = &tensor_graph.operations[op_idx];
-        let mut seen = HashSet::new();
+        current_mark = current_mark.wrapping_add(1);
+        if current_mark == 0 {
+            seen_markers.fill(0);
+            current_mark = 1;
+        }
         for &tensor_id in &op.get_input_tensor_ids() {
-            if let Some(&producer) = tensor_producers.get(&tensor_id) {
-                if producer != op_idx && seen.insert(producer) {
+            if tensor_id >= tensor_count {
+                continue;
+            }
+            if let Some(producer) = tensor_producers[tensor_id] {
+                if producer != op_idx && seen_markers[producer] != current_mark {
+                    seen_markers[producer] = current_mark;
                     predecessors[op_idx].push(producer);
                     successors[producer].push(op_idx);
                 }
@@ -112,6 +125,8 @@ pub fn create_dynamic_execution_plan(
 
     let mut chunks: Vec<DynamicExecutionChunk> = Vec::new();
     let mut operation_to_chunk: Vec<ChunkId> = vec![usize::MAX; op_count];
+    let mut chain_marks: Vec<u32> = vec![0; op_count];
+    let mut chain_mark_value: u32 = 1;
 
     for &op in &topo_order {
         if operation_to_chunk[op] != usize::MAX {
@@ -120,23 +135,31 @@ pub fn create_dynamic_execution_plan(
 
         let device = op_devices[op].clone();
         let mut chain: Vec<OperationId> = Vec::new();
-        let mut chain_set: HashSet<OperationId> = HashSet::new();
         let mut current = op;
 
+        chain_mark_value = chain_mark_value.wrapping_add(1);
+        if chain_mark_value == 0 {
+            chain_marks.fill(0);
+            chain_mark_value = 1;
+        }
+
         loop {
-            chain_set.insert(current);
+            chain_marks[current] = chain_mark_value;
             chain.push(current);
 
             let mut candidate: Option<OperationId> = None;
             for &succ in &successors[current] {
-                if operation_to_chunk[succ] != usize::MAX || chain_set.contains(&succ) {
+                if operation_to_chunk[succ] != usize::MAX {
+                    continue;
+                }
+                if chain_marks[succ] == chain_mark_value {
                     continue;
                 }
                 if op_devices[succ] != device {
                     continue;
                 }
                 if !predecessors[succ].iter().all(|&pred| {
-                    operation_to_chunk[pred] != usize::MAX || chain_set.contains(&pred)
+                    operation_to_chunk[pred] != usize::MAX || chain_marks[pred] == chain_mark_value
                 }) {
                     continue;
                 }
@@ -155,21 +178,6 @@ pub fn create_dynamic_execution_plan(
             }
         }
 
-        let mut index_map: HashMap<OperationId, usize> = HashMap::new();
-        for (idx, &op_id) in chain.iter().enumerate() {
-            index_map.insert(op_id, idx);
-        }
-
-        let mut internal_deps: Vec<(usize, usize)> = Vec::new();
-        for &src in &chain {
-            let src_idx = index_map[&src];
-            for &dst in &successors[src] {
-                if let Some(&dst_idx) = index_map.get(&dst) {
-                    internal_deps.push((src_idx, dst_idx));
-                }
-            }
-        }
-
         let chunk_id = chunks.len();
         for &op_id in &chain {
             operation_to_chunk[op_id] = chunk_id;
@@ -178,58 +186,65 @@ pub fn create_dynamic_execution_plan(
         chunks.push(DynamicExecutionChunk {
             device,
             operations: chain,
-            internal_dependencies: internal_deps,
             predecessors: Vec::new(),
             dependents: Vec::new(),
             initial_dep_count: 0,
             is_output: false,
+            needs_host_wait: false,
         });
     }
 
     let chunk_count = chunks.len();
-    let mut chunk_predecessors: Vec<HashSet<ChunkId>> = vec![HashSet::new(); chunk_count];
+    let mut chunk_predecessors: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
+    let mut root_chunks: Vec<ChunkId> = Vec::new();
 
     for chunk_idx in 0..chunk_count {
         for &op in &chunks[chunk_idx].operations {
             for &pred_op in &predecessors[op] {
                 let pred_chunk = operation_to_chunk[pred_op];
                 if pred_chunk != chunk_idx {
-                    chunk_predecessors[chunk_idx].insert(pred_chunk);
+                    chunk_predecessors[chunk_idx].push(pred_chunk);
                 }
             }
         }
     }
 
-    let mut chunk_dependents: Vec<HashSet<ChunkId>> = vec![HashSet::new(); chunk_count];
+    for chunk_idx in 0..chunk_count {
+        let preds = &mut chunk_predecessors[chunk_idx];
+        preds.sort_unstable();
+        preds.dedup();
+    }
+
+    let mut chunk_dependents: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
     for (chunk_idx, preds) in chunk_predecessors.iter().enumerate() {
         for &pred in preds {
-            chunk_dependents[pred].insert(chunk_idx);
+            chunk_dependents[pred].push(chunk_idx);
         }
     }
 
-    for chunk_idx in 0..chunk_count {
-        let preds: Vec<ChunkId> = {
-            let mut vec: Vec<ChunkId> = chunk_predecessors[chunk_idx].iter().copied().collect();
-            vec.sort_unstable();
-            vec
-        };
-        let dependents: Vec<ChunkId> = {
-            let mut vec: Vec<ChunkId> = chunk_dependents[chunk_idx].iter().copied().collect();
-            vec.sort_unstable();
-            vec
-        };
+    for dependents in &mut chunk_dependents {
+        dependents.sort_unstable();
+        dependents.dedup();
+    }
 
+    for chunk_idx in 0..chunk_count {
+        let preds = std::mem::take(&mut chunk_predecessors[chunk_idx]);
+        let dependents = std::mem::take(&mut chunk_dependents[chunk_idx]);
         chunks[chunk_idx].initial_dep_count = preds.len();
         chunks[chunk_idx].predecessors = preds;
         chunks[chunk_idx].dependents = dependents;
+        if chunks[chunk_idx].initial_dep_count == 0 {
+            root_chunks.push(chunk_idx);
+        }
     }
 
-    let output_tensor_ids: HashSet<usize> = tensor_graph
-        .get_output_tensor_ids()
-        .iter()
-        .copied()
-        .collect();
-    let mut output_chunks: HashSet<ChunkId> = HashSet::new();
+    let mut output_tensor_flags = vec![false; tensor_count];
+    for &tid in tensor_graph.get_output_tensor_ids() {
+        if tid < tensor_count {
+            output_tensor_flags[tid] = true;
+        }
+    }
+    let mut output_chunks: Vec<ChunkId> = Vec::new();
 
     for (chunk_idx, chunk) in chunks.iter_mut().enumerate() {
         let mut is_output = false;
@@ -238,7 +253,7 @@ pub fn create_dynamic_execution_plan(
             if op
                 .get_output_tensor_ids()
                 .iter()
-                .any(|tid| output_tensor_ids.contains(tid))
+                .any(|&tid| tid < output_tensor_flags.len() && output_tensor_flags[tid])
             {
                 is_output = true;
                 break;
@@ -246,27 +261,48 @@ pub fn create_dynamic_execution_plan(
         }
         chunk.is_output = is_output;
         if is_output {
-            output_chunks.insert(chunk_idx);
+            output_chunks.push(chunk_idx);
         }
     }
 
     if output_chunks.is_empty() {
         for idx in 0..chunk_count {
             chunks[idx].is_output = true;
-            output_chunks.insert(idx);
+            output_chunks.push(idx);
         }
     }
 
-    if !chunks.iter().any(|chunk| chunk.initial_dep_count == 0) {
+    if root_chunks.is_empty() {
         return Err(VKMLError::Generic(
             "Dynamic execution plan contains no root chunks".into(),
         ));
     }
 
+    for chunk_idx in 0..chunk_count {
+        let needs_wait = match chunks[chunk_idx].device {
+            DeviceId::Gpu(gpu_idx) => {
+                if chunks[chunk_idx].is_output {
+                    true
+                } else {
+                    chunks[chunk_idx]
+                        .dependents
+                        .iter()
+                        .any(|&dep| match chunks[dep].device {
+                            DeviceId::Gpu(dep_gpu) => dep_gpu != gpu_idx,
+                            DeviceId::Cpu => true,
+                        })
+                }
+            }
+            DeviceId::Cpu => false,
+        };
+        chunks[chunk_idx].needs_host_wait = needs_wait;
+    }
+
     Ok(DynamicExecutionPlan {
         chunks,
         operation_to_chunk,
-        output_chunks: output_chunks.into_iter().collect(),
+        output_chunks,
+        root_chunks,
     })
 }
 
@@ -280,13 +316,10 @@ struct ExecutionState {
     device_semaphore_offsets: Vec<u64>,
     device_chunk_counters: Vec<AtomicU64>,
     chunk_dependencies_remaining: Vec<AtomicUsize>,
-    chunk_signal_values: Vec<AtomicU64>,
     chunk_command_buffers: Vec<Vec<vk::CommandBuffer>>,
     outputs_remaining: AtomicUsize,
     completion_signal: Arc<(Mutex<CompletionFlag>, Condvar)>,
     chunk_task_params: Vec<ChunkTaskParams>,
-    has_error: AtomicBool,
-    error: Mutex<Option<VKMLError>>,
 }
 
 impl ExecutionState {
@@ -321,10 +354,6 @@ impl ExecutionState {
             .map(|chunk| AtomicUsize::new(chunk.initial_dep_count))
             .collect();
 
-        let chunk_signal_values: Vec<AtomicU64> = (0..plan.total_chunks())
-            .map(|_| AtomicU64::new(0))
-            .collect();
-
         let mut chunk_command_buffers: Vec<Vec<vk::CommandBuffer>> =
             Vec::with_capacity(plan.total_chunks());
         for chunk in &plan.chunks {
@@ -352,13 +381,10 @@ impl ExecutionState {
         let manager_ptr = manager as *const ComputeManager;
 
         let state = Arc::new_cyclic(move |weak_self| {
-            let state_ptr: *const ExecutionState = weak_self.as_ptr();
-            debug_assert!(!state_ptr.is_null());
-
             let chunk_task_params: Vec<ChunkTaskParams> = (0..plan_for_state.total_chunks())
                 .map(|chunk_id| ChunkTaskParams {
                     chunk_id,
-                    state_ptr,
+                    state: weak_self.clone(),
                 })
                 .collect();
 
@@ -368,13 +394,10 @@ impl ExecutionState {
                 device_semaphore_offsets,
                 device_chunk_counters,
                 chunk_dependencies_remaining,
-                chunk_signal_values,
                 chunk_command_buffers,
                 outputs_remaining: AtomicUsize::new(outputs_remaining_init),
                 completion_signal,
                 chunk_task_params,
-                has_error: AtomicBool::new(false),
-                error: Mutex::new(None),
             }
         });
 
@@ -382,39 +405,32 @@ impl ExecutionState {
     }
 
     fn submit_initial_chunks(&self) {
-        for (chunk_idx, chunk) in self.plan.chunks.iter().enumerate() {
-            if chunk.initial_dep_count == 0 {
-                self.submit_chunk(chunk_idx);
-            }
+        for &chunk_idx in &self.plan.root_chunks {
+            self.submit_chunk(chunk_idx);
         }
     }
 
     fn submit_chunk(&self, chunk_id: ChunkId) {
-        if self.is_cancelled() {
-            return;
-        }
-
         let params = &self.chunk_task_params[chunk_id];
         let future = global_pool().submit_task(chunk_execute_task, params);
         drop(future);
     }
 
-    fn is_cancelled(&self) -> bool {
-        self.has_error.load(Ordering::Acquire)
-    }
-
     fn execute_chunk(&self, chunk_id: ChunkId) -> Result<(), VKMLError> {
-        if self.is_cancelled() {
-            return Ok(());
-        }
-
         let compute_manager = unsafe { &*self.compute_manager };
         let chunk = &self.plan.chunks[chunk_id];
 
         match &chunk.device {
-            DeviceId::Gpu(gpu_idx) => self.execute_gpu_chunk(chunk_id, *gpu_idx, compute_manager),
-            DeviceId::Cpu => self.execute_cpu_chunk(chunk_id, compute_manager),
+            DeviceId::Gpu(gpu_idx) => {
+                self.execute_gpu_chunk(chunk_id, *gpu_idx, compute_manager)?;
+            }
+            DeviceId::Cpu => {
+                self.execute_cpu_chunk(chunk_id, compute_manager)?;
+                self.finalize_chunk(chunk_id);
+            }
         }
+
+        Ok(())
     }
 
     fn execute_gpu_chunk(
@@ -427,13 +443,19 @@ impl ExecutionState {
 
         let local_index = self.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed);
         let signal_value = self.device_semaphore_offsets[gpu_idx] + local_index;
-        self.chunk_signal_values[chunk_id].store(signal_value, Ordering::Relaxed);
 
         let command_buffers = &self.chunk_command_buffers[chunk_id];
+        let wait_slice: &[(vk::Semaphore, u64)] = &[];
+        gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
 
-        gpu.submit_with_timeline_semaphore(command_buffers, &[], signal_value)?;
-        gpu.wait_for_timeline_value(signal_value)?;
+        if self.plan.chunks[chunk_id].needs_host_wait {
+            // Block this worker until the GPU signals completion so dependents see consistent state.
+            if let Err(err) = gpu.wait_for_timeline_value(signal_value) {
+                return Err(err);
+            }
+        }
 
+        self.finalize_chunk(chunk_id);
         Ok(())
     }
 
@@ -448,20 +470,6 @@ impl ExecutionState {
             instruction.execute_cpu(compute_manager);
         }
         Ok(())
-    }
-
-    fn notify_dependents(&self, chunk_id: ChunkId) {
-        if self.is_cancelled() {
-            return;
-        }
-
-        for &dependent in &self.plan.chunks[chunk_id].dependents {
-            let previous =
-                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::AcqRel);
-            if previous == 1 {
-                self.submit_chunk(dependent);
-            }
-        }
     }
 
     fn mark_output_complete(&self) {
@@ -479,20 +487,6 @@ impl ExecutionState {
         }
     }
 
-    fn record_error(&self, error: VKMLError) {
-        let already_cancelled = self.has_error.swap(true, Ordering::AcqRel);
-        if already_cancelled {
-            return;
-        }
-
-        {
-            let mut guard = self.error.lock().unwrap();
-            *guard = Some(error);
-        }
-
-        self.signal_completion();
-    }
-
     fn await_completion(&self) {
         let (lock, cvar) = &*self.completion_signal;
         let mut guard = lock.lock().unwrap();
@@ -501,35 +495,37 @@ impl ExecutionState {
         }
     }
 
-    fn take_error(&self) -> Option<VKMLError> {
-        let mut guard = self.error.lock().unwrap();
-        guard.take()
+    fn finalize_chunk(&self, chunk_id: ChunkId) {
+        let chunk = &self.plan.chunks[chunk_id];
+
+        if chunk.is_output {
+            self.mark_output_complete();
+        }
+
+        for &dependent in &chunk.dependents {
+            let previous =
+                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::AcqRel);
+            if previous == 1 {
+                self.submit_chunk(dependent);
+            }
+        }
     }
 }
 
 struct ChunkTaskParams {
     chunk_id: ChunkId,
-    state_ptr: *const ExecutionState,
+    state: Weak<ExecutionState>,
 }
 
 zp_define_task_fn!(chunk_execute_task, ChunkTaskParams, |params| {
-    let state = unsafe { &*params.state_ptr };
+    let Some(state) = params.state.upgrade() else {
+        return;
+    };
     let chunk_id = params.chunk_id;
 
-    let result = state.execute_chunk(chunk_id);
-
-    match result {
-        Ok(()) => {
-            if !state.is_cancelled() {
-                if state.plan.chunks[chunk_id].is_output {
-                    state.mark_output_complete();
-                }
-                state.notify_dependents(chunk_id);
-            }
-        }
-        Err(err) => {
-            state.record_error(err);
-        }
+    if let Err(err) = state.execute_chunk(chunk_id) {
+        state.signal_completion();
+        panic!("execute_chunk failed: {err}");
     }
 });
 
@@ -542,15 +538,11 @@ pub fn execute_dynamic_plan(
     if state.plan.output_chunks.is_empty() {
         state.signal_completion();
         state.await_completion();
-        return state.take_error().map_or(Ok(()), Err);
+        return Ok(());
     }
 
     state.submit_initial_chunks();
     state.await_completion();
-
-    if let Some(error) = state.take_error() {
-        return Err(error);
-    }
 
     Ok(())
 }
