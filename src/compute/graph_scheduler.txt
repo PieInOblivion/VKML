@@ -1,0 +1,372 @@
+/*
+ * Dynamic Graph Scheduler
+ *
+ * GOALS:
+ * - Replace the static execution planning with dynamic dependency-based scheduling
+ * - Enable automatic parallelization of independent subgraphs across multiple devices
+ * - Maintain optimal GPU utilization through greedy operation chunking
+ * - Support heterogeneous execution across CPU and multiple GPUs
+ *
+ *
+ * DESIGN OVERVIEW:
+ *
+ * The scheduler builds an execution plan during the first execution and caches it.
+ * The plan consists of chunks, where each chunk is a sequence of operations that:
+ * - Execute on the same device (GPU or CPU)
+ * - Form a linear dependency chain when possible (greedy batching for GPU efficiency)
+ * - Track dependencies on other chunks via atomic counters
+ *
+ *
+ * EXECUTION MODEL:
+ *
+ * 1. Planning Phase (cached):
+ *    - Build dependency graph of operations
+ *    - Group operations into chunks using greedy chain-building
+ *    - Compute chunk-level dependencies (which chunks depend on which)
+ *    - Identify chunks with zero dependencies (starting chunks)
+ *    - Identify chunks that produce output tensors (terminal chunks)
+ *
+ * 2. Execution Phase (dynamic):
+ *    - Reset atomic dependency counters for each chunk (dependencies_remaining = initial_dep_count)
+ *    - Allocate per-device semaphore value BASE via allocate_semaphore_values (one call per GPU)
+ *    - Store base offsets in ExecutionState (device_semaphore_offsets: Vec<u64>)
+ *    - Submit all chunks with initial_dep_count == 0 to threadpool as batch
+ *    - Each chunk execution:
+ *      a. Atomically allocates its signal value: base_offset + atomic_fetch_add(counter, 1)
+ *      b. No GPU wait semaphores are built (empty wait list, host-completion provides ordering)
+ *      c. Submits work to device (GPU command buffers or CPU operations)
+ *      d. Waits for work to complete (thread blocks until GPU/CPU done)
+ *      e. Decrements dependency counters of dependent chunks atomically
+ *      f. If dependent reaches 0, submits it to threadpool via global_pool().submit()
+ *      g. If this is output chunk (is_output flag), decrements outputs_remaining
+ *      h. If outputs_remaining reaches 0, signals condvar to wake main thread
+ *
+ *
+ * KEY DATA STRUCTURES:
+ *
+ * DynamicExecutionChunk:
+ * - Contains list of operation IDs to execute in order
+ * - Stores device assignment (GPU index or CPU)
+ * - Stores internal dependencies between operations (for validation/debug)
+ * - Tracks predecessor chunk indices (for building GPU wait semaphores)
+ * - Tracks dependent chunk indices (for notifying when complete)
+ * - Stores immutable initial_dep_count (never changes after plan creation)
+ * - Flag indicating if this chunk produces output tensors (for completion tracking)
+ * - DOES NOT store pointers, atomics, or mutable state - purely structural data
+ *
+ * DynamicExecutionPlan:
+ * - Vec of all chunks in the graph
+ * - List of output chunk IDs (for completion tracking)
+ * - Immutable after creation, cached across executions
+ *
+ * ExecutionState:
+ * - Reference to immutable cached DynamicExecutionPlan (Arc)
+ * - Reference to ComputeManager (raw pointer, CRITICAL INVARIANT: must outlive execution)
+ *   Enforced by: execute() takes &mut self, holds borrow until condvar wait completes
+ *   ComputeManager cannot be moved/dropped while execute() is running
+ *   Raw pointer safe because ExecutionState lifetime bound by execute() scope
+ * - Per-device semaphore BASE OFFSETS (obtained once per execution via allocate_semaphore_values)
+ * - Per-device atomic counters for chunk-local indexing (0, 1, 2... within this execution)
+ * - Per-chunk atomic dependency counters (Vec<AtomicUsize>, indexed by chunk_id)
+ * - Per-chunk atomic signal values (Vec<AtomicU64>, indexed by chunk_id)
+ * - Atomic counter for remaining output chunks (decremented by output chunks only)
+ * - Completion signal (Arc<(Mutex, Condvar)>) for main thread to wait on (single 'completed' flag)
+ * - Heap-allocated via Arc per execute() call (not stack-allocated)
+ * - Dropped when last chunk completes and main thread releases its Arc reference
+ *
+ *
+ * SYNCHRONIZATION STRATEGY:
+ *
+ * CPU-side (dispatch) - exact atomic orderings:
+ * - Initialization: dependencies_remaining.store(initial_dep_count, Ordering::Relaxed)
+ * - Predecessor completion: remaining = dependencies_remaining.fetch_sub(1, Ordering::AcqRel)
+ * - Zero check: if remaining == 1 (was 1, now 0) then submit dependent
+ * - Output completion: remaining = outputs_remaining.fetch_sub(1, Ordering::AcqRel)
+ * - Final signal: if remaining == 1, lock mutex, set completed=true, notify condvar
+ *
+ * GPU-side (execution):
+ * - Timeline semaphores used for ordering within a single GPU only
+ * - Timeline values are STRICTLY MONOTONICALLY INCREASING (never reset or rewind)
+ * - Each GPU chunk allocates its signal value atomically from per-device counter
+ * - GPU chunks submit with NO wait semaphores (empty wait list)
+ * - Ordering guaranteed by host-completion before dependent submission
+ *
+ * Cross-device dependencies:
+ * - Each GPU has its own separate VkDevice (no device groups)
+ * - Timeline semaphores CANNOT be shared across VkDevices
+ * - ALL dependencies (same-device and cross-device) rely on host-completion:
+ *   Dependent chunks are submitted ONLY AFTER predecessor host-completes
+ * - GPU -> GPU (different devices): No GPU-side wait, host-completion ensures correctness
+ * - GPU -> GPU (same device): No GPU-side wait, host-completion ensures correctness
+ * - GPU -> CPU: CPU chunk submitted after GPU chunk host-completes (already waited)
+ * - CPU -> GPU: GPU chunk submitted after CPU chunk completes
+ * - CPU -> CPU: Dependent submitted after predecessor completes
+ * - Host-completion = thread called gpu.wait_for_timeline_value() and returned
+ *
+ *
+ * THREAD POOL INTERACTION:
+ *
+ * - Uses zero-pool global threadpool for all chunk execution
+ * - Initial chunks submitted as batch via submit_batch_uniform
+ * - Dependent chunks submitted individually as they become ready
+ * - Each thread blocks waiting for its chunk's GPU/CPU work to complete
+ * - Max concurrent GPU chunks limited by thread pool size (acceptable trade-off)
+ * - This simplifies completion detection: when task returns, chunk is done
+ * - Potential thread starvation if all threads wait on GPU is acceptable (intentional design)
+ * - Main thread waits only for output chunks via condvar, not for all GPU work
+ *
+ * Main thread wait pattern (handles spurious wakeups):
+ *   let (lock, cvar) = &*completion_signal;
+ *   let mut guard = lock.lock().unwrap();
+ *   while !guard.completed {  // Single predicate under mutex
+ *       guard = cvar.wait(guard).unwrap();
+ *   }
+ *
+ * Last output chunk to complete:
+ *   1. Decrements outputs_remaining with fetch_sub(1, AcqRel)
+ *   2. If was 1 (now 0): locks mutex, sets completed = true, calls cvar.notify_one()
+ *   3. Lock-before-notify prevents lost wakeups
+ *   4. Currently single waiter (main thread), notify_one is sufficient
+ *   5. Future: if multiple waiters added, switch to notify_all()
+ *
+ * Pool thread saturation:
+ * - Concurrency is limited by pool size; larger pools improve overlap when CPU chunks are long.
+ * - Default (num_cpus) is generally fine; tune if needed. Future: switch to fence/event waits if necessary.
+ *
+ *
+ * AVOIDING DOUBLE SUBMISSION:
+ *
+ * The key insight: scan for initial chunks using immutable initial_dep_count field,
+ * not the atomic dependencies_remaining. This prevents race between:
+ * - Initial scan finding chunks with 0 dependencies
+ * - Completing chunks decrementing dependents to 0
+ *
+ * Only chunks with initial_dep_count > 0 can be decremented to 0 during execution.
+ * Chunks with initial_dep_count == 0 are only submitted once during initialization.
+ *
+ *
+ * CPU OPERATION EXECUTION:
+ *
+ * CPU chunks execute their operations sequentially in the current thread.
+ * This avoids the complexity of keeping parameter vectors alive for zero-pool.
+ * Since CPU is primarily used for validation currently, this is acceptable.
+ * Future: Could pre-allocate parameter storage in ExecutionState for parallel execution.
+ *
+ *
+ * MEMORY SAFETY AND TASK PARAMETERS:
+ *
+ * NO self-referential pointers in cached plan:
+ * - DynamicExecutionPlan is purely structural (indices, device IDs, dependency edges)
+ * - Does NOT contain pointers to ComputeManager or ExecutionState
+ * - Can be safely cached and reused even if ComputeManager is moved
+ * - Immutable after creation, safe to share across executions
+ *
+ * Per-run state passing with zero-pool (Arc-based for fire-and-forget submission):
+ * - ExecutionState is Arc-allocated per execute() call
+ * - Task signature: (chunk_id: ChunkId, state: Arc<ExecutionState>)
+ * - Initial chunks (initial_dep_count == 0) submitted via global_pool().submit()
+ * - submit() returns a future, which we immediately drop (work continues executing)
+ * - Dependent chunks submitted dynamically via global_pool().submit(task, (chunk_id, state.clone()))
+ * - Futures are dropped - we don't track them individually
+ * - Tasks access chunk via state.plan.chunks[chunk_id] (no borrows of chunks needed)
+ * - Each chunk execution blocks on its own GPU/CPU work completion
+ * - After completion, chunk decrements dependents and submits ready ones
+ * - Main thread blocks on condvar until outputs_remaining reaches 0
+ * - Arc<ExecutionState> keeps state alive until last reference drops
+ * - zero-pool is lock-free, safe to submit from any thread
+ *
+ * Graph structure invariant:
+ * - All chunks are reachable from entry points and lie on paths to output tensors
+ * - TensorGraph construction already prunes unreachable operations (see tensor_graph.rs:179-207)
+ * - Assert at execution start: at least one chunk has initial_dep_count == 0
+ * - If no initial chunks exist, graph is dead - fail early rather than deadlock
+ *
+ * Task panic handling:
+ * - Panics are considered unrecoverable bug conditions.
+ * - Recommended: set panic=abort in Cargo profiles so any worker panic terminates the process.
+ * - No explicit fatal-error tracking or condvar signaling on panic.
+ *
+ * Tensor write safety:
+ * - Maintains existing invariant: single writer per tensor at any time
+ * - Chunk dependencies prevent read/write races (same as current scheduler)
+ * - No operation is duplicated across chunks (verified during plan construction)
+ *
+ * Thread-safety of ComputeManager and Gpu APIs:
+ * - All required methods take &self (not &mut self):
+ *   - gpu.submit_with_timeline_semaphore(&self, ...)
+ *   - gpu.wait_for_timeline_value(&self, value)
+ *   - gpu.allocate_semaphore_values(&self, count)
+ *   - gpu.get_or_create_timeline_semaphore(&self)
+ *   - compute_manager.tensor_read(&self, id)
+ *   - compute_manager.tensor_write(&self, id) [uses UnsafeCell, scheduler invariant holds]
+ * - Internal synchronization via atomics/mutexes where needed (e.g., pipeline cache, semaphore counter)
+ * - No additional SchedulerCtx needed - existing APIs are thread-safe
+ * - ExecutionState Send + Sync: raw pointer to ComputeManager doesn't block Send/Sync
+ *   All members accessed through pointer are thread-safe as documented above
+ *
+ *
+ * RE-EXECUTION HANDLING:
+ *
+ * When execute() is called multiple times on the same model:
+ * - The cached DynamicExecutionPlan is reused (immutable, no state to reset)
+ * - New ExecutionState is Arc-allocated on each execute() call
+ * - Dependency counters initialized from chunk.initial_dep_count (stored in plan)
+ * - Semaphore values allocated fresh via allocate_semaphore_values (strictly increasing)
+ * - Signal value atomics in ExecutionState initialized to 0 (will be set during execution)
+ * - Command buffers remain cached in ComputeManager (already recorded, reused)
+ * - No cleanup or reset needed in cached plan - it's stateless
+ *
+ * Cache invalidation:
+ * - Plan MUST be invalidated if: graph structure changes, device set changes, tensor allocation changes
+ * - Plan MUST be invalidated if: requested output tensors change (different pruning)
+ * - Currently: plan rebuilt from scratch if graph changes (new model creation required)
+ * - Output tensor changes require new TensorGraph (different exit points -> different pruning)
+ * - Future: if dynamic graph modifications added, invalidate cached_dynamic_execution_plan
+ * - Device set changes (add/remove GPU) requires new ComputeManager instance
+ *
+ * Concurrent execution:
+ * - execute() is NOT thread-safe on same ComputeManager instance
+ * - execute() takes &mut self to prevent concurrent calls (Rust borrow checker enforces)
+ * - Concurrent calls would race on tensor data, command buffer cache, execution state
+ * - User must serialize execute() calls or use separate ComputeManager instances
+ * - Command buffers do not need SIMULTANEOUS_USE (only one execution at a time)
+ * - Debug validation: AtomicBool executing flag to assert no re-entry (debug builds only)
+ *
+ *
+ * SEMAPHORE ALLOCATION FLOW:
+ *
+ * At execution start (once per execute() call, BEFORE any chunk submissions):
+ *   1. For each GPU, count GPU chunks only on that device: N_chunks
+ *   2. Call gpu.allocate_semaphore_values(N_chunks) -> returns base_offset
+ *      - Must be called BEFORE any submits for this run
+ *      - NOT thread-safe with concurrent execute() on same ComputeManager
+ *      - Returns base >= current timeline value (Vulkan guarantees forward progress)
+ *   3. Store base_offset in ExecutionState.device_semaphore_offsets[gpu_idx]
+ *   4. Initialize ExecutionState.device_chunk_counters[gpu_idx] = AtomicU64::new(0)
+ *   5. Only AFTER all allocations complete: submit initial chunks
+ *
+ * During GPU chunk execution:
+ *   1. local_index = state.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed)
+ *   2. signal_value = state.device_semaphore_offsets[gpu_idx] + local_index
+ *   3. state.chunk_signal_values[chunk_id].store(signal_value, Ordering::Relaxed)
+ *      (stored for debug/telemetry only, not needed for correctness since no cross-chunk GPU waits)
+ *   4. Build wait_sems: EMPTY (no GPU-side waits, host-completion provides ordering)
+ *   5. Submit: gpu.submit_with_timeline_semaphore(&cmd_bufs, &[] /* empty */, signal_value)
+ *      - Uses chunk's device/timeline (never cross-device)
+ *   6. Wait: gpu.wait_for_timeline_value(signal_value) [blocks thread until GPU done]
+ *      - Waits on SAME device/timeline that was signaled in submit
+ *      - NEVER waits on different device's timeline
+ *   7. After wait returns, GPU work complete and memory visible to host
+ *
+ * During CPU chunk execution:
+ *   1. No semaphore allocation needed
+ *   2. If depends on GPU predecessors: already host-completed (waited) before CPU chunk submitted
+ *   3. Execute operations sequentially via instruction.execute_cpu()
+ *   4. GPU->CPU data visibility:
+ *      - Host wait (gpu.wait_for_timeline_value) ensures GPU writes visible to host
+ *      - For HOST_VISIBLE non-coherent memory: GPU ops must include vkInvalidateMappedMemoryRanges
+ *      - Transfer operations and tensor implementations handle proper barriers/invalidation
+ *   5. Purely CPU subgraphs (no GPU predecessors) run sequentially within chunk
+ *
+ * Per-run initialization and reset:
+ * - Reset per-GPU indices to 0; allocate per-GPU base timeline offsets for GPU chunks only.
+ * - Zero all per-chunk signal_values (telemetry) and init dependencies_remaining from the plan.
+ * - base_offset >= current timeline (Vulkan) and u64 wrap is theoretical.
+ * - Debug: assert signal_values are zero before first submit.
+ *
+ * Timeline values are globally monotonic across all executions (never reset).
+ * Each GPU chunk submits exactly once (assumption for semaphore accounting).
+ * Correctness relies on: dependent submitted ONLY AFTER all predecessors host-complete.
+ *
+ *
+ * TRANSFER OPERATIONS AND CROSS-DEVICE DATA MOVEMENT:
+ *
+ * Cross-device tensor movement (GPU0->GPU1, GPU->CPU, CPU->GPU):
+ * - Handled by EXPLICIT transfer operations inserted during allocate_tensor_graph (compute_manager.rs:341-347)
+ * - When an operation needs a tensor from a different device, a transfer op is inserted
+ * - No implicit tensor migration in tensor_read/write - all copies are explicit in the graph
+ *
+ * Cross-GPU transfer structure (GPU0->GPU1):
+ * - A single transfer cannot span two VkDevices in one submit
+ * - Modeled as TWO operations in the graph with a host-synchronization point:
+ *   1. GPU0->Host: Read from GPU0, copy to host staging buffer
+ *      - Chunk runs on GPU0 device, records/submits command buffer on GPU0
+ *      - Command buffer includes barrier ensuring GPU0 writes complete
+ *      - For non-coherent memory: includes vkFlushMappedMemoryRanges
+ *   2. Host->GPU1: Copy from host staging to GPU1
+ *      - Chunk runs on GPU1 device, records/submits command buffer on GPU1
+ *      - Depends on op 1 (dependency graph edge)
+ *      - For non-coherent memory: includes vkInvalidateMappedMemoryRanges before read
+ *      - Command buffer includes barrier ensuring copy completes before GPU1 uses data
+ * - Dependency graph ensures op 2 only runs after op 1 host-completes
+ * - Host-completion of op 1 ensures GPU0 write to staging is visible before op 2 reads
+ * - Each operation is a separate chunk with its own device assignment
+ * - Staging buffers allocated and managed by tensor/transfer implementations
+ *
+ * Without device groups or external memory:
+ * - Cannot share GPU memory across VkDevices
+ * - All cross-GPU data movement requires host staging (already implemented via transfers)
+ * - Transfer ops ensure proper barriers, invalidation, and visibility
+ *
+ *
+ * IMPLEMENTATION PHASES:
+ *
+ * Phase 1: Define data structures (DynamicExecutionChunk, DynamicExecutionPlan, ExecutionState)
+ * Phase 2: Implement planning phase (create_dynamic_execution_plan on TensorGraph)
+ * Phase 3: Implement chunk execution functions (GPU and CPU variants)
+ * Phase 4: Implement main execution coordinator (ComputeManager::execute_dynamic)
+ * Phase 5: Wire up and test with simple models
+ * Phase 6: Replace old execution path with new dynamic scheduler
+ *
+ *
+ * COMMAND BUFFER REUSE:
+ *
+ * - Command buffers cached per operation in ComputeManager.cached_command_buffers
+ * - Recorded once on first execution, reused on subsequent executions
+ * - Must verify VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT if same buffer used concurrently
+ * - Current implementation: each operation has unique command buffer, safe for concurrent use
+ * - Recording happens via instruction.create_command_buffer() in execute_gpu_chunk
+ *
+ *
+ * OPTIMIZATIONS:
+ *
+ * - Output chunk detection uses bool flag instead of Vec.contains() lookup
+ * - No GPU wait semaphores built (host-completion provides all ordering)
+ * - Command buffers cached per operation (not rebuilt on each execution)
+ * - CPU operations execute sequentially (no task overhead, simpler parameter lifetime)
+ * - Multiple ready chunks on same GPU may submit concurrently (queue serialization in Gpu internals)
+ *
+ *
+ * DEBUG AND VALIDATION:
+ * - Re-entry check: debug_assert! on a per-instance executing flag.
+ * - Roots exist: assert at least one initial_dep_count == 0.
+ * - Optional: for GPU preds, query pred's device timeline >= pred.signal_value.
+ * - Assert wait_for_timeline_value uses the same device as the submit.
+ * - Transfers: staging is HOST_VISIBLE; barriers + flush/invalidate are present on both legs.
+ * - Optional tracing: timestamps around submit/wait to validate overlap; basic thread/pool counters.
+ *
+ *
+ * TEST MATRIX (essentials):
+ * 1) Single-GPU linear chain
+ * 2) Multi-GPU disjoint branches
+ * 3) GPU0 → CPU → GPU1 bounce
+ * 4) Diamond (fan-in)
+ * 5) Large fan-out
+ * 6) Long chains on one GPU (timeline allocation)
+ * 7) Spurious wakeup simulation
+ * 8) Forced panic (crash-only behavior)
+ * 9) Re-execution (plan reuse, resets)
+ * 10) CPU-only model
+ *
+ *
+ * FUTURE ENHANCEMENTS:
+ *
+ * - Conditional execution (if/else branches) will require runtime plan modification
+ * - Dynamic batching could adjust chunk boundaries based on runtime profiling
+ * - Memory-aware scheduling could prioritize chunks that free memory
+ * - Multi-stream GPU execution could submit independent chunks to different streams
+ *   Note: Timeline semaphores remain valid across queues within same VkDevice
+ *   Host-completion will still serialize dependents (safe for multi-queue)
+ *   Multiple threads may submit to different queues concurrently (safe)
+ * - Lightweight fence/event-based waiting to reduce pool thread blocking
+ */

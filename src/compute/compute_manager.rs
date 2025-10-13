@@ -1,8 +1,14 @@
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use crate::compute::{print_model_stats, print_tensorgraph_stats};
-use crate::gpu::pool::GpuPool;
+use crate::compute::{
+    graph_scheduler::{
+        DynamicExecutionPlan, create_dynamic_execution_plan, execute_dynamic_plan,
+        plan_requires_rebuild,
+    },
+    print_model_stats, print_tensorgraph_stats,
+};
+use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
 use crate::tensor::cell::TensorCell;
@@ -12,7 +18,7 @@ use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::instruction::instruction::Instruction;
-use crate::tensor_graph::tensor_graph::{ExecutionChunk, ExecutionPlan, OperationId, TensorGraph};
+use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
@@ -32,8 +38,7 @@ pub struct ComputeManager {
 
     // Cached command buffers per operation, indexed by operation ID
     cached_command_buffers: Vec<OnceLock<CommandBuffer>>,
-    // Cached execution plan
-    cached_execution_plan: Option<ExecutionPlan>,
+    cached_dynamic_plan: Option<Arc<DynamicExecutionPlan>>,
 }
 
 impl ComputeManager {
@@ -61,7 +66,7 @@ impl ComputeManager {
             gpus: GpuPool::new(explicit_gpus)?,
             cpu,
             cached_command_buffers: Vec::new(),
-            cached_execution_plan: None,
+            cached_dynamic_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -135,7 +140,7 @@ impl ComputeManager {
             model,
             tensor_graph,
             cached_command_buffers: Vec::new(),
-            cached_execution_plan: None,
+            cached_dynamic_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -621,197 +626,97 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        // Get or create cached execution plan
-        if self.cached_execution_plan.is_none() {
-            let plan = self.tensor_graph.create_execution_plan(&self.tensors);
-
-            // Initialize command buffer cache with one entry per operation
-            let op_count = self.tensor_graph.operations.len();
+        let op_count = self.tensor_graph.operations.len();
+        if self.cached_command_buffers.len() != op_count {
             self.cached_command_buffers = (0..op_count).map(|_| OnceLock::new()).collect();
-
-            self.cached_execution_plan = Some(plan);
         }
 
-        let plan = self.cached_execution_plan.as_ref().unwrap();
+        let rebuild_plan = match &self.cached_dynamic_plan {
+            Some(plan) => plan_requires_rebuild(plan, &self.tensor_graph),
+            None => true,
+        };
 
-        // Allocate semaphore value offsets for each GPU (indexed by gpu_idx)
-        let device_offsets: Vec<u64> = self
-            .gpus
-            .gpus()
-            .iter()
-            .enumerate()
-            .map(|(gpu_idx, gpu)| {
-                let device = DeviceId::Gpu(gpu_idx);
-                let count = plan.chunks.iter().filter(|c| c.device == device).count() as u64;
-                if count > 0 {
-                    gpu.allocate_semaphore_values(count)
-                } else {
-                    0
-                }
-            })
-            .collect();
+        if rebuild_plan {
+            let plan = create_dynamic_execution_plan(self)?;
+            let arc_plan = Arc::new(plan);
+            self.cached_dynamic_plan = Some(arc_plan);
 
-        // Execute chunks as thread pool tasks
-        let chunk_params: Vec<_> = plan
-            .chunks
-            .iter()
-            .map(|chunk| ChunkExecutionParams {
-                chunk,
-                compute_manager: self,
-                device_offsets: &device_offsets,
-            })
-            .collect();
+            if self.cached_command_buffers.len() != op_count {
+                self.cached_command_buffers = (0..op_count).map(|_| OnceLock::new()).collect();
+            }
+        }
 
-        global_pool()
-            .submit_batch_uniform(chunk_execution_task, &chunk_params)
-            .wait();
+        let plan = Arc::clone(
+            self.cached_dynamic_plan
+                .as_ref()
+                .expect("Dynamic execution plan must exist"),
+        );
 
-        // Wait for all GPU work to complete
-        self.wait_for_gpu_completion(plan, &device_offsets)?;
-
-        Ok(())
+        execute_dynamic_plan(self, plan)
     }
 
-    fn wait_for_gpu_completion(
+    pub(crate) fn gpu_count(&self) -> usize {
+        self.gpus.gpus().len()
+    }
+
+    pub(crate) fn gpu_ref(&self, idx: usize) -> &Gpu {
+        self.gpus.get_gpu(idx)
+    }
+
+    pub(crate) fn ensure_gpu_command_buffer(
         &self,
-        plan: &ExecutionPlan,
-        device_offsets: &[u64],
-    ) -> Result<(), VKMLError> {
-        let gpu_waits: Vec<(usize, u64)> = (0..self.gpus.gpus().len())
-            .filter_map(|gpu_idx| {
-                let offset = device_offsets[gpu_idx];
-                plan.chunks
-                    .iter()
-                    .filter(|c| matches!(c.device, DeviceId::Gpu(idx) if idx == gpu_idx))
-                    .map(|c| c.signal_value + offset)
-                    .max()
-                    .map(|max_value| (gpu_idx, max_value))
-            })
-            .collect();
-
-        if gpu_waits.is_empty() {
-            return Ok(());
+        op_id: OperationId,
+        gpu_idx: usize,
+    ) -> Result<vk::CommandBuffer, VKMLError> {
+        if let Some(buffer) = self.cached_command_buffers[op_id].get() {
+            return Ok(*buffer);
         }
 
-        if gpu_waits.len() == 1 {
-            let (gpu_idx, max_value) = gpu_waits[0];
-            return self
-                .gpus
-                .get_gpu(gpu_idx)
-                .wait_for_timeline_value(max_value);
-        }
-
-        // Multi-GPU: wait in parallel
-        let wait_params: Vec<_> = gpu_waits
-            .into_iter()
-            .map(|(gpu_idx, semaphore_value)| GpuWaitParams {
-                gpu_idx,
-                semaphore_value,
-                gpu_pool: &self.gpus,
-            })
-            .collect();
-
-        global_pool()
-            .submit_batch_uniform(gpu_wait_task, &wait_params)
-            .wait();
-
-        Ok(())
-    }
-
-    fn execute_gpu_chunk(&self, chunk: &ExecutionChunk, gpu_idx: usize, device_offsets: &[u64]) {
-        let gpu = self.gpus.get_gpu(gpu_idx);
+        let gpu = self.gpu_ref(gpu_idx);
 
         unsafe {
-            // Get or create cached command buffers for each operation in the chunk
-            let command_buffers: Vec<_> = chunk
-                .operations
-                .iter()
-                .map(|&op_id| {
-                    *self.cached_command_buffers[op_id].get_or_init(|| {
-                        // Allocate a single command buffer for this operation
-                        let alloc_info = vk::CommandBufferAllocateInfo {
-                            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                            next: std::ptr::null(),
-                            command_pool: gpu.get_command_pool(),
-                            level: vk::CommandBufferLevel::PRIMARY,
-                            command_buffer_count: 1,
-                        };
+            let alloc_info = vk::CommandBufferAllocateInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                next: std::ptr::null(),
+                command_pool: gpu.get_command_pool(),
+                level: vk::CommandBufferLevel::PRIMARY,
+                command_buffer_count: 1,
+            };
 
-                        let buffers = gpu
-                            .get_device()
-                            .allocate_command_buffers(&alloc_info)
-                            .expect("Failed to allocate command buffer");
+            let buffers = gpu
+                .get_device()
+                .allocate_command_buffers(&alloc_info)
+                .map_err(|err| {
+                    VKMLError::VulkanError(format!(
+                        "Failed to allocate command buffer for op {} on GPU {}: {}",
+                        op_id, gpu_idx, err
+                    ))
+                })?;
 
-                        // Record command buffer for this operation
-                        let instruction = self.tensor_graph.get_instruction_or_panic(op_id);
-                        instruction
-                            .create_command_buffer(gpu, buffers[0], self)
-                            .expect("Failed to record command buffer");
+            let command_buffer = buffers.into_iter().next().ok_or_else(|| {
+                VKMLError::VulkanError(format!(
+                    "No command buffer returned for op {} on GPU {}",
+                    op_id, gpu_idx
+                ))
+            })?;
 
-                        buffers[0]
-                    })
-                })
-                .collect();
+            let instruction = self.tensor_graph.get_instruction_or_panic(op_id);
+            instruction
+                .create_command_buffer(gpu, command_buffer, self)
+                .map_err(|err| {
+                    VKMLError::VulkanError(format!(
+                        "Failed to record command buffer for op {}: {}",
+                        op_id, err
+                    ))
+                })?;
 
-            // Apply semaphore offset for this GPU
-            let offset = device_offsets[gpu_idx];
-            let signal_value = chunk.signal_value + offset;
-
-            // Prepare wait semaphores
-            let wait_sems: Vec<_> = chunk
-                .wait_semaphores
-                .iter()
-                .filter_map(|(dev, val)| {
-                    if let DeviceId::Gpu(wait_gpu_idx) = dev {
-                        let wait_offset = device_offsets[*wait_gpu_idx];
-                        let wait_gpu = self.gpus.get_gpu(*wait_gpu_idx);
-                        Some((
-                            wait_gpu.get_or_create_timeline_semaphore(),
-                            *val + wait_offset,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Submit with timeline semaphore
-            if let Err(e) =
-                gpu.submit_with_timeline_semaphore(&command_buffers, &wait_sems, signal_value)
-            {
-                eprintln!("Failed to submit GPU chunk: {}", e);
-            }
-
-            // Command buffers are cached and reused - never freed
-        }
-    }
-
-    fn execute_cpu_chunk(&self, chunk: &ExecutionChunk, device_offsets: &[u64]) {
-        // Wait for any GPU dependencies first (with offsets applied)
-        for (wait_dev, wait_val) in &chunk.wait_semaphores {
-            if let DeviceId::Gpu(gpu_idx) = wait_dev {
-                let offset = device_offsets[*gpu_idx];
-                let gpu = self.gpus.get_gpu(*gpu_idx);
-                if let Err(e) = gpu.wait_for_timeline_value(*wait_val + offset) {
-                    eprintln!("Failed to wait for GPU {}: {}", gpu_idx, e);
-                    return;
-                }
+            match self.cached_command_buffers[op_id].set(command_buffer) {
+                Ok(()) => Ok(command_buffer),
+                Err(_) => Ok(*self.cached_command_buffers[op_id]
+                    .get()
+                    .expect("Command buffer should be initialized")),
             }
         }
-
-        // Execute CPU operations in parallel
-        let cpu_params: Vec<_> = chunk
-            .operations
-            .iter()
-            .map(|&op_id| SingleCpuOperationParams {
-                operation_id: op_id,
-                compute_manager: self,
-            })
-            .collect();
-
-        global_pool()
-            .submit_batch_uniform(single_cpu_operation_task, &cpu_params)
-            .wait();
     }
 
     pub fn format_memory_mb(&self, bytes: u64) -> String {
@@ -891,57 +796,6 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
     unsafe {
         let slot = params.out_ptrs.add(params.index);
         ptr::write(slot, TensorCell::new(tensor));
-    }
-});
-
-struct SingleCpuOperationParams<'a> {
-    operation_id: OperationId,
-    compute_manager: &'a ComputeManager,
-}
-
-zp_define_task_fn!(
-    single_cpu_operation_task,
-    SingleCpuOperationParams,
-    |params| {
-        let instruction = params
-            .compute_manager
-            .tensor_graph
-            .get_instruction_or_panic(params.operation_id);
-        instruction.execute_cpu(params.compute_manager);
-    }
-);
-
-struct ChunkExecutionParams<'a> {
-    chunk: &'a crate::tensor_graph::tensor_graph::ExecutionChunk,
-    compute_manager: &'a ComputeManager,
-    device_offsets: &'a [u64],
-}
-
-zp_define_task_fn!(chunk_execution_task, ChunkExecutionParams, |params| {
-    match &params.chunk.device {
-        DeviceId::Gpu(gpu_idx) => {
-            params
-                .compute_manager
-                .execute_gpu_chunk(params.chunk, *gpu_idx, params.device_offsets);
-        }
-        DeviceId::Cpu => {
-            params
-                .compute_manager
-                .execute_cpu_chunk(params.chunk, params.device_offsets);
-        }
-    }
-});
-
-struct GpuWaitParams<'a> {
-    gpu_idx: usize,
-    semaphore_value: u64,
-    gpu_pool: &'a GpuPool,
-}
-
-zp_define_task_fn!(gpu_wait_task, GpuWaitParams, |params| {
-    let gpu = params.gpu_pool.get_gpu(params.gpu_idx);
-    if let Err(e) = gpu.wait_for_timeline_value(params.semaphore_value) {
-        eprintln!("Failed to wait for GPU {}: {}", params.gpu_idx, e);
     }
 });
 
