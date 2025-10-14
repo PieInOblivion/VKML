@@ -15,6 +15,9 @@ use vulkanalia::vk::DeviceV1_0;
 
 type ChunkId = usize;
 
+// TODO: The graph explicitly manages inter gpu depedancies. which is not as effecient as using vk gpu timeline semaphores
+// We have left the submission logic the same for now, in order to reintroduce better multi gpu performance.
+
 pub struct DynamicExecutionChunk {
     device: DeviceId,
     operations: Vec<OperationId>,
@@ -573,6 +576,19 @@ fn create_gpu_chunk_command_buffer(
             ))
         })?;
 
+        let tensor_count = compute_manager.tensor_graph.tensor_descs.len();
+        let mut dirty_flags = vec![false; tensor_count];
+        let mut dirty_list: Vec<usize> = Vec::new();
+
+        let clear_dirty = |flags: &mut [bool], list: &mut Vec<usize>| {
+            for &tid in list.iter() {
+                if tid < flags.len() {
+                    flags[tid] = false;
+                }
+            }
+            list.clear();
+        };
+
         gpu.begin_command_buffer(command_buffer).map_err(|err| {
             VKMLError::VulkanError(format!(
                 "Failed to begin command buffer for GPU {}: {}",
@@ -580,8 +596,19 @@ fn create_gpu_chunk_command_buffer(
             ))
         })?;
 
-        for (idx, &op_id) in operations.iter().enumerate() {
+        for &op_id in operations {
             let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+
+            let inputs = instruction.get_input_tensor_ids();
+            let needs_barrier = inputs
+                .iter()
+                .any(|&tid| tid < dirty_flags.len() && dirty_flags[tid]);
+
+            if needs_barrier {
+                gpu.barrier_compute_shader_access(command_buffer);
+                clear_dirty(&mut dirty_flags, &mut dirty_list);
+            }
+
             instruction
                 .record_into_command_buffer(gpu, command_buffer, compute_manager)
                 .map_err(|err| {
@@ -591,8 +618,11 @@ fn create_gpu_chunk_command_buffer(
                     ))
                 })?;
 
-            if idx + 1 < operations.len() {
-                gpu.barrier_compute_shader_access(command_buffer);
+            for &tid in instruction.get_output_tensor_ids().iter() {
+                if tid < dirty_flags.len() && !dirty_flags[tid] {
+                    dirty_flags[tid] = true;
+                    dirty_list.push(tid);
+                }
             }
         }
 
