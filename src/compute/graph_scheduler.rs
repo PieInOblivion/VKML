@@ -317,7 +317,6 @@ struct ExecutionState {
     device_semaphore_offsets: Vec<u64>,
     device_chunk_counters: Vec<AtomicU64>,
     chunk_dependencies_remaining: Vec<AtomicUsize>,
-    chunk_command_buffers: Vec<Vec<vk::CommandBuffer>>,
     outputs_remaining: AtomicUsize,
     completion_signal: Arc<(Mutex<()>, Condvar)>,
     chunk_task_params: Vec<ChunkTaskParams>,
@@ -355,28 +354,25 @@ impl ExecutionState {
             .map(|chunk| AtomicUsize::new(chunk.initial_dep_count))
             .collect();
 
-        let mut chunk_command_buffers: Vec<Vec<vk::CommandBuffer>> =
-            Vec::with_capacity(plan.total_chunks());
+        // Prime the plan-level cache so command buffers are recorded only once per chunk.
         for (chunk_id, chunk) in plan.chunks.iter().enumerate() {
-            // Check if we have cached command buffers for this chunk
-            if let Some(cached_buffers) = plan.cached_chunk_command_buffers[chunk_id].get() {
-                chunk_command_buffers.push(cached_buffers.clone());
-            } else {
-                // Need to allocate new command buffers
-                match chunk.device {
-                    DeviceId::Gpu(gpu_idx) => {
-                        let mut buffers = Vec::with_capacity(chunk.operations.len());
-                        for &op_id in &chunk.operations {
-                            let buffer = create_gpu_command_buffer(manager, op_id, gpu_idx)?;
-                            buffers.push(buffer);
-                        }
-                        // Cache for future use
-                        let _ = plan.cached_chunk_command_buffers[chunk_id].set(buffers.clone());
-                        chunk_command_buffers.push(buffers);
-                    }
-                    DeviceId::Cpu => chunk_command_buffers.push(Vec::new()),
-                }
+            if plan.cached_chunk_command_buffers[chunk_id].get().is_some() {
+                continue;
             }
+
+            let buffers = match chunk.device {
+                DeviceId::Gpu(gpu_idx) => {
+                    let mut buffers = Vec::with_capacity(chunk.operations.len());
+                    for &op_id in &chunk.operations {
+                        let buffer = create_gpu_command_buffer(manager, op_id, gpu_idx)?;
+                        buffers.push(buffer);
+                    }
+                    buffers
+                }
+                DeviceId::Cpu => Vec::new(),
+            };
+
+            let _ = plan.cached_chunk_command_buffers[chunk_id].set(buffers);
         }
 
         let outputs_remaining_init = plan.output_chunks.len();
@@ -400,7 +396,6 @@ impl ExecutionState {
                 device_semaphore_offsets,
                 device_chunk_counters,
                 chunk_dependencies_remaining,
-                chunk_command_buffers,
                 outputs_remaining: AtomicUsize::new(outputs_remaining_init),
                 completion_signal,
                 chunk_task_params,
@@ -449,7 +444,15 @@ impl ExecutionState {
         let local_index = self.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed);
         let signal_value = self.device_semaphore_offsets[gpu_idx] + local_index;
 
-        let command_buffers = &self.chunk_command_buffers[chunk_id];
+        let command_buffers = self.plan.cached_chunk_command_buffers[chunk_id]
+            .get()
+            .ok_or_else(|| {
+                VKMLError::Generic(format!(
+                    "Missing command buffers for chunk {} on GPU {}",
+                    chunk_id, gpu_idx
+                ))
+            })?
+            .as_slice();
         let wait_slice: &[(vk::Semaphore, u64)] = &[];
         gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
 
