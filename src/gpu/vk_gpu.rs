@@ -791,6 +791,31 @@ impl Gpu {
         }
     }
 
+    /// Insert a memory barrier ensuring previous compute writes are visible to subsequent compute dispatches.
+    pub fn barrier_compute_shader_access(&self, command_buffer: vk::CommandBuffer) {
+        unsafe {
+            let memory_barrier = vk::MemoryBarrier {
+                s_type: vk::StructureType::MEMORY_BARRIER,
+                next: ptr::null(),
+                src_access_mask: vk::AccessFlags::SHADER_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+            };
+
+            let buffer_barriers: [vk::BufferMemoryBarrier; 0] = [];
+            let image_barriers: [vk::ImageMemoryBarrier; 0] = [];
+
+            self.get_device().cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[memory_barrier],
+                &buffer_barriers,
+                &image_barriers,
+            );
+        }
+    }
+
     /// Bind up to 4 GPU storage buffers (supporting Option<&GPUMemory>) to descriptor set bindings 0-3
     /// Optional buffers will be bound as null buffers with size 0
     pub fn bind_storage_buffers_optional(

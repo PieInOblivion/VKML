@@ -23,6 +23,7 @@ pub struct DynamicExecutionChunk {
     initial_dep_count: usize,
     is_output: bool,
     needs_host_wait: bool,
+    command_buffer: OnceLock<vk::CommandBuffer>,
 }
 
 pub struct DynamicExecutionPlan {
@@ -30,7 +31,6 @@ pub struct DynamicExecutionPlan {
     operation_to_chunk: Vec<ChunkId>,
     output_chunks: Vec<ChunkId>,
     root_chunks: Vec<ChunkId>,
-    cached_chunk_command_buffers: Vec<OnceLock<Vec<vk::CommandBuffer>>>,
 }
 
 impl DynamicExecutionPlan {
@@ -191,6 +191,7 @@ pub fn create_dynamic_execution_plan(
             initial_dep_count: 0,
             is_output: false,
             needs_host_wait: false,
+            command_buffer: OnceLock::new(),
         });
     }
 
@@ -298,16 +299,11 @@ pub fn create_dynamic_execution_plan(
         chunks[chunk_idx].needs_host_wait = needs_wait;
     }
 
-    let chunk_count = chunks.len();
-    let cached_chunk_command_buffers: Vec<OnceLock<Vec<vk::CommandBuffer>>> =
-        (0..chunk_count).map(|_| OnceLock::new()).collect();
-
     Ok(DynamicExecutionPlan {
         chunks,
         operation_to_chunk,
         output_chunks,
         root_chunks,
-        cached_chunk_command_buffers,
     })
 }
 
@@ -355,24 +351,16 @@ impl ExecutionState {
             .collect();
 
         // Prime the plan-level cache so command buffers are recorded only once per chunk.
-        for (chunk_id, chunk) in plan.chunks.iter().enumerate() {
-            if plan.cached_chunk_command_buffers[chunk_id].get().is_some() {
+        for chunk in &plan.chunks {
+            if chunk.command_buffer.get().is_some() {
                 continue;
             }
 
-            let buffers = match chunk.device {
-                DeviceId::Gpu(gpu_idx) => {
-                    let mut buffers = Vec::with_capacity(chunk.operations.len());
-                    for &op_id in &chunk.operations {
-                        let buffer = create_gpu_command_buffer(manager, op_id, gpu_idx)?;
-                        buffers.push(buffer);
-                    }
-                    buffers
-                }
-                DeviceId::Cpu => Vec::new(),
-            };
+            if let DeviceId::Gpu(gpu_idx) = chunk.device {
+                let buffer = create_gpu_chunk_command_buffer(manager, &chunk.operations, gpu_idx)?;
 
-            let _ = plan.cached_chunk_command_buffers[chunk_id].set(buffers);
+                let _ = chunk.command_buffer.set(buffer);
+            };
         }
 
         let outputs_remaining_init = plan.output_chunks.len();
@@ -444,15 +432,16 @@ impl ExecutionState {
         let local_index = self.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed);
         let signal_value = self.device_semaphore_offsets[gpu_idx] + local_index;
 
-        let command_buffers = self.plan.cached_chunk_command_buffers[chunk_id]
+        let command_buffer = self.plan.chunks[chunk_id]
+            .command_buffer
             .get()
             .ok_or_else(|| {
                 VKMLError::Generic(format!(
                     "Missing command buffers for chunk {} on GPU {}",
                     chunk_id, gpu_idx
                 ))
-            })?
-            .as_slice();
+            })?;
+        let command_buffers = std::slice::from_ref(command_buffer);
         let wait_slice: &[(vk::Semaphore, u64)] = &[];
         gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
 
@@ -551,9 +540,9 @@ pub fn plan_requires_rebuild(plan: &DynamicExecutionPlan, graph: &TensorGraph) -
     plan.operation_to_chunk.len() != graph.operations.len()
 }
 
-fn create_gpu_command_buffer(
+fn create_gpu_chunk_command_buffer(
     compute_manager: &ComputeManager,
-    op_id: OperationId,
+    operations: &[OperationId],
     gpu_idx: usize,
 ) -> Result<vk::CommandBuffer, VKMLError> {
     let gpu = compute_manager.gpu_ref(gpu_idx);
@@ -572,40 +561,45 @@ fn create_gpu_command_buffer(
             .allocate_command_buffers(&alloc_info)
             .map_err(|err| {
                 VKMLError::VulkanError(format!(
-                    "Failed to allocate command buffer for op {} on GPU {}: {}",
-                    op_id, gpu_idx, err
+                    "Failed to allocate command buffer for chunk on GPU {}: {}",
+                    gpu_idx, err
                 ))
             })?;
 
         let command_buffer = buffers.into_iter().next().ok_or_else(|| {
             VKMLError::VulkanError(format!(
-                "No command buffer returned for op {} on GPU {}",
-                op_id, gpu_idx
+                "No command buffer returned for chunk on GPU {}",
+                gpu_idx
             ))
         })?;
-
-        let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
 
         gpu.begin_command_buffer(command_buffer).map_err(|err| {
             VKMLError::VulkanError(format!(
-                "Failed to begin command buffer for op {}: {}",
-                op_id, err
+                "Failed to begin command buffer for GPU {}: {}",
+                gpu_idx, err
             ))
         })?;
 
-        instruction
-            .record_into_command_buffer(gpu, command_buffer, compute_manager)
-            .map_err(|err| {
-                VKMLError::VulkanError(format!(
-                    "Failed to record commands for op {}: {}",
-                    op_id, err
-                ))
-            })?;
+        for (idx, &op_id) in operations.iter().enumerate() {
+            let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+            instruction
+                .record_into_command_buffer(gpu, command_buffer, compute_manager)
+                .map_err(|err| {
+                    VKMLError::VulkanError(format!(
+                        "Failed to record commands for op {}: {}",
+                        op_id, err
+                    ))
+                })?;
+
+            if idx + 1 < operations.len() {
+                gpu.barrier_compute_shader_access(command_buffer);
+            }
+        }
 
         gpu.end_command_buffer(command_buffer).map_err(|err| {
             VKMLError::VulkanError(format!(
-                "Failed to end command buffer for op {}: {}",
-                op_id, err
+                "Failed to end command buffer for GPU {}: {}",
+                gpu_idx, err
             ))
         })?;
 
