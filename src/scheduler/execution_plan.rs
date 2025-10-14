@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::compute::compute_manager::ComputeManager;
@@ -30,49 +30,6 @@ impl ExecutionPlan {
     pub fn total_chunks(&self) -> usize {
         self.chunks.len()
     }
-}
-
-fn build_dependency_graph(
-    tensor_graph: &crate::tensor_graph::tensor_graph::TensorGraph,
-    op_count: usize,
-    tensor_count: usize,
-) -> (Vec<Vec<OperationId>>, Vec<Vec<OperationId>>) {
-    let mut tensor_producers: Vec<Option<OperationId>> = vec![None; tensor_count];
-    for (op_idx, op) in tensor_graph.operations.iter().enumerate() {
-        for &tid in &op.get_output_tensor_ids() {
-            debug_assert!(tid < tensor_count, "tensor id out of range");
-            tensor_producers[tid] = Some(op_idx);
-        }
-    }
-
-    let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
-    let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
-    let mut seen_markers = vec![0u32; op_count];
-    let mut current_mark: u32 = 1;
-
-    for op_idx in 0..op_count {
-        let op = &tensor_graph.operations[op_idx];
-        current_mark = current_mark.wrapping_add(1);
-        if current_mark == 0 {
-            seen_markers.fill(0);
-            current_mark = 1;
-        }
-        for &tensor_id in &op.get_input_tensor_ids() {
-            if tensor_id >= tensor_count {
-                continue;
-            }
-            if let Some(producer) = tensor_producers[tensor_id]
-                && producer != op_idx
-                && seen_markers[producer] != current_mark
-            {
-                seen_markers[producer] = current_mark;
-                predecessors[op_idx].push(producer);
-                successors[producer].push(op_idx);
-            }
-        }
-    }
-
-    (predecessors, successors)
 }
 
 fn organise_chain_into_layers(
@@ -131,31 +88,10 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let op_count = tensor_graph.operations.len();
     let tensor_count = tensor_graph.tensor_descs.len();
 
-    let (predecessors, successors) = build_dependency_graph(tensor_graph, op_count, tensor_count);
-
-    let mut in_degrees: Vec<usize> = predecessors.iter().map(|p| p.len()).collect();
-    let mut queue: VecDeque<OperationId> =
-        (0..op_count).filter(|&op| in_degrees[op] == 0).collect();
-    let mut topo_order = Vec::with_capacity(op_count);
-
-    while let Some(op) = queue.pop_front() {
-        topo_order.push(op);
-        for &succ in &successors[op] {
-            if in_degrees[succ] == 0 {
-                continue;
-            }
-            in_degrees[succ] -= 1;
-            if in_degrees[succ] == 0 {
-                queue.push_back(succ);
-            }
-        }
-    }
-
-    if topo_order.len() != op_count {
-        return Err(VKMLError::Generic(
-            "Cycle detected while building execution plan".into(),
-        ));
-    }
+    let dep_graph = compute_manager.dependency_graph();
+    let predecessors = &dep_graph.predecessors;
+    let successors = &dep_graph.successors;
+    let topo_order = &dep_graph.topological_order;
 
     let op_devices: Vec<DeviceId> = (0..op_count)
         .map(|op_id| {
@@ -175,7 +111,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let mut chain_marks: Vec<u32> = vec![0; op_count];
     let mut chain_mark_value: u32 = 1;
 
-    for &op in &topo_order {
+    for &op in topo_order {
         if operation_to_chunk[op] != usize::MAX {
             continue;
         }
@@ -240,7 +176,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             operation_to_chunk[op_id] = chunk_id;
         }
 
-        let layers = organise_chain_into_layers(&chain, &predecessors, &successors, op_count);
+        let layers = organise_chain_into_layers(&chain, predecessors, successors, op_count);
 
         chunks.push(ExecutionChunk {
             device,

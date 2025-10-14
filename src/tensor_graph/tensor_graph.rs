@@ -21,6 +21,14 @@ pub type OperationId = usize;
 // Unique identifier for a tensor
 pub type TensorId = usize;
 
+/// Cached dependency graph information for operations.
+/// Built once and reused by allocation and execution planning.
+pub struct DependencyGraph {
+    pub predecessors: Vec<Vec<OperationId>>,
+    pub successors: Vec<Vec<OperationId>>,
+    pub topological_order: Vec<OperationId>,
+}
+
 pub struct TensorGraph {
     pub tensor_descs: Vec<TensorDesc>,
     pub operations: Vec<Box<dyn Instruction>>,
@@ -195,23 +203,25 @@ impl TensorGraph {
         })
     }
 
-    pub fn topological_execution_order(&self) -> Vec<OperationId> {
+    pub fn dependency_graph(&self) -> DependencyGraph {
         let num_ops = self.operations.len();
+        let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
-        let mut in_degree: Vec<usize> = vec![0; num_ops];
 
         for curr_op in 0..num_ops {
             let mut preds = HashSet::new();
             for &t in &self.operations[curr_op].get_input_tensor_ids() {
                 for pred_op in self.get_tensor_producers(t) {
                     if pred_op != curr_op && preds.insert(pred_op) {
+                        predecessors[curr_op].push(pred_op);
                         successors[pred_op].push(curr_op);
                     }
                 }
             }
-            in_degree[curr_op] = preds.len();
         }
 
+        // compute topological order using kahns algorithm
+        let mut in_degree: Vec<usize> = predecessors.iter().map(|p| p.len()).collect();
         let mut dq: VecDeque<OperationId> = VecDeque::new();
         for op in 0..num_ops {
             if in_degree[op] == 0 {
@@ -240,7 +250,11 @@ impl TensorGraph {
             );
         }
 
-        ordered
+        DependencyGraph {
+            predecessors,
+            successors,
+            topological_order: ordered,
+        }
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {

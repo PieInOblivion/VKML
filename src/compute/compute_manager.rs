@@ -13,7 +13,7 @@ use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::instruction::instruction::Instruction;
-use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
+use crate::tensor_graph::tensor_graph::{DependencyGraph, OperationId, TensorGraph};
 use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
@@ -31,6 +31,7 @@ pub struct ComputeManager {
     cpu: CPUCompute,
 
     cached_plan: Option<Arc<ExecutionPlan>>,
+    cached_dependency_graph: Option<DependencyGraph>,
 }
 
 impl ComputeManager {
@@ -58,6 +59,7 @@ impl ComputeManager {
             gpus: GpuPool::new(explicit_gpus)?,
             cpu,
             cached_plan: None,
+            cached_dependency_graph: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -77,7 +79,6 @@ impl ComputeManager {
         }
 
         manager.allocate_tensor_graph(Vec::new())?;
-
         Ok(manager)
     }
 
@@ -131,6 +132,7 @@ impl ComputeManager {
             model,
             tensor_graph,
             cached_plan: None,
+            cached_dependency_graph: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -184,7 +186,8 @@ impl ComputeManager {
         &mut self,
         initialisers: Vec<Option<Box<[u8]>>>,
     ) -> Result<(), VKMLError> {
-        let flattened_ops: Vec<OperationId> = self.tensor_graph.topological_execution_order();
+        let dep_graph = self.tensor_graph.dependency_graph();
+        let flattened_ops = &dep_graph.topological_order;
 
         // Track planned tensor locations: tensor_id -> DeviceLocation
         let mut tensor_locations: Vec<Option<DeviceId>> =
@@ -217,7 +220,7 @@ impl ComputeManager {
             |tid: usize| -> u64 { self.tensor_graph.tensor_descs[tid].size_in_bytes() as u64 };
 
         // For each operation in execution order, pick the first device (GPUs in order, CPU last)
-        for &op_id in &flattened_ops {
+        for &op_id in flattened_ops {
             let instruction = &self.tensor_graph.operations[op_id];
             let input_tensors = instruction.get_input_tensor_ids();
             let output_tensors = instruction.get_output_tensor_ids();
@@ -459,6 +462,9 @@ impl ComputeManager {
         // Now that planning is complete, actually allocate the tensors
         self.allocate_tensors(tensor_locations, initialisers)?;
 
+        // Cache the dependency graph
+        self.cached_dependency_graph = Some(dep_graph);
+
         Ok(())
     }
 
@@ -616,8 +622,7 @@ impl ComputeManager {
     pub fn execute(&mut self) -> Result<(), VKMLError> {
         if self.cached_plan.is_none() {
             let plan = create_execution_plan(self)?;
-            let arc_plan = Arc::new(plan);
-            self.cached_plan = Some(arc_plan);
+            self.cached_plan = Some(Arc::new(plan));
         }
 
         let plan = Arc::clone(
@@ -635,6 +640,12 @@ impl ComputeManager {
 
     pub(crate) fn gpu_ref(&self, idx: usize) -> &Gpu {
         self.gpus.get_gpu(idx)
+    }
+
+    pub(crate) fn dependency_graph(&self) -> &DependencyGraph {
+        self.cached_dependency_graph
+            .as_ref()
+            .expect("Dependency graph missing")
     }
 
     pub fn format_memory_mb(&self, bytes: u64) -> String {
