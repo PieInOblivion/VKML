@@ -13,28 +13,28 @@ use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::utils::error::VKMLError;
 use vulkanalia::vk::DeviceV1_0;
 
-pub type ChunkId = usize;
+type ChunkId = usize;
 
 pub struct DynamicExecutionChunk {
-    pub device: DeviceId,
-    pub operations: Vec<OperationId>,
-    pub predecessors: Vec<ChunkId>,
-    pub dependents: Vec<ChunkId>,
-    pub initial_dep_count: usize,
-    pub is_output: bool,
-    pub needs_host_wait: bool,
+    device: DeviceId,
+    operations: Vec<OperationId>,
+    predecessors: Vec<ChunkId>,
+    dependents: Vec<ChunkId>,
+    initial_dep_count: usize,
+    is_output: bool,
+    needs_host_wait: bool,
 }
 
 pub struct DynamicExecutionPlan {
-    pub chunks: Vec<DynamicExecutionChunk>,
-    pub operation_to_chunk: Vec<ChunkId>,
-    pub output_chunks: Vec<ChunkId>,
-    pub root_chunks: Vec<ChunkId>,
+    chunks: Vec<DynamicExecutionChunk>,
+    operation_to_chunk: Vec<ChunkId>,
+    output_chunks: Vec<ChunkId>,
+    root_chunks: Vec<ChunkId>,
     cached_chunk_command_buffers: Vec<OnceLock<Vec<vk::CommandBuffer>>>,
 }
 
 impl DynamicExecutionPlan {
-    pub fn total_chunks(&self) -> usize {
+    fn total_chunks(&self) -> usize {
         self.chunks.len()
     }
 }
