@@ -8,6 +8,7 @@ mod utils;
 mod gpu;
 
 mod compute;
+mod scheduler;
 
 mod model;
 

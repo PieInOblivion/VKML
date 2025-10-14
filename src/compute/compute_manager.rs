@@ -1,13 +1,11 @@
 use std::ptr;
 use std::sync::Arc;
 
-use crate::compute::{
-    graph_scheduler::{ExecutionPlan, create_execution_plan, execute_plan, plan_requires_rebuild},
-    print_model_stats, print_tensorgraph_stats,
-};
+use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
+use crate::scheduler::{ExecutionPlan, create_execution_plan, execute_plan};
 use crate::tensor::cell::TensorCell;
 use crate::tensor::tensor::{DeviceId, Tensor};
 use crate::utils::error::VKMLError;
@@ -618,12 +616,7 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        let rebuild_plan = match &self.cached_plan {
-            Some(plan) => plan_requires_rebuild(plan, &self.tensor_graph),
-            None => true,
-        };
-
-        if rebuild_plan {
+        if self.cached_plan.is_some() {
             let plan = create_execution_plan(self)?;
             let arc_plan = Arc::new(plan);
             self.cached_plan = Some(arc_plan);
