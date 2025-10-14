@@ -1,19 +1,24 @@
 use crate::{
-    compute::compute_manager::ComputeManager, tensor::tensor::DeviceId,
-    tensor_graph::tensor_graph::TensorId,
+    compute::compute_manager::ComputeManager, scheduler::create_execution_plan,
+    tensor::tensor::DeviceId, tensor_graph::tensor_graph::TensorId,
 };
 use std::collections::HashSet;
 
 pub fn print_tensor_flow(cm: &ComputeManager) {
     println!("\n=== TENSOR GRAPH VISUALIZATION ===\n");
 
-    let execution_plan = cm.tensor_graph.create_stage_plan();
+    let plan = match create_execution_plan(cm) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to create execution plan: {:?}", e);
+            return;
+        }
+    };
 
-    println!("Execution Plan: {} stages", execution_plan.len());
+    println!("Execution Plan: {} chunks", plan.chunks.len());
     println!("{:-<100}", "");
 
     let mut produced_tensors = HashSet::new();
-
     produced_tensors.extend(cm.tensor_graph.input_tensor_ids.iter().cloned());
 
     // Add parameter tensors (tensors with no producers)
@@ -26,14 +31,29 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         }
     }
 
-    for (stage_idx, operations) in execution_plan.iter().enumerate() {
-        println!("\nStage {}: {} operations", stage_idx + 1, operations.len());
+    for (chunk_idx, chunk) in plan.chunks.iter().enumerate() {
+        let device_str = match &chunk.device {
+            DeviceId::Cpu => "CPU".to_string(),
+            DeviceId::Gpu(g) => format!("GPU {}", g),
+        };
+
+        println!(
+            "\nChunk {}: device={} ops={} preds={:?} deps={:?}",
+            chunk_idx,
+            device_str,
+            chunk.operations.len(),
+            chunk.predecessors,
+            chunk.dependents
+        );
+        println!(
+            "  initial_dep_count={} is_output={} needs_host_wait={}",
+            chunk.initial_dep_count, chunk.is_output, chunk.needs_host_wait
+        );
         println!("{:-<100}", "");
 
-        for op_id in operations {
-            let layer_id = cm.tensor_graph.operation_to_layer[*op_id];
+        for &op_id in &chunk.operations {
+            let layer_id = cm.tensor_graph.operation_to_layer[op_id];
 
-            // Fetch layer name using the correct layer_id
             let layer_name = cm
                 .model
                 .layers
@@ -41,7 +61,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 .map(|layer| layer.layer.name())
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            let instruction = format!("{:?}", cm.tensor_graph.operations[*op_id]);
+            let instruction = format!("{:?}", cm.tensor_graph.operations[op_id]);
 
             println!(
                 "  Operation {} (Layer {:?} - {})",
@@ -49,7 +69,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             );
             println!("  Instruction: {}", instruction);
 
-            let inputs = cm.tensor_graph.get_operation_inputs(*op_id);
+            let inputs = cm.tensor_graph.get_operation_inputs(op_id);
             println!("  Inputs:");
             for input in inputs {
                 let tensor = cm.tensor_read(input);
@@ -81,7 +101,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 );
             }
 
-            let outputs = cm.tensor_graph.get_operation_outputs(*op_id);
+            let outputs = cm.tensor_graph.get_operation_outputs(op_id);
             println!("  Outputs:");
             for output in outputs {
                 let tensor = cm.tensor_read(output);
@@ -117,6 +137,26 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             println!();
         }
     }
+
+    println!("\n=== ORIGINAL MODEL LAYER CONNECTIONS ===\n");
+
+    println!("\n=== TENSOR GRAPH SUMMARY ===\n");
+    println!("Total Tensors: {}", cm.tensors.len());
+    println!("Total Operations: {}", cm.tensor_graph.operations.len());
+    println!("Input Tensors: {}", cm.tensor_graph.input_tensor_ids.len());
+    println!(
+        "Output Tensors: {}",
+        cm.tensor_graph.output_tensor_ids.len()
+    );
+    println!("Execution Chunks: {}", plan.chunks.len());
+
+    let total_memory = cm.tensor_graph.memory_requirements;
+    println!(
+        "\nMemory Requirements: {}",
+        cm.format_memory_mb(total_memory as u64)
+    );
+
+    println!("{:-<100}", "");
 
     println!("\n=== ORIGINAL MODEL LAYER CONNECTIONS ===\n");
 
@@ -212,7 +252,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         "Output Tensors: {}",
         cm.tensor_graph.output_tensor_ids.len()
     );
-    println!("Execution Stages: {}", execution_plan.len());
+    println!("Execution Stages: {}", plan.chunks.len());
 
     let total_memory = cm.tensor_graph.memory_requirements;
     println!(
