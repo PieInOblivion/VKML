@@ -616,7 +616,7 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        if self.cached_plan.is_some() {
+        if self.cached_plan.is_none() {
             let plan = create_execution_plan(self)?;
             let arc_plan = Arc::new(plan);
             self.cached_plan = Some(arc_plan);
