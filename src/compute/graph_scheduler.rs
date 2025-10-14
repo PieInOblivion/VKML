@@ -14,7 +14,6 @@ use crate::utils::error::VKMLError;
 
 pub type ChunkId = usize;
 
-#[derive(Debug)]
 pub struct DynamicExecutionChunk {
     pub device: DeviceId,
     pub operations: Vec<OperationId>,
@@ -25,7 +24,6 @@ pub struct DynamicExecutionChunk {
     pub needs_host_wait: bool,
 }
 
-#[derive(Debug)]
 pub struct DynamicExecutionPlan {
     pub chunks: Vec<DynamicExecutionChunk>,
     pub operation_to_chunk: Vec<ChunkId>,
@@ -306,10 +304,6 @@ pub fn create_dynamic_execution_plan(
     })
 }
 
-struct CompletionFlag {
-    completed: bool,
-}
-
 struct ExecutionState {
     plan: Arc<DynamicExecutionPlan>,
     compute_manager: *const ComputeManager,
@@ -318,7 +312,7 @@ struct ExecutionState {
     chunk_dependencies_remaining: Vec<AtomicUsize>,
     chunk_command_buffers: Vec<Vec<vk::CommandBuffer>>,
     outputs_remaining: AtomicUsize,
-    completion_signal: Arc<(Mutex<CompletionFlag>, Condvar)>,
+    completion_signal: Arc<(Mutex<()>, Condvar)>,
     chunk_task_params: Vec<ChunkTaskParams>,
 }
 
@@ -372,10 +366,7 @@ impl ExecutionState {
 
         let outputs_remaining_init = plan.output_chunks.len();
 
-        let completion_signal = Arc::new((
-            Mutex::new(CompletionFlag { completed: false }),
-            Condvar::new(),
-        ));
+        let completion_signal = Arc::new((Mutex::new(()), Condvar::new()));
 
         let plan_for_state = Arc::clone(&plan);
         let manager_ptr = manager as *const ComputeManager;
@@ -412,8 +403,7 @@ impl ExecutionState {
 
     fn submit_chunk(&self, chunk_id: ChunkId) {
         let params = &self.chunk_task_params[chunk_id];
-        let future = global_pool().submit_task(chunk_execute_task, params);
-        drop(future);
+        global_pool().submit_task(chunk_execute_task, params);
     }
 
     fn execute_chunk(&self, chunk_id: ChunkId) -> Result<(), VKMLError> {
@@ -473,24 +463,22 @@ impl ExecutionState {
     }
 
     fn mark_output_complete(&self) {
-        if self.outputs_remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.outputs_remaining.fetch_sub(1, Ordering::Release) == 1 {
             self.signal_completion();
         }
     }
 
     fn signal_completion(&self) {
         let (lock, cvar) = &*self.completion_signal;
-        let mut guard = lock.lock().unwrap();
-        if !guard.completed {
-            guard.completed = true;
-            cvar.notify_one();
-        }
+        let guard = lock.lock().unwrap();
+        drop(guard);
+        cvar.notify_one();
     }
 
     fn await_completion(&self) {
         let (lock, cvar) = &*self.completion_signal;
         let mut guard = lock.lock().unwrap();
-        while !guard.completed {
+        while self.outputs_remaining.load(Ordering::Acquire) != 0 {
             guard = cvar.wait(guard).unwrap();
         }
     }
@@ -504,7 +492,7 @@ impl ExecutionState {
 
         for &dependent in &chunk.dependents {
             let previous =
-                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::AcqRel);
+                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::Release);
             if previous == 1 {
                 self.submit_chunk(dependent);
             }
@@ -534,12 +522,6 @@ pub fn execute_dynamic_plan(
     plan: Arc<DynamicExecutionPlan>,
 ) -> Result<(), VKMLError> {
     let state = ExecutionState::new(plan, compute_manager)?;
-
-    if state.plan.output_chunks.is_empty() {
-        state.signal_completion();
-        state.await_completion();
-        return Ok(());
-    }
 
     state.submit_initial_chunks();
     state.await_completion();
