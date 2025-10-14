@@ -79,12 +79,13 @@ pub fn create_dynamic_execution_plan(
             if tensor_id >= tensor_count {
                 continue;
             }
-            if let Some(producer) = tensor_producers[tensor_id] {
-                if producer != op_idx && seen_markers[producer] != current_mark {
-                    seen_markers[producer] = current_mark;
-                    predecessors[op_idx].push(producer);
-                    successors[producer].push(op_idx);
-                }
+            if let Some(producer) = tensor_producers[tensor_id]
+                && producer != op_idx
+                && seen_markers[producer] != current_mark
+            {
+                seen_markers[producer] = current_mark;
+                predecessors[op_idx].push(producer);
+                successors[producer].push(op_idx);
             }
         }
     }
@@ -450,9 +451,7 @@ impl ExecutionState {
 
         if self.plan.chunks[chunk_id].needs_host_wait {
             // Block this worker until the GPU signals completion so dependents see consistent state.
-            if let Err(err) = gpu.wait_for_timeline_value(signal_value) {
-                return Err(err);
-            }
+            gpu.wait_for_timeline_value(signal_value)?
         }
 
         self.finalize_chunk(chunk_id);

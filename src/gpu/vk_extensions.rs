@@ -82,7 +82,7 @@ impl VkExtensions {
     ) -> Option<(u32, u32, u32)> {
         unsafe {
             let mut count: u32 = 0;
-            let fp = (&*instance)
+            let fp = (*instance)
                 .commands()
                 .get_physical_device_cooperative_matrix_properties_khr;
             // first call to get count
