@@ -11,7 +11,7 @@ pub type ChunkId = usize;
 
 pub struct ExecutionChunk {
     pub device: DeviceId,
-    pub operations: Vec<OperationId>,
+    pub operation_layers: Vec<Vec<OperationId>>,
     pub predecessors: Vec<ChunkId>,
     pub dependents: Vec<ChunkId>,
     pub initial_dep_count: usize,
@@ -185,9 +185,47 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             operation_to_chunk[op_id] = chunk_id;
         }
 
+        // organize the chain into layers using kahns algorithm
+        // only consider dependencies within this chain
+        let mut in_degree: Vec<usize> = vec![0; op_count];
+        let chain_set: std::collections::HashSet<OperationId> = chain.iter().copied().collect();
+
+        for &op in &chain {
+            for &pred in &predecessors[op] {
+                if chain_set.contains(&pred) {
+                    in_degree[op] += 1;
+                }
+            }
+        }
+
+        let mut layers: Vec<Vec<OperationId>> = Vec::new();
+        let mut current_layer: Vec<OperationId> = chain
+            .iter()
+            .copied()
+            .filter(|&op| in_degree[op] == 0)
+            .collect();
+
+        while !current_layer.is_empty() {
+            layers.push(current_layer.clone());
+
+            let mut next_layer: Vec<OperationId> = Vec::new();
+            for &op in &current_layer {
+                for &succ in &successors[op] {
+                    if !chain_set.contains(&succ) {
+                        continue;
+                    }
+                    in_degree[succ] = in_degree[succ].saturating_sub(1);
+                    if in_degree[succ] == 0 {
+                        next_layer.push(succ);
+                    }
+                }
+            }
+            current_layer = next_layer;
+        }
+
         chunks.push(ExecutionChunk {
             device,
-            operations: chain,
+            operation_layers: layers,
             predecessors: Vec::new(),
             dependents: Vec::new(),
             initial_dep_count: 0,
@@ -202,11 +240,13 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let mut root_chunks: Vec<ChunkId> = Vec::new();
 
     for chunk_idx in 0..chunk_count {
-        for &op in &chunks[chunk_idx].operations {
-            for &pred_op in &predecessors[op] {
-                let pred_chunk = operation_to_chunk[pred_op];
-                if pred_chunk != chunk_idx {
-                    chunk_predecessors[chunk_idx].push(pred_chunk);
+        for layer in &chunks[chunk_idx].operation_layers {
+            for &op in layer {
+                for &pred_op in &predecessors[op] {
+                    let pred_chunk = operation_to_chunk[pred_op];
+                    if pred_chunk != chunk_idx {
+                        chunk_predecessors[chunk_idx].push(pred_chunk);
+                    }
                 }
             }
         }
@@ -251,15 +291,17 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
 
     for (chunk_idx, chunk) in chunks.iter_mut().enumerate() {
         let mut is_output = false;
-        for &op_id in &chunk.operations {
-            let op = &tensor_graph.operations[op_id];
-            if op
-                .get_output_tensor_ids()
-                .iter()
-                .any(|&tid| tid < output_tensor_flags.len() && output_tensor_flags[tid])
-            {
-                is_output = true;
-                break;
+        'outer: for layer in &chunk.operation_layers {
+            for &op_id in layer {
+                let op = &tensor_graph.operations[op_id];
+                if op
+                    .get_output_tensor_ids()
+                    .iter()
+                    .any(|&tid| tid < output_tensor_flags.len() && output_tensor_flags[tid])
+                {
+                    is_output = true;
+                    break 'outer;
+                }
             }
         }
         chunk.is_output = is_output;

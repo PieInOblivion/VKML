@@ -37,13 +37,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             DeviceId::Gpu(g) => format!("GPU {}", g),
         };
 
+        let total_ops: usize = chunk.operation_layers.iter().map(|layer| layer.len()).sum();
+        let layer_count = chunk.operation_layers.len();
+
         println!(
-            "\nChunk {}: device={} ops={} preds={:?} deps={:?}",
-            chunk_idx,
-            device_str,
-            chunk.operations.len(),
-            chunk.predecessors,
-            chunk.dependents
+            "\nChunk {}: device={} ops={} layers={} preds={:?} deps={:?}",
+            chunk_idx, device_str, total_ops, layer_count, chunk.predecessors, chunk.dependents
         );
         println!(
             "  initial_dep_count={} is_output={} needs_host_wait={}",
@@ -51,90 +50,95 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         );
         println!("{:-<100}", "");
 
-        for &op_id in &chunk.operations {
-            let layer_id = cm.tensor_graph.operation_to_layer[op_id];
+        for (layer_idx, layer) in chunk.operation_layers.iter().enumerate() {
+            if layer_count > 1 {
+                println!("  === Layer {} ({} ops) ===", layer_idx, layer.len());
+            }
+            for &op_id in layer {
+                let layer_id = cm.tensor_graph.operation_to_layer[op_id];
 
-            let layer_name = cm
-                .model
-                .layers
-                .get(&layer_id)
-                .map(|layer| layer.layer.name())
-                .unwrap_or_else(|| "Unknown".to_string());
+                let layer_name = cm
+                    .model
+                    .layers
+                    .get(&layer_id)
+                    .map(|layer| layer.layer.name())
+                    .unwrap_or_else(|| "Unknown".to_string());
 
-            let instruction = format!("{:?}", cm.tensor_graph.operations[op_id]);
-
-            println!(
-                "  Operation {} (Layer {:?} - {})",
-                op_id, layer_id, layer_name
-            );
-            println!("  Instruction: {}", instruction);
-
-            let inputs = cm.tensor_graph.get_operation_inputs(op_id);
-            println!("  Inputs:");
-            for input in inputs {
-                let tensor = cm.tensor_read(input);
-                let shape = format!("{:?}", tensor.desc.dims());
-
-                let location = match &tensor.device {
-                    DeviceId::Cpu => "CPU".to_string(),
-                    DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
-                };
-
-                let producers: String = cm
-                    .tensor_graph
-                    .get_tensor_producers(input)
-                    .iter()
-                    .map(|&op| format!("{}", op))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let instruction = format!("{:?}", cm.tensor_graph.operations[op_id]);
 
                 println!(
-                    "    Tensor {} - Shape: {} - Location: {} - Producers: {}",
-                    input,
-                    shape,
-                    location,
-                    if producers.is_empty() {
-                        "None".to_string()
-                    } else {
-                        producers
-                    }
+                    "  Operation {} (Layer {:?} - {})",
+                    op_id, layer_id, layer_name
                 );
+                println!("  Instruction: {}", instruction);
+
+                let inputs = cm.tensor_graph.get_operation_inputs(op_id);
+                println!("  Inputs:");
+                for input in inputs {
+                    let tensor = cm.tensor_read(input);
+                    let shape = format!("{:?}", tensor.desc.dims());
+
+                    let location = match &tensor.device {
+                        DeviceId::Cpu => "CPU".to_string(),
+                        DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
+                    };
+
+                    let producers: String = cm
+                        .tensor_graph
+                        .get_tensor_producers(input)
+                        .iter()
+                        .map(|&op| format!("{}", op))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    println!(
+                        "    Tensor {} - Shape: {} - Location: {} - Producers: {}",
+                        input,
+                        shape,
+                        location,
+                        if producers.is_empty() {
+                            "None".to_string()
+                        } else {
+                            producers
+                        }
+                    );
+                }
+
+                let outputs = cm.tensor_graph.get_operation_outputs(op_id);
+                println!("  Outputs:");
+                for output in outputs {
+                    let tensor = cm.tensor_read(output);
+                    let shape = format!("{:?}", tensor.desc.dims());
+
+                    let location = match &tensor.device {
+                        DeviceId::Cpu => "CPU".to_string(),
+                        DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
+                    };
+
+                    let consumers: Vec<String> = cm
+                        .tensor_graph
+                        .get_tensor_consumers(output)
+                        .iter()
+                        .map(|&op| format!("{}", op))
+                        .collect();
+
+                    println!(
+                        "    Tensor {} - Shape: {} - Location: {} - Consumers: {}",
+                        output,
+                        shape,
+                        location,
+                        if consumers.is_empty() {
+                            "None".to_string()
+                        } else {
+                            consumers.join(", ")
+                        }
+                    );
+
+                    produced_tensors.insert(output);
+                }
+
+                println!();
             }
-
-            let outputs = cm.tensor_graph.get_operation_outputs(op_id);
-            println!("  Outputs:");
-            for output in outputs {
-                let tensor = cm.tensor_read(output);
-                let shape = format!("{:?}", tensor.desc.dims());
-
-                let location = match &tensor.device {
-                    DeviceId::Cpu => "CPU".to_string(),
-                    DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
-                };
-
-                let consumers: Vec<String> = cm
-                    .tensor_graph
-                    .get_tensor_consumers(output)
-                    .iter()
-                    .map(|&op| format!("{}", op))
-                    .collect();
-
-                println!(
-                    "    Tensor {} - Shape: {} - Location: {} - Consumers: {}",
-                    output,
-                    shape,
-                    location,
-                    if consumers.is_empty() {
-                        "None".to_string()
-                    } else {
-                        consumers.join(", ")
-                    }
-                );
-
-                produced_tensors.insert(output);
-            }
-
-            println!();
         }
     }
 

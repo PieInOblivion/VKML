@@ -61,7 +61,8 @@ impl ExecutionState {
             }
 
             if let DeviceId::Gpu(gpu_idx) = chunk.device {
-                let buffer = create_gpu_chunk_command_buffer(manager, &chunk.operations, gpu_idx)?;
+                let buffer =
+                    create_gpu_chunk_command_buffer(manager, &chunk.operation_layers, gpu_idx)?;
 
                 let _ = chunk.command_buffer.set(buffer);
             };
@@ -164,9 +165,11 @@ impl ExecutionState {
         compute_manager: &ComputeManager,
     ) -> Result<(), VKMLError> {
         let chunk = &self.plan.chunks[chunk_id];
-        for &op_id in &chunk.operations {
-            let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
-            instruction.execute_cpu(compute_manager);
+        for layer in &chunk.operation_layers {
+            for &op_id in layer {
+                let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+                instruction.execute_cpu(compute_manager);
+            }
         }
         Ok(())
     }
@@ -240,7 +243,7 @@ pub fn execute_plan(
 
 fn create_gpu_chunk_command_buffer(
     compute_manager: &ComputeManager,
-    operations: &[OperationId],
+    operation_layers: &[Vec<OperationId>],
     gpu_idx: usize,
 ) -> Result<vk::CommandBuffer, VKMLError> {
     let gpu = compute_manager.gpu_ref(gpu_idx);
@@ -271,19 +274,6 @@ fn create_gpu_chunk_command_buffer(
             ))
         })?;
 
-        let tensor_count = compute_manager.tensor_graph.tensor_descs.len();
-        let mut dirty_flags = vec![false; tensor_count];
-        let mut dirty_list: Vec<usize> = Vec::new();
-
-        let clear_dirty = |flags: &mut [bool], list: &mut Vec<usize>| {
-            for &tid in list.iter() {
-                if tid < flags.len() {
-                    flags[tid] = false;
-                }
-            }
-            list.clear();
-        };
-
         gpu.begin_command_buffer(command_buffer).map_err(|err| {
             VKMLError::VulkanError(format!(
                 "Failed to begin command buffer for GPU {}: {}",
@@ -291,33 +281,24 @@ fn create_gpu_chunk_command_buffer(
             ))
         })?;
 
-        for &op_id in operations {
-            let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+        // Record operations layer by layer with barriers between layers
+        for (layer_idx, layer) in operation_layers.iter().enumerate() {
+            for &op_id in layer {
+                let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
 
-            let inputs = instruction.get_input_tensor_ids();
-            let needs_barrier = inputs
-                .iter()
-                .any(|&tid| tid < dirty_flags.len() && dirty_flags[tid]);
-
-            if needs_barrier {
-                gpu.barrier_compute_shader_access(command_buffer);
-                clear_dirty(&mut dirty_flags, &mut dirty_list);
+                instruction
+                    .record_into_command_buffer(gpu, command_buffer, compute_manager)
+                    .map_err(|err| {
+                        VKMLError::VulkanError(format!(
+                            "Failed to record commands for op {}: {}",
+                            op_id, err
+                        ))
+                    })?;
             }
 
-            instruction
-                .record_into_command_buffer(gpu, command_buffer, compute_manager)
-                .map_err(|err| {
-                    VKMLError::VulkanError(format!(
-                        "Failed to record commands for op {}: {}",
-                        op_id, err
-                    ))
-                })?;
-
-            for &tid in instruction.get_output_tensor_ids().iter() {
-                if tid < dirty_flags.len() && !dirty_flags[tid] {
-                    dirty_flags[tid] = true;
-                    dirty_list.push(tid);
-                }
+            // Insert barrier between layers (but not after the last layer)
+            if layer_idx < operation_layers.len() - 1 {
+                gpu.barrier_compute_shader_access(command_buffer);
             }
         }
 
