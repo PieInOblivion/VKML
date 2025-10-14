@@ -1,5 +1,5 @@
 use std::ptr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::compute::{
     graph_scheduler::{
@@ -23,7 +23,6 @@ use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::desc::TensorDesc,
 };
-use vulkanalia::vk::{self, CommandBuffer, DeviceV1_0};
 
 use super::cpu_compute::CPUCompute;
 
@@ -36,8 +35,6 @@ pub struct ComputeManager {
     gpus: GpuPool,
     cpu: CPUCompute,
 
-    // Cached command buffers per operation, indexed by operation ID
-    cached_command_buffers: Vec<OnceLock<CommandBuffer>>,
     cached_dynamic_plan: Option<Arc<DynamicExecutionPlan>>,
 }
 
@@ -65,7 +62,6 @@ impl ComputeManager {
             tensor_graph,
             gpus: GpuPool::new(explicit_gpus)?,
             cpu,
-            cached_command_buffers: Vec::new(),
             cached_dynamic_plan: None,
         };
 
@@ -139,7 +135,6 @@ impl ComputeManager {
             tensors: Vec::new(),
             model,
             tensor_graph,
-            cached_command_buffers: Vec::new(),
             cached_dynamic_plan: None,
         };
 
@@ -626,11 +621,6 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        let op_count = self.tensor_graph.operations.len();
-        if self.cached_command_buffers.len() != op_count {
-            self.cached_command_buffers = (0..op_count).map(|_| OnceLock::new()).collect();
-        }
-
         let rebuild_plan = match &self.cached_dynamic_plan {
             Some(plan) => plan_requires_rebuild(plan, &self.tensor_graph),
             None => true,
@@ -640,10 +630,6 @@ impl ComputeManager {
             let plan = create_dynamic_execution_plan(self)?;
             let arc_plan = Arc::new(plan);
             self.cached_dynamic_plan = Some(arc_plan);
-
-            if self.cached_command_buffers.len() != op_count {
-                self.cached_command_buffers = (0..op_count).map(|_| OnceLock::new()).collect();
-            }
         }
 
         let plan = Arc::clone(
@@ -661,77 +647,6 @@ impl ComputeManager {
 
     pub(crate) fn gpu_ref(&self, idx: usize) -> &Gpu {
         self.gpus.get_gpu(idx)
-    }
-
-    pub(crate) fn ensure_gpu_command_buffer(
-        &self,
-        op_id: OperationId,
-        gpu_idx: usize,
-    ) -> Result<vk::CommandBuffer, VKMLError> {
-        if let Some(buffer) = self.cached_command_buffers[op_id].get() {
-            return Ok(*buffer);
-        }
-
-        let gpu = self.gpu_ref(gpu_idx);
-
-        unsafe {
-            let alloc_info = vk::CommandBufferAllocateInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                next: std::ptr::null(),
-                command_pool: gpu.get_command_pool(),
-                level: vk::CommandBufferLevel::PRIMARY,
-                command_buffer_count: 1,
-            };
-
-            let buffers = gpu
-                .get_device()
-                .allocate_command_buffers(&alloc_info)
-                .map_err(|err| {
-                    VKMLError::VulkanError(format!(
-                        "Failed to allocate command buffer for op {} on GPU {}: {}",
-                        op_id, gpu_idx, err
-                    ))
-                })?;
-
-            let command_buffer = buffers.into_iter().next().ok_or_else(|| {
-                VKMLError::VulkanError(format!(
-                    "No command buffer returned for op {} on GPU {}",
-                    op_id, gpu_idx
-                ))
-            })?;
-
-            let instruction = self.tensor_graph.get_instruction_or_panic(op_id);
-
-            gpu.begin_command_buffer(command_buffer).map_err(|err| {
-                VKMLError::VulkanError(format!(
-                    "Failed to begin command buffer for op {}: {}",
-                    op_id, err
-                ))
-            })?;
-
-            instruction
-                .record_into_command_buffer(gpu, command_buffer, self)
-                .map_err(|err| {
-                    VKMLError::VulkanError(format!(
-                        "Failed to record commands for op {}: {}",
-                        op_id, err
-                    ))
-                })?;
-
-            gpu.end_command_buffer(command_buffer).map_err(|err| {
-                VKMLError::VulkanError(format!(
-                    "Failed to end command buffer for op {}: {}",
-                    op_id, err
-                ))
-            })?;
-
-            match self.cached_command_buffers[op_id].set(command_buffer) {
-                Ok(()) => Ok(command_buffer),
-                Err(_) => Ok(*self.cached_command_buffers[op_id]
-                    .get()
-                    .expect("Command buffer should be initialized")),
-            }
-        }
     }
 
     pub fn format_memory_mb(&self, bytes: u64) -> String {

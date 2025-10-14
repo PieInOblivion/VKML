@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{
-    Arc, Condvar, Mutex, Weak,
+    Arc, Condvar, Mutex, OnceLock, Weak,
     atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
@@ -11,6 +11,7 @@ use crate::compute::compute_manager::ComputeManager;
 use crate::tensor::tensor::DeviceId;
 use crate::tensor_graph::tensor_graph::{OperationId, TensorGraph};
 use crate::utils::error::VKMLError;
+use vulkanalia::vk::DeviceV1_0;
 
 pub type ChunkId = usize;
 
@@ -29,6 +30,7 @@ pub struct DynamicExecutionPlan {
     pub operation_to_chunk: Vec<ChunkId>,
     pub output_chunks: Vec<ChunkId>,
     pub root_chunks: Vec<ChunkId>,
+    cached_chunk_command_buffers: Vec<OnceLock<Vec<vk::CommandBuffer>>>,
 }
 
 impl DynamicExecutionPlan {
@@ -296,11 +298,16 @@ pub fn create_dynamic_execution_plan(
         chunks[chunk_idx].needs_host_wait = needs_wait;
     }
 
+    let chunk_count = chunks.len();
+    let cached_chunk_command_buffers: Vec<OnceLock<Vec<vk::CommandBuffer>>> =
+        (0..chunk_count).map(|_| OnceLock::new()).collect();
+
     Ok(DynamicExecutionPlan {
         chunks,
         operation_to_chunk,
         output_chunks,
         root_chunks,
+        cached_chunk_command_buffers,
     })
 }
 
@@ -350,17 +357,25 @@ impl ExecutionState {
 
         let mut chunk_command_buffers: Vec<Vec<vk::CommandBuffer>> =
             Vec::with_capacity(plan.total_chunks());
-        for chunk in &plan.chunks {
-            match chunk.device {
-                DeviceId::Gpu(gpu_idx) => {
-                    let mut buffers = Vec::with_capacity(chunk.operations.len());
-                    for &op_id in &chunk.operations {
-                        let buffer = manager.ensure_gpu_command_buffer(op_id, gpu_idx)?;
-                        buffers.push(buffer);
+        for (chunk_id, chunk) in plan.chunks.iter().enumerate() {
+            // Check if we have cached command buffers for this chunk
+            if let Some(cached_buffers) = plan.cached_chunk_command_buffers[chunk_id].get() {
+                chunk_command_buffers.push(cached_buffers.clone());
+            } else {
+                // Need to allocate new command buffers
+                match chunk.device {
+                    DeviceId::Gpu(gpu_idx) => {
+                        let mut buffers = Vec::with_capacity(chunk.operations.len());
+                        for &op_id in &chunk.operations {
+                            let buffer = create_gpu_command_buffer(manager, op_id, gpu_idx)?;
+                            buffers.push(buffer);
+                        }
+                        // Cache for future use
+                        let _ = plan.cached_chunk_command_buffers[chunk_id].set(buffers.clone());
+                        chunk_command_buffers.push(buffers);
                     }
-                    chunk_command_buffers.push(buffers);
+                    DeviceId::Cpu => chunk_command_buffers.push(Vec::new()),
                 }
-                DeviceId::Cpu => chunk_command_buffers.push(Vec::new()),
             }
         }
 
@@ -531,4 +546,66 @@ pub fn execute_dynamic_plan(
 
 pub fn plan_requires_rebuild(plan: &DynamicExecutionPlan, graph: &TensorGraph) -> bool {
     plan.operation_to_chunk.len() != graph.operations.len()
+}
+
+fn create_gpu_command_buffer(
+    compute_manager: &ComputeManager,
+    op_id: OperationId,
+    gpu_idx: usize,
+) -> Result<vk::CommandBuffer, VKMLError> {
+    let gpu = compute_manager.gpu_ref(gpu_idx);
+
+    unsafe {
+        let alloc_info = vk::CommandBufferAllocateInfo {
+            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+            next: std::ptr::null(),
+            command_pool: gpu.get_command_pool(),
+            level: vk::CommandBufferLevel::PRIMARY,
+            command_buffer_count: 1,
+        };
+
+        let buffers = gpu
+            .get_device()
+            .allocate_command_buffers(&alloc_info)
+            .map_err(|err| {
+                VKMLError::VulkanError(format!(
+                    "Failed to allocate command buffer for op {} on GPU {}: {}",
+                    op_id, gpu_idx, err
+                ))
+            })?;
+
+        let command_buffer = buffers.into_iter().next().ok_or_else(|| {
+            VKMLError::VulkanError(format!(
+                "No command buffer returned for op {} on GPU {}",
+                op_id, gpu_idx
+            ))
+        })?;
+
+        let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+
+        gpu.begin_command_buffer(command_buffer).map_err(|err| {
+            VKMLError::VulkanError(format!(
+                "Failed to begin command buffer for op {}: {}",
+                op_id, err
+            ))
+        })?;
+
+        instruction
+            .record_into_command_buffer(gpu, command_buffer, compute_manager)
+            .map_err(|err| {
+                VKMLError::VulkanError(format!(
+                    "Failed to record commands for op {}: {}",
+                    op_id, err
+                ))
+            })?;
+
+        gpu.end_command_buffer(command_buffer).map_err(|err| {
+            VKMLError::VulkanError(format!(
+                "Failed to end command buffer for op {}: {}",
+                op_id, err
+            ))
+        })?;
+
+        Ok(command_buffer)
+    }
 }
