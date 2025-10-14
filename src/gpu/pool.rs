@@ -106,35 +106,27 @@ impl GpuPool {
 
 impl std::fmt::Debug for GpuPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[derive(Debug)]
-        struct GpuDebugInfo {
-            name: String,
-            device_type: vk::PhysicalDeviceType,
-            has_compute: bool,
-            max_workgroup_count: [u32; 3],
-            max_workgroup_size: [u32; 3],
-            max_workgroup_invocations: u32,
-            max_compute_queue_count: u32,
-            max_shared_memory_size: u32,
-            max_push_descriptors: u32,
-        }
-
-        let gpu_infos: Vec<GpuDebugInfo> = self
+        let gpu_debugs: Vec<String> = self
             .gpus
             .iter()
-            .map(|g| GpuDebugInfo {
-                name: g.name().to_string(),
-                device_type: g.device_type(),
-                has_compute: g.has_compute(),
-                max_workgroup_count: g.max_workgroup_count(),
-                max_workgroup_size: g.max_workgroup_size(),
-                max_workgroup_invocations: g.max_workgroup_invocations(),
-                max_compute_queue_count: g.max_compute_queue_count(),
-                max_shared_memory_size: g.max_shared_memory_size(),
-                max_push_descriptors: g.max_push_descriptors(),
+            .map(|g| {
+                format!(
+                    "{{ name: {:?}, device_type: {:?}, has_compute: {}, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {} }}",
+                    g.name(),
+                    g.device_type(),
+                    g.has_compute(),
+                    g.max_workgroup_count(),
+                    g.max_workgroup_size(),
+                    g.max_workgroup_invocations(),
+                    g.max_compute_queue_count(),
+                    g.max_shared_memory_size(),
+                    g.max_push_descriptors(),
+                )
             })
             .collect();
 
-        f.debug_struct("GpuPool").field("gpus", &gpu_infos).finish()
+        f.debug_struct("GpuPool")
+            .field("gpus", &gpu_debugs)
+            .finish()
     }
 }
