@@ -151,6 +151,21 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 if op_devices[succ] != device {
                     continue;
                 }
+
+                // first, eagerly include any unassigned zero-dependency predecessors
+                // of this successor on the same device. This reduces chunk fragmentation
+                // for operations like constant reshapes that have no data dependencies
+                for &pred in &predecessors[succ] {
+                    if operation_to_chunk[pred] == usize::MAX
+                        && chain_marks[pred] != chain_mark_value
+                        && predecessors[pred].is_empty()
+                        && op_devices[pred] == device
+                    {
+                        chain_marks[pred] = chain_mark_value;
+                        chain.push(pred);
+                    }
+                }
+
                 // ensure all predecessors are either already assigned to a chunk
                 // or are part of this chain (marked)
                 if !predecessors[succ].iter().all(|&pred| {
