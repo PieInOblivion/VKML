@@ -127,7 +127,6 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
 
         let device = op_devices[op].clone();
         let mut chain: Vec<OperationId> = Vec::new();
-        let mut current = op;
 
         chain_mark_value = chain_mark_value.wrapping_add(1);
         if chain_mark_value == 0 {
@@ -135,12 +134,14 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             chain_mark_value = 1;
         }
 
-        loop {
-            chain_marks[current] = chain_mark_value;
-            chain.push(current);
-
-            let mut candidate: Option<OperationId> = None;
-            for &succ in &successors[current] {
+        // Expand the chain breadth-first so we can include multiple ready successors
+        // on the same device (reduces number of chunks created).
+        chain_marks[op] = chain_mark_value;
+        chain.push(op);
+        let mut check_idx: usize = 0;
+        while check_idx < chain.len() {
+            let cur = chain[check_idx];
+            for &succ in &successors[cur] {
                 if operation_to_chunk[succ] != usize::MAX {
                     continue;
                 }
@@ -150,24 +151,18 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 if op_devices[succ] != device {
                     continue;
                 }
+                // ensure all predecessors are either already assigned to a chunk
+                // or are part of this chain (marked)
                 if !predecessors[succ].iter().all(|&pred| {
                     operation_to_chunk[pred] != usize::MAX || chain_marks[pred] == chain_mark_value
                 }) {
                     continue;
                 }
-                if candidate.is_some() {
-                    candidate = None;
-                    break;
-                }
-                candidate = Some(succ);
-            }
 
-            match candidate {
-                Some(next) => {
-                    current = next;
-                }
-                None => break,
+                chain_marks[succ] = chain_mark_value;
+                chain.push(succ);
             }
+            check_idx += 1;
         }
 
         let chunk_id = chunks.len();
