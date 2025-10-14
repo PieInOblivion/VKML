@@ -18,7 +18,7 @@ type ChunkId = usize;
 // TODO: The graph explicitly manages inter gpu depedancies. which is not as effecient as using vk gpu timeline semaphores
 // We have left the submission logic the same for now, in order to reintroduce better multi gpu performance.
 
-pub struct DynamicExecutionChunk {
+pub struct ExecutionChunk {
     device: DeviceId,
     operations: Vec<OperationId>,
     predecessors: Vec<ChunkId>,
@@ -29,26 +29,24 @@ pub struct DynamicExecutionChunk {
     command_buffer: OnceLock<vk::CommandBuffer>,
 }
 
-pub struct DynamicExecutionPlan {
-    chunks: Vec<DynamicExecutionChunk>,
+pub struct ExecutionPlan {
+    chunks: Vec<ExecutionChunk>,
     operation_to_chunk: Vec<ChunkId>,
     output_chunks: Vec<ChunkId>,
     root_chunks: Vec<ChunkId>,
 }
 
-impl DynamicExecutionPlan {
+impl ExecutionPlan {
     fn total_chunks(&self) -> usize {
         self.chunks.len()
     }
 }
 
-pub fn create_dynamic_execution_plan(
-    compute_manager: &ComputeManager,
-) -> Result<DynamicExecutionPlan, VKMLError> {
+pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<ExecutionPlan, VKMLError> {
     let tensor_graph = &compute_manager.tensor_graph;
     if tensor_graph.operations.is_empty() {
         return Err(VKMLError::Generic(
-            "Dynamic scheduler cannot execute an empty graph".into(),
+            "Scheduler cannot execute an empty graph".into(),
         ));
     }
 
@@ -110,7 +108,7 @@ pub fn create_dynamic_execution_plan(
 
     if topo_order.len() != op_count {
         return Err(VKMLError::Generic(
-            "Cycle detected while building dynamic execution plan".into(),
+            "Cycle detected while building execution plan".into(),
         ));
     }
 
@@ -127,7 +125,7 @@ pub fn create_dynamic_execution_plan(
         })
         .collect();
 
-    let mut chunks: Vec<DynamicExecutionChunk> = Vec::new();
+    let mut chunks: Vec<ExecutionChunk> = Vec::new();
     let mut operation_to_chunk: Vec<ChunkId> = vec![usize::MAX; op_count];
     let mut chain_marks: Vec<u32> = vec![0; op_count];
     let mut chain_mark_value: u32 = 1;
@@ -187,7 +185,7 @@ pub fn create_dynamic_execution_plan(
             operation_to_chunk[op_id] = chunk_id;
         }
 
-        chunks.push(DynamicExecutionChunk {
+        chunks.push(ExecutionChunk {
             device,
             operations: chain,
             predecessors: Vec::new(),
@@ -279,7 +277,7 @@ pub fn create_dynamic_execution_plan(
 
     if root_chunks.is_empty() {
         return Err(VKMLError::Generic(
-            "Dynamic execution plan contains no root chunks".into(),
+            "Execution plan contains no root chunks".into(),
         ));
     }
 
@@ -303,7 +301,7 @@ pub fn create_dynamic_execution_plan(
         chunks[chunk_idx].needs_host_wait = needs_wait;
     }
 
-    Ok(DynamicExecutionPlan {
+    Ok(ExecutionPlan {
         chunks,
         operation_to_chunk,
         output_chunks,
@@ -312,7 +310,7 @@ pub fn create_dynamic_execution_plan(
 }
 
 struct ExecutionState {
-    plan: Arc<DynamicExecutionPlan>,
+    plan: Arc<ExecutionPlan>,
     compute_manager: *const ComputeManager,
     device_semaphore_offsets: Vec<u64>,
     device_chunk_counters: Vec<AtomicU64>,
@@ -323,10 +321,7 @@ struct ExecutionState {
 }
 
 impl ExecutionState {
-    fn new(
-        plan: Arc<DynamicExecutionPlan>,
-        manager: &ComputeManager,
-    ) -> Result<Arc<Self>, VKMLError> {
+    fn new(plan: Arc<ExecutionPlan>, manager: &ComputeManager) -> Result<Arc<Self>, VKMLError> {
         let gpu_count = manager.gpu_count();
 
         let mut device_counts = vec![0u64; gpu_count];
@@ -526,9 +521,9 @@ zp_define_task_fn!(chunk_execute_task, ChunkTaskParams, |params| {
     }
 });
 
-pub fn execute_dynamic_plan(
+pub fn execute_plan(
     compute_manager: &ComputeManager,
-    plan: Arc<DynamicExecutionPlan>,
+    plan: Arc<ExecutionPlan>,
 ) -> Result<(), VKMLError> {
     let state = ExecutionState::new(plan, compute_manager)?;
 
@@ -538,7 +533,7 @@ pub fn execute_dynamic_plan(
     Ok(())
 }
 
-pub fn plan_requires_rebuild(plan: &DynamicExecutionPlan, graph: &TensorGraph) -> bool {
+pub fn plan_requires_rebuild(plan: &ExecutionPlan, graph: &TensorGraph) -> bool {
     plan.operation_to_chunk.len() != graph.operations.len()
 }
 

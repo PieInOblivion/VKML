@@ -2,10 +2,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use crate::compute::{
-    graph_scheduler::{
-        DynamicExecutionPlan, create_dynamic_execution_plan, execute_dynamic_plan,
-        plan_requires_rebuild,
-    },
+    graph_scheduler::{ExecutionPlan, create_execution_plan, execute_plan, plan_requires_rebuild},
     print_model_stats, print_tensorgraph_stats,
 };
 use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
@@ -35,7 +32,7 @@ pub struct ComputeManager {
     gpus: GpuPool,
     cpu: CPUCompute,
 
-    cached_dynamic_plan: Option<Arc<DynamicExecutionPlan>>,
+    cached_plan: Option<Arc<ExecutionPlan>>,
 }
 
 impl ComputeManager {
@@ -62,7 +59,7 @@ impl ComputeManager {
             tensor_graph,
             gpus: GpuPool::new(explicit_gpus)?,
             cpu,
-            cached_dynamic_plan: None,
+            cached_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -135,7 +132,7 @@ impl ComputeManager {
             tensors: Vec::new(),
             model,
             tensor_graph,
-            cached_dynamic_plan: None,
+            cached_plan: None,
         };
 
         let total_memory = manager.tensor_graph.memory_requirements as u64;
@@ -621,24 +618,24 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        let rebuild_plan = match &self.cached_dynamic_plan {
+        let rebuild_plan = match &self.cached_plan {
             Some(plan) => plan_requires_rebuild(plan, &self.tensor_graph),
             None => true,
         };
 
         if rebuild_plan {
-            let plan = create_dynamic_execution_plan(self)?;
+            let plan = create_execution_plan(self)?;
             let arc_plan = Arc::new(plan);
-            self.cached_dynamic_plan = Some(arc_plan);
+            self.cached_plan = Some(arc_plan);
         }
 
         let plan = Arc::clone(
-            self.cached_dynamic_plan
+            self.cached_plan
                 .as_ref()
                 .expect("Dynamic execution plan must exist"),
         );
 
-        execute_dynamic_plan(self, plan)
+        execute_plan(self, plan)
     }
 
     pub(crate) fn gpu_count(&self) -> usize {
