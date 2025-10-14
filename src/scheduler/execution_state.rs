@@ -182,8 +182,7 @@ impl ExecutionState {
 
     fn signal_completion(&self) {
         let (lock, cvar) = &*self.completion_signal;
-        let guard = lock.lock().unwrap();
-        drop(guard);
+        let _guard = lock.lock().unwrap();
         cvar.notify_one();
     }
 

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::OnceLock;
 
 use crate::compute::compute_manager::ComputeManager;
@@ -32,16 +32,11 @@ impl ExecutionPlan {
     }
 }
 
-pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<ExecutionPlan, VKMLError> {
-    let tensor_graph = &compute_manager.tensor_graph;
-    if tensor_graph.operations.is_empty() {
-        return Err(VKMLError::Generic(
-            "Scheduler cannot execute an empty graph".into(),
-        ));
-    }
-
-    let op_count = tensor_graph.operations.len();
-    let tensor_count = tensor_graph.tensor_descs.len();
+fn build_dependency_graph(
+    tensor_graph: &crate::tensor_graph::tensor_graph::TensorGraph,
+    op_count: usize,
+    tensor_count: usize,
+) -> (Vec<Vec<OperationId>>, Vec<Vec<OperationId>>) {
     let mut tensor_producers: Vec<Option<OperationId>> = vec![None; tensor_count];
     for (op_idx, op) in tensor_graph.operations.iter().enumerate() {
         for &tid in &op.get_output_tensor_ids() {
@@ -52,7 +47,6 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
 
     let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
     let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); op_count];
-
     let mut seen_markers = vec![0u32; op_count];
     let mut current_mark: u32 = 1;
 
@@ -77,6 +71,67 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             }
         }
     }
+
+    (predecessors, successors)
+}
+
+fn organise_chain_into_layers(
+    chain: &[OperationId],
+    predecessors: &[Vec<OperationId>],
+    successors: &[Vec<OperationId>],
+    op_count: usize,
+) -> Vec<Vec<OperationId>> {
+    let mut in_degree: Vec<usize> = vec![0; op_count];
+    let chain_set: HashSet<OperationId> = chain.iter().copied().collect();
+
+    for &op in chain {
+        for &pred in &predecessors[op] {
+            if chain_set.contains(&pred) {
+                in_degree[op] += 1;
+            }
+        }
+    }
+
+    let mut layers: Vec<Vec<OperationId>> = Vec::new();
+    let mut current_layer: Vec<OperationId> = chain
+        .iter()
+        .copied()
+        .filter(|&op| in_degree[op] == 0)
+        .collect();
+
+    while !current_layer.is_empty() {
+        layers.push(current_layer.clone());
+
+        let mut next_layer: Vec<OperationId> = Vec::new();
+        for &op in &current_layer {
+            for &succ in &successors[op] {
+                if !chain_set.contains(&succ) {
+                    continue;
+                }
+                in_degree[succ] = in_degree[succ].saturating_sub(1);
+                if in_degree[succ] == 0 {
+                    next_layer.push(succ);
+                }
+            }
+        }
+        current_layer = next_layer;
+    }
+
+    layers
+}
+
+pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<ExecutionPlan, VKMLError> {
+    let tensor_graph = &compute_manager.tensor_graph;
+    if tensor_graph.operations.is_empty() {
+        return Err(VKMLError::Generic(
+            "Scheduler cannot execute an empty graph".into(),
+        ));
+    }
+
+    let op_count = tensor_graph.operations.len();
+    let tensor_count = tensor_graph.tensor_descs.len();
+
+    let (predecessors, successors) = build_dependency_graph(tensor_graph, op_count, tensor_count);
 
     let mut in_degrees: Vec<usize> = predecessors.iter().map(|p| p.len()).collect();
     let mut queue: VecDeque<OperationId> =
@@ -185,43 +240,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             operation_to_chunk[op_id] = chunk_id;
         }
 
-        // organize the chain into layers using kahns algorithm
-        // only consider dependencies within this chain
-        let mut in_degree: Vec<usize> = vec![0; op_count];
-        let chain_set: std::collections::HashSet<OperationId> = chain.iter().copied().collect();
-
-        for &op in &chain {
-            for &pred in &predecessors[op] {
-                if chain_set.contains(&pred) {
-                    in_degree[op] += 1;
-                }
-            }
-        }
-
-        let mut layers: Vec<Vec<OperationId>> = Vec::new();
-        let mut current_layer: Vec<OperationId> = chain
-            .iter()
-            .copied()
-            .filter(|&op| in_degree[op] == 0)
-            .collect();
-
-        while !current_layer.is_empty() {
-            layers.push(current_layer.clone());
-
-            let mut next_layer: Vec<OperationId> = Vec::new();
-            for &op in &current_layer {
-                for &succ in &successors[op] {
-                    if !chain_set.contains(&succ) {
-                        continue;
-                    }
-                    in_degree[succ] = in_degree[succ].saturating_sub(1);
-                    if in_degree[succ] == 0 {
-                        next_layer.push(succ);
-                    }
-                }
-            }
-            current_layer = next_layer;
-        }
+        let layers = organise_chain_into_layers(&chain, &predecessors, &successors, op_count);
 
         chunks.push(ExecutionChunk {
             device,
@@ -237,7 +256,6 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
 
     let chunk_count = chunks.len();
     let mut chunk_predecessors: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
-    let mut root_chunks: Vec<ChunkId> = Vec::new();
 
     for chunk_idx in 0..chunk_count {
         for layer in &chunks[chunk_idx].operation_layers {
@@ -250,14 +268,11 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 }
             }
         }
+        chunk_predecessors[chunk_idx].sort_unstable();
+        chunk_predecessors[chunk_idx].dedup();
     }
 
-    for chunk_idx in 0..chunk_count {
-        let preds = &mut chunk_predecessors[chunk_idx];
-        preds.sort_unstable();
-        preds.dedup();
-    }
-
+    // build reverse dependencies (dependents) and populate chunk fields
     let mut chunk_dependents: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
     for (chunk_idx, preds) in chunk_predecessors.iter().enumerate() {
         for &pred in preds {
@@ -265,17 +280,15 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
         }
     }
 
-    for dependents in &mut chunk_dependents {
-        dependents.sort_unstable();
-        dependents.dedup();
-    }
-
+    let mut root_chunks: Vec<ChunkId> = Vec::new();
     for chunk_idx in 0..chunk_count {
         let preds = std::mem::take(&mut chunk_predecessors[chunk_idx]);
         let dependents = std::mem::take(&mut chunk_dependents[chunk_idx]);
+
         chunks[chunk_idx].initial_dep_count = preds.len();
         chunks[chunk_idx].predecessors = preds;
         chunks[chunk_idx].dependents = dependents;
+
         if chunks[chunk_idx].initial_dep_count == 0 {
             root_chunks.push(chunk_idx);
         }
