@@ -195,10 +195,7 @@ impl TensorGraph {
         })
     }
 
-    /// Creates a simple stage-based plan for allocation and debugging.
-    /// Returns operations grouped into stages where all ops in a stage can run in parallel.
-    /// Used for tensor allocation planning and debug visualization.
-    pub fn create_stage_plan(&self) -> Vec<Vec<OperationId>> {
+    pub fn topological_execution_order(&self) -> Vec<OperationId> {
         let num_ops = self.operations.len();
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut in_degree: Vec<usize> = vec![0; num_ops];
@@ -215,44 +212,35 @@ impl TensorGraph {
             in_degree[curr_op] = preds.len();
         }
 
-        let mut plan = Vec::new();
         let mut dq: VecDeque<OperationId> = VecDeque::new();
         for op in 0..num_ops {
             if in_degree[op] == 0 {
                 dq.push_back(op);
             }
         }
+
+        let mut ordered: Vec<OperationId> = Vec::with_capacity(num_ops);
         let mut scheduled = 0;
-        while scheduled < num_ops {
-            if dq.is_empty() {
-                eprintln!(
-                    "Execution plan stuck: {}/{} scheduled. In-degrees: {:?}",
-                    scheduled, num_ops, in_degree
-                );
-                break;
-            }
-            let mut stage = Vec::new();
-            for _ in 0..dq.len() {
-                let op = dq.pop_front().unwrap();
-                stage.push(op);
-                scheduled += 1;
-                for &succ in &successors[op] {
-                    in_degree[succ] -= 1;
-                    if in_degree[succ] == 0 {
-                        dq.push_back(succ);
-                    }
+
+        while let Some(op) = dq.pop_front() {
+            ordered.push(op);
+            scheduled += 1;
+            for &succ in &successors[op] {
+                in_degree[succ] = in_degree[succ].saturating_sub(1);
+                if in_degree[succ] == 0 {
+                    dq.push_back(succ);
                 }
             }
-            stage.sort_unstable();
-            plan.push(stage);
         }
+
         if scheduled < num_ops {
             eprintln!(
                 "Could not schedule all operations: {}/{}.",
                 scheduled, num_ops
             );
         }
-        plan
+
+        ordered
     }
 
     pub fn get_instruction_or_panic(&self, idx: usize) -> &dyn Instruction {

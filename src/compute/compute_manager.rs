@@ -184,9 +184,7 @@ impl ComputeManager {
         &mut self,
         initialisers: Vec<Option<Box<[u8]>>>,
     ) -> Result<(), VKMLError> {
-        // Get stage-based plan and flatten to a linear sequence of operations
-        let execution_plan = self.tensor_graph.create_stage_plan();
-        let flattened_ops: Vec<OperationId> = execution_plan.into_iter().flatten().collect();
+        let flattened_ops: Vec<OperationId> = self.tensor_graph.topological_execution_order();
 
         // Track planned tensor locations: tensor_id -> DeviceLocation
         let mut tensor_locations: Vec<Option<DeviceId>> =
