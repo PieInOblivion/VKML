@@ -35,28 +35,18 @@ void main() {
 
     float sum = 0.0;
 
+    // Precompute transpose-dependent strides outside the loop
+    uint stride_a_k = (params.trans_a != 0) ? params.stride_a0 : params.stride_a1;
+    uint stride_a_m = (params.trans_a != 0) ? params.stride_a1 : params.stride_a0;
+    uint stride_b_k = (params.trans_b != 0) ? params.stride_b1 : params.stride_b0;
+    uint stride_b_n = (params.trans_b != 0) ? params.stride_b0 : params.stride_b1;
+
     // Matrix multiplication: compute element (row, col) of A*B
+    // Unroll hint for better ILP (instruction-level parallelism)
+    #pragma unroll 4
     for (uint i = 0; i < params.k; i++) {
-        // Get A[row, i] considering transpose
-        uint a_idx;
-        if (params.trans_a != 0) {
-            // A is transposed: A[row, i] = A_stored[i, row]
-            a_idx = i * params.stride_a0 + row * params.stride_a1;
-        } else {
-            // A is not transposed: A[row, i] = A_stored[row, i]
-            a_idx = row * params.stride_a0 + i * params.stride_a1;
-        }
-
-        // Get B[i, col] considering transpose
-        uint b_idx;
-        if (params.trans_b != 0) {
-            // B is transposed: B[i, col] = B_stored[col, i]
-            b_idx = col * params.stride_b0 + i * params.stride_b1;
-        } else {
-            // B is not transposed: B[i, col] = B_stored[i, col]
-            b_idx = i * params.stride_b0 + col * params.stride_b1;
-        }
-
+        uint a_idx = row * stride_a_m + i * stride_a_k;
+        uint b_idx = i * stride_b_k + col * stride_b_n;
         sum += a[a_idx] * b[b_idx];
     }
 
@@ -65,8 +55,6 @@ void main() {
 
     if (params.has_c != 0) {
         // Add beta * C[row, col]
-        // Assume C is broadcasted to (M, N)
-        // For simplicity, assume C is stored as (M, N)
         uint c_idx = row * params.n + col;
         result += params.beta * c[c_idx];
     }
