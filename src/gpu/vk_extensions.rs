@@ -1,4 +1,6 @@
 use crate::utils::error::VKMLError;
+use crate::utils::vk_to_onnx_dtype::vk_to_onnx_dtype;
+use onnx_extractor::DataType;
 use std::any::Any;
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -39,8 +41,19 @@ pub struct DevicePNext {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct CoopMatrixShape {
+    pub m: u32,
+    pub n: u32,
+    pub k: u32,
+    pub a_type: DataType,
+    pub b_type: DataType,
+    pub c_type: DataType,
+    pub result_type: DataType,
+}
+
+#[derive(Debug, Default)]
 pub struct VkExtensions {
-    cooperative_matrix: Option<(u32, u32, u32)>, // (max_workgroup_size_x, max_workgroup_size_y, max_workgroup_size_z)
+    cooperative_matrix: Option<Vec<CoopMatrixShape>>,
     memory_budget: bool,
     push_descriptor: bool,
 }
@@ -79,38 +92,40 @@ impl VkExtensions {
     fn query_cooperative_matrix_limits(
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> Option<(u32, u32, u32)> {
+    ) -> Option<Vec<CoopMatrixShape>> {
         unsafe {
-            let mut count: u32 = 0;
             let fp = (*instance)
                 .commands()
                 .get_physical_device_cooperative_matrix_properties_khr;
-            // first call to get count
-            fp(physical_device, &mut count, ptr::null_mut());
 
-            if count == 0 {
-                // extension present but no entries reported so return zeroed limits. Maybe we should return none?
-                return Some((0, 0, 0));
+            let mut count: u32 = 0;
+            let result = fp(physical_device, &mut count, std::ptr::null_mut());
+            if result != vk::Result::SUCCESS || count == 0 {
+                return None;
             }
 
-            let mut properties: Vec<vk::CooperativeMatrixPropertiesKHR> =
-                Vec::with_capacity(count as usize);
+            let mut properties =
+                Vec::<vk::CooperativeMatrixPropertiesKHR>::with_capacity(count as usize);
             let result = fp(physical_device, &mut count, properties.as_mut_ptr());
             if result != vk::Result::SUCCESS {
-                return Some((0, 0, 0));
+                return None;
             }
             properties.set_len(count as usize);
 
-            let mut max_m = 0u32;
-            let mut max_n = 0u32;
-            let mut max_k = 0u32;
-            for p in properties.iter() {
-                max_m = max_m.max(p.m_size);
-                max_n = max_n.max(p.n_size);
-                max_k = max_k.max(p.k_size);
-            }
+            let shapes: Vec<CoopMatrixShape> = properties
+                .iter()
+                .map(|p| CoopMatrixShape {
+                    m: p.m_size,
+                    n: p.n_size,
+                    k: p.k_size,
+                    a_type: vk_to_onnx_dtype(p.a_type).unwrap_or(DataType::Undefined),
+                    b_type: vk_to_onnx_dtype(p.b_type).unwrap_or(DataType::Undefined),
+                    c_type: vk_to_onnx_dtype(p.c_type).unwrap_or(DataType::Undefined),
+                    result_type: vk_to_onnx_dtype(p.result_type).unwrap_or(DataType::Undefined),
+                })
+                .collect();
 
-            Some((max_m, max_n, max_k))
+            Some(shapes)
         }
     }
 
@@ -164,7 +179,7 @@ impl VkExtensions {
         }
     }
 
-    pub fn coop_matrix_limits(&self) -> Option<(u32, u32, u32)> {
-        self.cooperative_matrix
+    pub fn coop_matrix_shapes(&self) -> Option<Vec<CoopMatrixShape>> {
+        self.cooperative_matrix.clone()
     }
 }
