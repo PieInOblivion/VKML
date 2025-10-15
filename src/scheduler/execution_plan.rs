@@ -87,6 +87,8 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
 
     let op_count = tensor_graph.operations.len();
     let tensor_count = tensor_graph.tensor_descs.len();
+    let gpu_count = compute_manager.gpu_count();
+    let cpu_slot = gpu_count;
 
     let dep_graph = compute_manager.dependency_graph();
     let predecessors = &dep_graph.predecessors;
@@ -106,80 +108,54 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
         })
         .collect();
 
-    let mut chunks: Vec<ExecutionChunk> = Vec::new();
-    let mut operation_to_chunk: Vec<ChunkId> = vec![usize::MAX; op_count];
-    let mut chain_marks: Vec<u32> = vec![0; op_count];
-    let mut chain_mark_value: u32 = 1;
+    let mut chunk_devices: Vec<DeviceId> = Vec::new();
+    let mut chunk_operations: Vec<Vec<OperationId>> = Vec::new();
+    let mut op_to_chunk: Vec<ChunkId> = vec![usize::MAX; op_count];
+    let mut active_chunk_per_slot: Vec<Option<ChunkId>> = vec![None; gpu_count + 1];
 
     for &op in topo_order {
-        if operation_to_chunk[op] != usize::MAX {
-            continue;
-        }
-
         let device = op_devices[op].clone();
-        let mut chain: Vec<OperationId> = Vec::new();
+        let slot = match device {
+            DeviceId::Gpu(idx) => idx,
+            DeviceId::Cpu => cpu_slot,
+        };
 
-        chain_mark_value = chain_mark_value.wrapping_add(1);
-        if chain_mark_value == 0 {
-            chain_marks.fill(0);
-            chain_mark_value = 1;
+        if slot >= active_chunk_per_slot.len() {
+            active_chunk_per_slot.resize(slot + 1, None);
         }
 
-        // Expand the chain breadth-first so we can include multiple ready successors
-        // on the same device (reduces number of chunks created).
-        chain_marks[op] = chain_mark_value;
-        chain.push(op);
-        let mut check_idx: usize = 0;
-        while check_idx < chain.len() {
-            let cur = chain[check_idx];
-            for &succ in &successors[cur] {
-                if operation_to_chunk[succ] != usize::MAX {
-                    continue;
-                }
-                if chain_marks[succ] == chain_mark_value {
-                    continue;
-                }
-                if op_devices[succ] != device {
-                    continue;
-                }
-
-                // first, eagerly include any unassigned zero-dependency predecessors
-                // of this successor on the same device. This reduces chunk fragmentation
-                // for operations like constant reshapes that have no data dependencies
-                for &pred in &predecessors[succ] {
-                    if operation_to_chunk[pred] == usize::MAX
-                        && chain_marks[pred] != chain_mark_value
-                        && predecessors[pred].is_empty()
-                        && op_devices[pred] == device
-                    {
-                        chain_marks[pred] = chain_mark_value;
-                        chain.push(pred);
-                    }
-                }
-
-                // ensure all predecessors are either already assigned to a chunk
-                // or are part of this chain (marked)
-                if !predecessors[succ].iter().all(|&pred| {
-                    operation_to_chunk[pred] != usize::MAX || chain_marks[pred] == chain_mark_value
-                }) {
-                    continue;
-                }
-
-                chain_marks[succ] = chain_mark_value;
-                chain.push(succ);
+        let reuse_chunk = active_chunk_per_slot[slot].and_then(|chunk_id| {
+            let all_local = predecessors[op]
+                .iter()
+                .all(|&pred| op_to_chunk[pred] == chunk_id);
+            if all_local {
+                Some(chunk_id)
+            } else {
+                None
             }
-            check_idx += 1;
-        }
+        });
 
-        let chunk_id = chunks.len();
-        for &op_id in &chain {
-            operation_to_chunk[op_id] = chunk_id;
-        }
+        let chunk_id = match reuse_chunk {
+            Some(id) => id,
+            None => {
+                let new_id = chunk_operations.len();
+                chunk_operations.push(Vec::new());
+                chunk_devices.push(device.clone());
+                active_chunk_per_slot[slot] = Some(new_id);
+                new_id
+            }
+        };
 
-        let layers = organise_chain_into_layers(&chain, predecessors, successors, op_count);
+        chunk_operations[chunk_id].push(op);
+        op_to_chunk[op] = chunk_id;
+    }
+
+    let mut chunks: Vec<ExecutionChunk> = Vec::with_capacity(chunk_operations.len());
+    for (idx, ops) in chunk_operations.iter().enumerate() {
+        let layers = organise_chain_into_layers(ops, predecessors, successors, op_count);
 
         chunks.push(ExecutionChunk {
-            device,
+            device: chunk_devices[idx].clone(),
             operation_layers: layers,
             predecessors: Vec::new(),
             dependents: Vec::new(),
@@ -194,13 +170,11 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let mut chunk_predecessors: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
 
     for chunk_idx in 0..chunk_count {
-        for layer in &chunks[chunk_idx].operation_layers {
-            for &op in layer {
-                for &pred_op in &predecessors[op] {
-                    let pred_chunk = operation_to_chunk[pred_op];
-                    if pred_chunk != chunk_idx {
-                        chunk_predecessors[chunk_idx].push(pred_chunk);
-                    }
+        for &op in &chunk_operations[chunk_idx] {
+            for &pred in &predecessors[op] {
+                let pred_chunk = op_to_chunk[pred];
+                if pred_chunk != chunk_idx {
+                    chunk_predecessors[chunk_idx].push(pred_chunk);
                 }
             }
         }
