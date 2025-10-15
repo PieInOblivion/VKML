@@ -46,10 +46,9 @@ impl Instruction for TransferToDeviceInstruction {
         &self,
         _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
-        cm: &ComputeManager,
+        _cm: &ComputeManager,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.execute_cpu(cm);
-        Ok(())
+        Err("GPU implementation of transfer not possible yet".into())
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
