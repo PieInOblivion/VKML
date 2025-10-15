@@ -128,11 +128,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             let all_local = predecessors[op]
                 .iter()
                 .all(|&pred| op_to_chunk[pred] == chunk_id);
-            if all_local {
-                Some(chunk_id)
-            } else {
-                None
-            }
+            if all_local { Some(chunk_id) } else { None }
         });
 
         let chunk_id = match reuse_chunk {
@@ -169,8 +165,8 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let chunk_count = chunks.len();
     let mut chunk_predecessors: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
 
-    for chunk_idx in 0..chunk_count {
-        for &op in &chunk_operations[chunk_idx] {
+    for (chunk_idx, ops) in chunk_operations.iter().enumerate().take(chunk_count) {
+        for &op in ops {
             for &pred in &predecessors[op] {
                 let pred_chunk = op_to_chunk[pred];
                 if pred_chunk != chunk_idx {
@@ -234,8 +230,8 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     }
 
     if output_chunks.is_empty() {
-        for idx in 0..chunk_count {
-            chunks[idx].is_output = true;
+        for (idx, chunk) in chunks.iter_mut().enumerate().take(chunk_count) {
+            chunk.is_output = true;
             output_chunks.push(idx);
         }
     }
@@ -246,16 +242,20 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
         ));
     }
 
-    for chunk_idx in 0..chunk_count {
-        let needs_wait = match chunks[chunk_idx].device {
+    // snapshot devices for dependents checks to avoid mutable/immutable borrow conflicts
+    // TODO: Clean this up
+    let devices_snapshot: Vec<DeviceId> = chunks.iter().map(|c| c.device.clone()).collect();
+
+    for chunk in chunks.iter_mut().take(chunk_count) {
+        let needs_wait = match chunk.device {
             DeviceId::Gpu(gpu_idx) => {
-                if chunks[chunk_idx].is_output {
+                if chunk.is_output {
                     true
                 } else {
-                    chunks[chunk_idx]
+                    chunk
                         .dependents
                         .iter()
-                        .any(|&dep| match chunks[dep].device {
+                        .any(|&dep| match devices_snapshot[dep] {
                             DeviceId::Gpu(dep_gpu) => dep_gpu != gpu_idx,
                             DeviceId::Cpu => true,
                         })
@@ -263,7 +263,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             }
             DeviceId::Cpu => false,
         };
-        chunks[chunk_idx].needs_host_wait = needs_wait;
+        chunk.needs_host_wait = needs_wait;
     }
 
     Ok(ExecutionPlan {

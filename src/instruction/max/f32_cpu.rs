@@ -27,8 +27,8 @@ pub fn f32_cpu(
     let mut off_a: usize = 0;
     let mut off_b: usize = 0;
 
-    for i in 0..num_elements {
-        dst_f32[i] = src1_f32[off_a].max(src2_f32[off_b]);
+    for dst_slot in dst_f32.iter_mut().take(num_elements) {
+        *dst_slot = src1_f32[off_a].max(src2_f32[off_b]);
 
         for d in (0..rank).rev() {
             idxs[d] += 1;

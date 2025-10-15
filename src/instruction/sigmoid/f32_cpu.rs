@@ -25,9 +25,9 @@ pub fn f32_cpu(
 
     let mut off_a: usize = 0;
 
-    for i in 0..num_elements {
+    for dst_slot in dst_f32.iter_mut().take(num_elements) {
         let x = src_f32[off_a];
-        dst_f32[i] = 1.0 / (1.0 + (-x).exp());
+        *dst_slot = 1.0 / (1.0 + (-x).exp());
 
         for d in (0..rank).rev() {
             idxs[d] += 1;

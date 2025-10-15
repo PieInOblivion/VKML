@@ -11,8 +11,8 @@ pub fn f32_cpu(fan_in: usize, dst_dims: Vec<i64>, dst_ptr: &mut [u8]) {
 
     let std_dev = (2.0f32 / fan_in as f32).sqrt();
 
-    for i in 0..num_elements {
+    for dst_slot in dst_f32.iter_mut().take(num_elements) {
         let v = normal_sample(0.0, std_dev);
-        dst_f32[i] = v;
+        *dst_slot = v;
     }
 }

@@ -12,8 +12,8 @@ pub fn f32_cpu(min_val: f32, max_val: f32, dst_dims: Vec<i64>, dst_ptr: &mut [u8
     let dist = Uniform::new(min_val, max_val);
     let mut rng = rand::rng();
 
-    for i in 0..num_elements {
+    for dst_slot in dst_f32.iter_mut().take(num_elements) {
         let v: f32 = dist.unwrap().sample(&mut rng);
-        dst_f32[i] = v;
+        *dst_slot = v;
     }
 }

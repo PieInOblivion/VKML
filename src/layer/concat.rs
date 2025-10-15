@@ -67,12 +67,11 @@ impl Layer for ConcatLayer {
         }
 
         // For all dimensions except concat_dim, sizes must match
-        for d in 0..ndim {
+        for (d, &size) in first_dims.iter().enumerate().take(ndim) {
             if d == self.dim {
                 continue;
             }
 
-            let size = first_dims[d];
             for shape in input_shapes.iter().skip(1) {
                 if shape.dims()[d] != size {
                     return Err(VKMLError::VulkanError(format!(

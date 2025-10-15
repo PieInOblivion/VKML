@@ -125,10 +125,10 @@ impl TensorDesc {
         let src_strides = Self::compute_strides(src);
         let mut bs = vec![0; dst.len()];
         let offset = dst.len().saturating_sub(src.len());
-        for i in 0..dst.len() {
+        for (i, b) in bs.iter_mut().enumerate().take(dst.len()) {
             let dim = *src.get(i.wrapping_sub(offset)).unwrap_or(&1) as usize;
             let stride = *src_strides.get(i.wrapping_sub(offset)).unwrap_or(&0);
-            bs[i] = if dim == 1 { 0 } else { stride };
+            *b = if dim == 1 { 0 } else { stride };
         }
         bs
     }

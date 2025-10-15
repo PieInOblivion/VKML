@@ -21,9 +21,9 @@ pub fn f32_cpu(strides_a: Vec<usize>, dst_dims: Vec<i64>, src_bytes: &[u8], dst_
 
     let mut off_a: usize = 0;
 
-    for i in 0..num_elements {
+    for dst_slot in dst_f32.iter_mut().take(num_elements) {
         // ReLU: max(0.0, x)
-        dst_f32[i] = src_f32[off_a].max(0.0);
+        *dst_slot = src_f32[off_a].max(0.0);
 
         // increment odometer
         for d in (0..rank).rev() {

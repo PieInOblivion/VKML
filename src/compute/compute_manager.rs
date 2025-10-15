@@ -229,8 +229,9 @@ impl ComputeManager {
             // We must include sizes for: unallocated tensors and remapped tensors (transfers)
             let mut chosen_device_idx: Option<usize> = None;
 
-            'device_search: for dev_idx in 0..available_memory.len() {
-                let cand_device = &available_memory[dev_idx].0;
+            'device_search: for (dev_idx, (cand_device, available)) in
+                available_memory.iter().enumerate()
+            {
                 let mut needed: u64 = 0;
 
                 // Inputs
@@ -272,7 +273,7 @@ impl ComputeManager {
                 }
 
                 // Check if candidate device has enough available memory
-                if needed <= available_memory[dev_idx].1 {
+                if needed <= *available {
                     chosen_device_idx = Some(dev_idx);
                     break 'device_search;
                 }
