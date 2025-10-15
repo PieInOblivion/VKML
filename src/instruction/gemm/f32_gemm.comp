@@ -42,8 +42,6 @@ void main() {
     uint stride_b_n = (params.trans_b != 0) ? params.stride_b0 : params.stride_b1;
 
     // Matrix multiplication: compute element (row, col) of A*B
-    // Unroll hint for better ILP (instruction-level parallelism)
-    #pragma unroll 4
     for (uint i = 0; i < params.k; i++) {
         uint a_idx = row * stride_a_m + i * stride_a_k;
         uint b_idx = i * stride_b_k + col * stride_b_n;
