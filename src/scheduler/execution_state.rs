@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc, Condvar, Mutex, Weak,
+    Arc, Weak,
     atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
@@ -21,7 +21,7 @@ struct ExecutionState {
     device_chunk_counters: Vec<AtomicU64>,
     chunk_dependencies_remaining: Vec<AtomicUsize>,
     outputs_remaining: AtomicUsize,
-    completion_signal: Arc<(Mutex<()>, Condvar)>,
+    main_thread: std::thread::Thread,
     chunk_task_params: Vec<ChunkTaskParams>,
 }
 
@@ -70,8 +70,6 @@ impl ExecutionState {
 
         let outputs_remaining_init = plan.output_chunks.len();
 
-        let completion_signal = Arc::new((Mutex::new(()), Condvar::new()));
-
         let plan_for_state = Arc::clone(&plan);
         let manager_ptr = manager as *const ComputeManager;
 
@@ -90,7 +88,7 @@ impl ExecutionState {
                 device_chunk_counters,
                 chunk_dependencies_remaining,
                 outputs_remaining: AtomicUsize::new(outputs_remaining_init),
-                completion_signal,
+                main_thread: std::thread::current(),
                 chunk_task_params,
             }
         });
@@ -181,16 +179,12 @@ impl ExecutionState {
     }
 
     fn signal_completion(&self) {
-        let (lock, cvar) = &*self.completion_signal;
-        let _guard = lock.lock().unwrap();
-        cvar.notify_one();
+        self.main_thread.unpark();
     }
 
     fn await_completion(&self) {
-        let (lock, cvar) = &*self.completion_signal;
-        let mut guard = lock.lock().unwrap();
         while self.outputs_remaining.load(Ordering::Acquire) != 0 {
-            guard = cvar.wait(guard).unwrap();
+            std::thread::park();
         }
     }
 
