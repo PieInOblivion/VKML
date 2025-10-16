@@ -80,8 +80,8 @@ impl Instruction for DivInstruction {
         );
 
         let mut dims_arr = [0u32; 8];
-        for i in 0..dst_dims.len() {
-            dims_arr[i] = dst_dims[i] as u32;
+        for (i, &d) in dst_dims.iter().enumerate().take(8) {
+            dims_arr[i] = d as u32;
         }
 
         let broadcast_dims =
@@ -102,17 +102,13 @@ impl Instruction for DivInstruction {
         let strides_b_usize = TensorDesc::broadcast_strides(src2_dims, dst_dims);
 
         let mut strides_a_arr = [0u32; 8];
-        for i in 0..strides_a_usize.len() {
-            if i < 8 {
-                strides_a_arr[i] = strides_a_usize[i] as u32;
-            }
+        for (i, &s) in strides_a_usize.iter().enumerate().take(8) {
+            strides_a_arr[i] = s as u32;
         }
 
         let mut strides_b_arr = [0u32; 8];
-        for i in 0..strides_b_usize.len() {
-            if i < 8 {
-                strides_b_arr[i] = strides_b_usize[i] as u32;
-            }
+        for (i, &s) in strides_b_usize.iter().enumerate().take(8) {
+            strides_b_arr[i] = s as u32;
         }
 
         let total_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();

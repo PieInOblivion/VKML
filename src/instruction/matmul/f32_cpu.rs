@@ -65,9 +65,7 @@ pub fn f32_cpu(
     // Validate batch dimensions
     let batch_dims = if src1_batch_dims.is_empty() {
         src2_batch_dims.to_vec()
-    } else if src2_batch_dims.is_empty() {
-        src1_batch_dims.to_vec()
-    } else if src1_batch_dims == src2_batch_dims {
+    } else if src2_batch_dims.is_empty() || src1_batch_dims == src2_batch_dims {
         src1_batch_dims.to_vec()
     } else {
         panic!(
@@ -196,10 +194,7 @@ pub fn f32_cpu(
                         src2_batch_offset + kk * b_row_stride + j * b_col_stride
                     };
 
-                    let src1_val = src1_data[src1_idx];
-                    let src2_val = src2_data[src2_idx];
-
-                    sum += src1_val * src2_val;
+                    sum += src1_data[src1_idx] * src2_data[src2_idx];
                 }
 
                 let dst_idx = if a_is_1d && dst_dims.len() == 1 {

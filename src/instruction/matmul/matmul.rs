@@ -418,7 +418,7 @@ fn create_generic_matmul_command_buffer(
 
     let pack_pairs = |vals: &[usize]| -> [u32; 3] {
         let mut out = [0u32; 3];
-        for i in 0..3 {
+        for (i, out_slot) in out.iter_mut().enumerate().take(3) {
             let lo_idx = i * 2;
             let hi_idx = lo_idx + 1;
             let lo = if lo_idx < vals.len() {
@@ -431,7 +431,7 @@ fn create_generic_matmul_command_buffer(
             } else {
                 0u32
             } & 0xFFFFu32;
-            out[i] = (hi << 16) | lo;
+            *out_slot = (hi << 16) | lo;
         }
         out
     };
@@ -480,8 +480,8 @@ fn create_generic_matmul_command_buffer(
     // Calculate batch size for dispatch (product of C's batch dimensions)
     let mut batch_size_val = 1usize;
     if dst_dims_usize.len() > 2 {
-        for i in 0..(dst_dims_usize.len() - 2) {
-            batch_size_val *= dst_dims_usize[i];
+        for &v in dst_dims_usize.iter().take(dst_dims_usize.len() - 2) {
+            batch_size_val *= v;
         }
     }
 

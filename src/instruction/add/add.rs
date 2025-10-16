@@ -80,8 +80,8 @@ impl Instruction for AddInstruction {
         );
 
         let mut dims_arr = [0u32; 8];
-        for i in 0..dst_dims_usize.len() {
-            dims_arr[i] = dst_dims_usize[i] as u32;
+        for (i, &d) in dst_dims_usize.iter().enumerate().take(8) {
+            dims_arr[i] = d as u32;
         }
 
         // Calculate broadcast shape and strides
@@ -103,21 +103,13 @@ impl Instruction for AddInstruction {
         let strides_b_usize = TensorDesc::broadcast_strides(src2_dims_usize, dst_dims_usize);
 
         let mut strides_a_arr = [0u32; 8];
-        // Ensure strides_a_usize rank matches dst_dims_usize rank for consistency in shader
-        // TensorDesc::broadcast_strides returns strides for the broadcasted shape (dst_dims_usize)
-        for i in 0..strides_a_usize.len() {
-            if i < 8 {
-                // Defensive check, should match rank
-                strides_a_arr[i] = strides_a_usize[i] as u32;
-            }
+        for (i, &s) in strides_a_usize.iter().enumerate().take(8) {
+            strides_a_arr[i] = s as u32;
         }
 
         let mut strides_b_arr = [0u32; 8];
-        for i in 0..strides_b_usize.len() {
-            if i < 8 {
-                // Defensive check
-                strides_b_arr[i] = strides_b_usize[i] as u32;
-            }
+        for (i, &s) in strides_b_usize.iter().enumerate().take(8) {
+            strides_b_arr[i] = s as u32;
         }
 
         let total_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();

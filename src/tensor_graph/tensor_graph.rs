@@ -208,9 +208,9 @@ impl TensorGraph {
         let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
 
-        for curr_op in 0..num_ops {
+        for (curr_op, op) in self.operations.iter().enumerate().take(num_ops) {
             let mut preds = HashSet::new();
-            for &t in &self.operations[curr_op].get_input_tensor_ids() {
+            for &t in &op.get_input_tensor_ids() {
                 for pred_op in self.get_tensor_producers(t) {
                     if pred_op != curr_op && preds.insert(pred_op) {
                         predecessors[curr_op].push(pred_op);
@@ -223,8 +223,8 @@ impl TensorGraph {
         // compute topological order using kahns algorithm
         let mut in_degree: Vec<usize> = predecessors.iter().map(|p| p.len()).collect();
         let mut dq: VecDeque<OperationId> = VecDeque::new();
-        for op in 0..num_ops {
-            if in_degree[op] == 0 {
+        for (op, &deg) in in_degree.iter().enumerate().take(num_ops) {
+            if deg == 0 {
                 dq.push_back(op);
             }
         }
