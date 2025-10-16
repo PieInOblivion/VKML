@@ -1,2 +1,3 @@
-pub mod f32_cpu;
-pub mod gemm;
+mod f32_cpu;
+mod gemm;
+pub use gemm::GemmInstruction;

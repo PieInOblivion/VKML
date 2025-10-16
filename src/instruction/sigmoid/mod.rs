@@ -1,2 +1,3 @@
-pub mod f32_cpu;
-pub mod sigmoid;
+mod f32_cpu;
+mod sigmoid;
+pub use sigmoid::SigmoidInstruction;

@@ -1,1 +1,2 @@
-pub mod reshape;
+mod reshape;
+pub use reshape::ReshapeInstruction;

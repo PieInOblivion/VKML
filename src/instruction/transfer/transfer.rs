@@ -1,6 +1,6 @@
 use crate::{
-    ComputeManager, gpu::vk_gpu::Gpu, instruction::instruction::Instruction,
-    tensor::tensor::DeviceId, tensor_graph::tensor_graph::TensorId,
+    ComputeManager, gpu::vk_gpu::Gpu, instruction::Instruction, tensor::DeviceId,
+    tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;

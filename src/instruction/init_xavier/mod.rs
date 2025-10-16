@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod init_xavier;
-pub mod push_constants;
+mod f32_cpu;
+mod init_xavier;
+pub use init_xavier::InitXavierInstruction;
+mod push_constants;

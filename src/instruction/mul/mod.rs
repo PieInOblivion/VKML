@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod mul;
-pub mod push_constants;
+mod f32_cpu;
+mod mul;
+pub use mul::MulInstruction;
+mod push_constants;

@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod max;
-pub mod push_constants;
+mod f32_cpu;
+mod max;
+pub use max::MaxInstruction;
+mod push_constants;

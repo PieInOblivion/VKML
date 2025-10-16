@@ -1,8 +1,8 @@
 use crate::{
     compute::compute_manager::ComputeManager,
     model::layer_connection::{LayerConnection, LayerId},
-    tensor::tensor::DeviceId,
-    tensor_graph::tensor_graph::TensorId,
+    tensor::DeviceId,
+    tensor_graph::TensorId,
     utils::error::VKMLError,
 };
 use onnx_extractor::DataType;

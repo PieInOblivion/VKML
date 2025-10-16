@@ -6,17 +6,17 @@ use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
 use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
 use crate::scheduler::{ExecutionPlan, create_execution_plan, execute_plan};
-use crate::tensor::cell::TensorCell;
-use crate::tensor::tensor::{DeviceId, Tensor};
+use crate::tensor::TensorCell;
+use crate::tensor::{DeviceId, Tensor};
 use crate::utils::error::VKMLError;
 use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
-use crate::instruction::instruction::Instruction;
-use crate::tensor_graph::tensor_graph::{DependencyGraph, OperationId, TensorGraph};
+use crate::instruction::Instruction;
+use crate::tensor_graph::{DependencyGraph, OperationId, TensorGraph};
 use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::desc::TensorDesc,
+    tensor::TensorDesc,
 };
 
 use super::cpu_compute::CPUCompute;

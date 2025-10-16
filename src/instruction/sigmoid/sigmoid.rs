@@ -4,8 +4,8 @@ use crate::{
     instruction::{
         gpu_operations::GPUOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
     },
-    tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::TensorId,
+    tensor::TensorDesc,
+    tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};

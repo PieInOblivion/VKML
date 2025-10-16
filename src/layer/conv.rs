@@ -1,8 +1,8 @@
 use onnx_extractor::DataType;
 
 use crate::{
-    instruction::{self, conv::conv::AutoPad},
-    tensor::desc::TensorDesc,
+    instruction::{self, AutoPad},
+    tensor::TensorDesc,
     utils::error::VKMLError,
 };
 

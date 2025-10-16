@@ -1,3 +1,4 @@
-pub mod div;
-pub mod f32_cpu;
-pub mod push_constants;
+mod div;
+pub use div::DivInstruction;
+mod f32_cpu;
+mod push_constants;

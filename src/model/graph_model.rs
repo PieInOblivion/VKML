@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    instruction::{self, instruction::Instruction},
+    instruction::{self, Instruction},
     layer::layer::Layer,
-    tensor::desc::TensorDesc,
+    tensor::TensorDesc,
     utils::error::VKMLError,
 };
 

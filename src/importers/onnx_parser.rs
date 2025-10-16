@@ -1,7 +1,7 @@
 use crate::{
-    instruction::{self, conv::conv::AutoPad, instruction::Instruction},
-    tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::{TensorGraph, TensorId},
+    instruction::{self, AutoPad, Instruction},
+    tensor::TensorDesc,
+    tensor_graph::{TensorGraph, TensorId},
     utils::error::VKMLError,
 };
 use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation};

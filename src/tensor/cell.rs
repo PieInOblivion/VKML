@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 
-use crate::tensor::tensor::Tensor;
+use crate::tensor::Tensor;
 
 pub struct TensorCell {
     tensor: UnsafeCell<Tensor>,

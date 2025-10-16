@@ -26,6 +26,6 @@ pub use compute::compute_manager::ComputeManager;
 pub use importers::onnx_parser;
 pub use layer::factory::Layers;
 pub use model::{graph_model::GraphModel, layer_connection::LayerConnection};
-pub use tensor::desc::TensorDesc;
-pub use tensor::tensor::Tensor;
+pub use tensor::Tensor;
+pub use tensor::TensorDesc;
 pub use utils::error;

@@ -1,2 +1,3 @@
-pub mod concat;
-pub mod f32_cpu;
+mod concat;
+pub use concat::ConcatInstruction;
+mod f32_cpu;

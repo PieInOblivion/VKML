@@ -1,5 +1,7 @@
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
+use crate::TensorDesc;
+
 /// N-D max pooling f32 CPU implementation. No indices are produced.
 pub fn f32_cpu(
     src_dims: Vec<usize>,
@@ -25,12 +27,10 @@ pub fn f32_cpu(
     let spatial_rank = src_dims.len() - 2;
 
     // compute strides
-    let src_strides = crate::tensor::desc::TensorDesc::compute_strides(
-        &src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>(),
-    );
-    let dst_strides = crate::tensor::desc::TensorDesc::compute_strides(
-        &dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>(),
-    );
+    let src_strides =
+        TensorDesc::compute_strides(&src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
+    let dst_strides =
+        TensorDesc::compute_strides(&dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
 
     let offset = |idxs: &[usize], strides: &[usize]| -> usize {
         idxs.iter().zip(strides.iter()).map(|(i, s)| i * s).sum()

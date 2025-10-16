@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use onnx_extractor::DataType;
 
-use crate::{tensor::desc::TensorDesc, utils::error::VKMLError};
+use crate::{tensor::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 

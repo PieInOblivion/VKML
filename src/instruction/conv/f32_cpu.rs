@@ -1,5 +1,7 @@
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
+use crate::TensorDesc;
+
 /// A simple single-threaded N-D convolution for f32 tensors.
 pub fn f32_cpu(
     src_dims: Vec<usize>,
@@ -40,15 +42,12 @@ pub fn f32_cpu(
     let spatial_rank = src_dims.len() - 2;
 
     // Compute strides for indexing
-    let src_strides = crate::tensor::desc::TensorDesc::compute_strides(
-        &src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>(),
-    );
-    let dst_strides = crate::tensor::desc::TensorDesc::compute_strides(
-        &dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>(),
-    );
-    let weight_strides = crate::tensor::desc::TensorDesc::compute_strides(
-        &weight_dims.iter().map(|d| *d as i64).collect::<Vec<_>>(),
-    );
+    let src_strides =
+        TensorDesc::compute_strides(&src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
+    let dst_strides =
+        TensorDesc::compute_strides(&dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
+    let weight_strides =
+        TensorDesc::compute_strides(&weight_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
 
     // Helper to compute linear offset
     let offset = |idxs: &[usize], strides: &[usize]| -> usize {

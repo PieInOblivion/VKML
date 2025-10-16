@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::compute::compute_manager::ComputeManager;
-use crate::tensor::tensor::DeviceId;
-use crate::tensor_graph::tensor_graph::OperationId;
+use crate::tensor::DeviceId;
+use crate::tensor_graph::OperationId;
 use crate::utils::error::VKMLError;
 use vulkanalia::vk;
 

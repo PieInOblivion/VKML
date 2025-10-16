@@ -7,8 +7,8 @@ use vulkanalia::vk;
 use vulkanalia::vk::DeviceV1_0;
 use zero_pool::{global_pool, zp_define_task_fn};
 
-use crate::tensor::tensor::DeviceId;
-use crate::tensor_graph::tensor_graph::OperationId;
+use crate::tensor::DeviceId;
+use crate::tensor_graph::OperationId;
 use crate::utils::error::VKMLError;
 use crate::{compute::compute_manager::ComputeManager, scheduler::execution_plan::ChunkId};
 

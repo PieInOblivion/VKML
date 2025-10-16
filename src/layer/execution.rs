@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{
-    instruction::instruction::Instruction, tensor::desc::TensorDesc,
-    tensor_graph::tensor_graph::TensorId,
-};
+use crate::{instruction::Instruction, tensor::TensorDesc, tensor_graph::TensorId};
 
 pub struct LayerExecution {
     pub tensors: Vec<TensorDesc>,                // Tensor descriptors

@@ -3,10 +3,8 @@ use crate::instruction::init_xavier::push_constants::InitXavierPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{
-        gpu_operations::GPUOperation, init_xavier::f32_cpu::f32_cpu, instruction::Instruction,
-    },
-    tensor_graph::tensor_graph::TensorId,
+    instruction::{Instruction, gpu_operations::GPUOperation, init_xavier::f32_cpu::f32_cpu},
+    tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};

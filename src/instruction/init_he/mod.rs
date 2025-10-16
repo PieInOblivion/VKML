@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod init_he;
-pub mod push_constants;
+mod f32_cpu;
+mod init_he;
+pub use init_he::InitHeInstruction;
+mod push_constants;

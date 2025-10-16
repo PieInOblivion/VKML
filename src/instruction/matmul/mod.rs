@@ -1,2 +1,3 @@
-pub mod f32_cpu;
-pub mod matmul;
+mod f32_cpu;
+mod matmul;
+pub use matmul::MatMulInstruction;

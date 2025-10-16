@@ -1,4 +1,4 @@
-use crate::{instruction::conv::conv::AutoPad, tensor::desc::TensorDesc};
+use crate::{instruction::AutoPad, tensor::TensorDesc};
 
 use super::{
     activations::{ActivationLayer, ActivationType},

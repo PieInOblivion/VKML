@@ -1,3 +1,4 @@
-pub mod add;
-pub mod f32_cpu;
-pub mod push_constants;
+mod add;
+pub use add::AddInstruction;
+mod f32_cpu;
+mod push_constants;

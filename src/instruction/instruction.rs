@@ -1,6 +1,4 @@
-use crate::{
-    ComputeManager, gpu::vk_gpu::Gpu, tensor_graph::tensor_graph::TensorId, utils::error::VKMLError,
-};
+use crate::{ComputeManager, gpu::vk_gpu::Gpu, tensor_graph::TensorId, utils::error::VKMLError};
 use std::fmt::Debug;
 use vulkanalia::vk;
 

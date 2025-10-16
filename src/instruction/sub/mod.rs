@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod push_constants;
-pub mod sub;
+mod f32_cpu;
+mod push_constants;
+mod sub;
+pub use sub::SubInstruction;

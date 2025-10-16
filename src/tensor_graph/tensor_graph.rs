@@ -1,8 +1,8 @@
 use crate::{
-    instruction::instruction::Instruction,
+    instruction::Instruction,
     layer::execution::LayerExecution,
     model::{graph_model::GraphModel, layer_connection::LayerId},
-    tensor::desc::TensorDesc,
+    tensor::TensorDesc,
     utils::error::VKMLError,
 };
 use std::collections::{HashMap, HashSet, VecDeque};

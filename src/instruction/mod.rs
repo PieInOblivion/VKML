@@ -1,54 +1,52 @@
-use crate::{
-    instruction::{
-        add::add::AddInstruction,
-        concat::concat::ConcatInstruction,
-        conv::conv::{AutoPad, ConvInstruction},
-        div::div::DivInstruction,
-        gemm::gemm::GemmInstruction,
-        identity::identity::IdentityInstruction,
-        init_constant::init_constant::InitConstantInstruction,
-        init_he::init_he::InitHeInstruction,
-        init_uniform::init_uniform::InitUniformInstruction,
-        init_xavier::init_xavier::InitXavierInstruction,
-        instruction::Instruction,
-        matmul::matmul::MatMulInstruction,
-        max::max::MaxInstruction,
-        min::min::MinInstruction,
-        mul::mul::MulInstruction,
-        relu::relu::ReLUInstruction,
-        reshape::reshape::ReshapeInstruction,
-        sigmoid::sigmoid::SigmoidInstruction,
-        softmax::softmax::SoftmaxInstruction,
-        sub::sub::SubInstruction,
-        transfer::transfer::TransferToDeviceInstruction,
-    },
-    tensor::tensor::DeviceId,
-    tensor_graph::tensor_graph::TensorId,
-};
+mod add;
+pub use add::AddInstruction;
+mod concat;
+pub use concat::ConcatInstruction;
+mod conv;
+pub use conv::AutoPad;
+pub use conv::ConvInstruction;
+mod div;
+pub use div::DivInstruction;
+mod gemm;
+pub use gemm::GemmInstruction;
+mod gpu_operations;
+pub use gpu_operations::GPUOperation;
+mod identity;
+pub use identity::IdentityInstruction;
+mod init_constant;
+pub use init_constant::InitConstantInstruction;
+mod init_he;
+pub use init_he::InitHeInstruction;
+mod init_uniform;
+pub use init_uniform::InitUniformInstruction;
+mod init_xavier;
+pub use init_xavier::InitXavierInstruction;
+mod instruction;
+pub use instruction::Instruction;
+mod matmul;
+pub use matmul::MatMulInstruction;
+mod max;
+pub use max::MaxInstruction;
+mod maxpool;
+pub use maxpool::MaxPoolInstruction;
+mod min;
+pub use min::MinInstruction;
+mod mul;
+pub use mul::MulInstruction;
+mod relu;
+pub use relu::ReLUInstruction;
+mod reshape;
+pub use reshape::ReshapeInstruction;
+mod sigmoid;
+pub use sigmoid::SigmoidInstruction;
+mod softmax;
+pub use softmax::SoftmaxInstruction;
+mod sub;
+pub use sub::SubInstruction;
+mod transfer;
+pub use transfer::TransferToDeviceInstruction;
 
-pub mod add;
-pub mod concat;
-pub mod conv;
-pub mod div;
-pub mod gemm;
-pub mod gpu_operations;
-pub mod identity;
-pub mod init_constant;
-pub mod init_he;
-pub mod init_uniform;
-pub mod init_xavier;
-pub mod instruction;
-pub mod matmul;
-pub mod max;
-pub mod maxpool;
-pub mod min;
-pub mod mul;
-pub mod relu;
-pub mod reshape;
-pub mod sigmoid;
-pub mod softmax;
-pub mod sub;
-pub mod transfer;
+use crate::{tensor::DeviceId, tensor_graph::TensorId};
 
 pub fn add(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(AddInstruction { src1, src2, dst })
@@ -126,7 +124,7 @@ pub fn maxpool(
     strides: Vec<usize>,
     ceil_mode: bool,
 ) -> Box<dyn Instruction> {
-    Box::new(crate::instruction::maxpool::maxpool::MaxPoolInstruction {
+    Box::new(MaxPoolInstruction {
         src,
         dst,
         auto_pad,

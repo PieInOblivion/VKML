@@ -1,6 +1,6 @@
 use crate::{
-    compute::compute_manager::ComputeManager, scheduler::create_execution_plan,
-    tensor::tensor::DeviceId, tensor_graph::tensor_graph::TensorId,
+    compute::compute_manager::ComputeManager, scheduler::create_execution_plan, tensor::DeviceId,
+    tensor_graph::TensorId,
 };
 use std::collections::HashSet;
 

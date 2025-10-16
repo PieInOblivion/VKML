@@ -18,7 +18,7 @@ use vulkanalia::{
 
 use crate::{
     compute::memory_tracker::MemoryTracker,
-    instruction::gpu_operations::GPUOperation,
+    instruction::GPUOperation,
     utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
 

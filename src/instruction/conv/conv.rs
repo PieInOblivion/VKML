@@ -2,12 +2,12 @@ use crate::ComputeManager;
 use crate::instruction::conv::push_constants::{
     Conv1DPushConstants, Conv2DPushConstants, Conv3DPushConstants,
 };
-use crate::tensor::desc::TensorDesc;
+use crate::tensor::TensorDesc;
 use crate::utils::bytes::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{conv::f32_cpu::f32_cpu, gpu_operations::GPUOperation, instruction::Instruction},
-    tensor_graph::tensor_graph::TensorId,
+    tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};

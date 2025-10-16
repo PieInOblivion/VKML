@@ -6,7 +6,7 @@ use crate::{
     instruction::{
         gpu_operations::GPUOperation, init_he::f32_cpu::f32_cpu, instruction::Instruction,
     },
-    tensor_graph::tensor_graph::TensorId,
+    tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};

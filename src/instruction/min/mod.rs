@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod min;
-pub mod push_constants;
+mod f32_cpu;
+mod min;
+pub use min::MinInstruction;
+mod push_constants;

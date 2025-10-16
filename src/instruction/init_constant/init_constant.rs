@@ -4,7 +4,7 @@ use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{gpu_operations::GPUOperation, instruction::Instruction},
-    tensor_graph::tensor_graph::TensorId,
+    tensor_graph::TensorId,
 };
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;

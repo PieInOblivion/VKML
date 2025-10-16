@@ -1,6 +1,6 @@
 use onnx_extractor::DataType;
 
-use crate::{instruction, tensor::desc::TensorDesc, utils::error::VKMLError};
+use crate::{instruction, tensor::TensorDesc, utils::error::VKMLError};
 
 use super::{execution::LayerExecution, layer::Layer};
 

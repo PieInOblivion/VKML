@@ -1,3 +1,4 @@
-pub mod f32_cpu;
-pub mod maxpool;
-pub mod push_constants;
+mod f32_cpu;
+mod maxpool;
+pub use maxpool::MaxPoolInstruction;
+mod push_constants;
