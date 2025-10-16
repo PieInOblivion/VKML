@@ -117,8 +117,8 @@ pub fn f32_cpu(
     let compute_indices_inplace = |flat_idx: usize, dims: &[usize], out: &mut [usize]| {
         if out.len() != dims.len() {
             // Safety: caller should ensure lengths match, but guard just in case.
-            for i in 0..out.len() {
-                out[i] = 0;
+            for v in out.iter_mut() {
+                *v = 0;
             }
             return;
         }
