@@ -1,4 +1,6 @@
 use crate::instruction::gemm::f32_f32_f32_f32_cpu::f32_f32_f32_f32_cpu;
+use crate::instruction::gemm::push_constants::GemmPushConstants;
+use crate::utils::bytes::as_bytes;
 use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
@@ -92,27 +94,23 @@ impl Instruction for GemmInstruction {
         let y_strides = y_tensor.desc.strides();
 
         // Build push constants
-        let mut push_constants = vec![
-            m as u32,                               // m
-            k as u32,                               // k
-            n as u32,                               // n
-            a_strides[0] as u32,                    // stride_a0 (row stride)
-            a_strides[1] as u32,                    // stride_a1 (column stride)
-            b_strides[0] as u32,                    // stride_b0 (row stride)
-            b_strides[1] as u32,                    // stride_b1 (column stride)
-            y_strides[0] as u32,                    // stride_y0 (row stride)
-            y_strides[1] as u32,                    // stride_y1 (column stride)
-            if self.trans_a { 1u32 } else { 0u32 }, // trans_a flag
-            if self.trans_b { 1u32 } else { 0u32 }, // trans_b flag
-        ];
-
-        // Add alpha and beta as raw bits
-        push_constants.push(self.alpha.to_bits());
-        push_constants.push(self.beta.to_bits());
-
-        // Add has_c flag
         let has_c = c_tensor.is_some();
-        push_constants.push(if has_c { 1u32 } else { 0u32 });
+        let pc = GemmPushConstants {
+            m: m as u32,
+            k: k as u32,
+            n: n as u32,
+            stride_a0: a_strides[0] as u32,
+            stride_a1: a_strides[1] as u32,
+            stride_b0: b_strides[0] as u32,
+            stride_b1: b_strides[1] as u32,
+            stride_y0: y_strides[0] as u32,
+            stride_y1: y_strides[1] as u32,
+            trans_a: if self.trans_a { 1u32 } else { 0u32 },
+            trans_b: if self.trans_b { 1u32 } else { 0u32 },
+            alpha: self.alpha.to_bits(),
+            beta: self.beta.to_bits(),
+            has_c: if has_c { 1u32 } else { 0u32 },
+        };
 
         // Bind storage buffers
         let storage_buffers = if let Some(c_tensor) = c_tensor {
@@ -152,12 +150,7 @@ impl Instruction for GemmInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers(command_buffer, &storage_buffers);
 
-        // Serialize push constants
-        let mut pc_bytes: Vec<u8> = Vec::with_capacity(push_constants.len() * 4);
-        for v in &push_constants {
-            pc_bytes.extend_from_slice(&v.to_ne_bytes());
-        }
-        gpu.bind_push_constants(command_buffer, &pc_bytes);
+        gpu.bind_push_constants(command_buffer, as_bytes(&pc));
 
         // Dispatch with total work size (n x m)
         // gpu.dispatch will automatically compute workgroups by dividing by local_size
