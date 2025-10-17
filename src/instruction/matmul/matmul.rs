@@ -57,20 +57,34 @@ impl Instruction for MatMulInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_read(self.dst);
 
-        // Collect dimension slices once for readability
+        // Validate datatypes first and determine operation variant
         let src1_dims = src1_tensor.desc.dims();
         let src2_dims = src2_tensor.desc.dims();
-        let operation = determine_matmul_variant(src1_dims, src2_dims);
+        let src1_dtype = src1_tensor.desc.data_type();
+        let src2_dtype = src2_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
 
-        // Use specialised implementation for supported dimensions
-        create_specialized_matmul_command_buffer(
-            gpu,
-            command_buffer,
-            src1_tensor,
-            src2_tensor,
-            dst_tensor,
-            operation,
-        )
+        // Only support Float triplet on GPU for now
+        match (src1_dtype, src2_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                let operation = determine_matmul_variant(src1_dims, src2_dims);
+
+                // Use specialised implementation for supported dimensions
+                create_specialized_matmul_command_buffer(
+                    gpu,
+                    command_buffer,
+                    src1_tensor,
+                    src2_tensor,
+                    dst_tensor,
+                    operation,
+                )
+            }
+            _ => Err(format!(
+                "GPU MatMul unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
+                src1_dtype, src2_dtype, dst_dtype
+            )
+            .into()),
+        }
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {
@@ -104,8 +118,8 @@ impl Instruction for MatMulInstruction {
                     src1_dims, src2_dims, dst_dims, src1_bytes, src2_bytes, dst_bytes,
                 );
             }
-            _ => panic!(
-                "MatMul: unimplemented CPU for DataType src1:{:?}, src2:{:?}, dst:{:?}",
+            _ => unimplemented!(
+                "CPU MatMul: unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
                 src1_dtype, src2_dtype, dst_dtype
             ),
         }

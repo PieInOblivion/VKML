@@ -127,10 +127,12 @@ impl Instruction for GemmInstruction {
 
         let a_dtype = a_tensor.desc.data_type();
         let b_dtype = b_tensor.desc.data_type();
-        //let c_dtype = c_tensor.desc.data_type();
+        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc.data_type());
         let y_dtype = y_tensor.desc.data_type();
-        let gpu_op = match (a_dtype, b_dtype, y_dtype) {
-            (DataType::Float, DataType::Float, DataType::Float) => {
+
+        let gpu_op = match (a_dtype, b_dtype, c_dtype_opt, y_dtype) {
+            (DataType::Float, DataType::Float, None, DataType::Float)
+            | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                 GPUOperation::Gemm_F32_F32_F32_F32
             }
             _ => {
@@ -138,9 +140,8 @@ impl Instruction for GemmInstruction {
                     "GPU GEMM unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",
                     a_dtype,
                     b_dtype,
-                    c_tensor
-                        .as_ref()
-                        .map(|t| format!("{:?}", t.desc.data_type()))
+                    c_dtype_opt
+                        .map(|dt| format!("{:?}", dt))
                         .unwrap_or_else(|| "None".to_string()),
                     y_dtype
                 )
@@ -185,7 +186,7 @@ impl Instruction for GemmInstruction {
 
         let a_dtype = a_tensor.desc.data_type();
         let b_dtype = b_tensor.desc.data_type();
-        //let c_dtype = c_tensor.desc.data_type();
+        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc.data_type());
         let y_dtype = y_tensor.desc.data_type();
 
         let a_bytes = a_tensor.get_cpu_memory_slice_or_panic();
@@ -193,9 +194,9 @@ impl Instruction for GemmInstruction {
         let c_bytes = c_tensor.map(|t| t.get_cpu_memory_slice_or_panic());
         let y_bytes = y_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        // TODO: Option data type match for c dtype
-        match (a_dtype, b_dtype, y_dtype) {
-            (DataType::Float, DataType::Float, DataType::Float) => {
+        match (a_dtype, b_dtype, c_dtype_opt, y_dtype) {
+            (DataType::Float, DataType::Float, None, DataType::Float)
+            | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                 f32_f32_f32_f32_cpu(
                     a_dims,
                     b_dims,
@@ -214,9 +215,8 @@ impl Instruction for GemmInstruction {
                 "Gemm: unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",
                 a_dtype,
                 b_dtype,
-                c_tensor
-                    .as_ref()
-                    .map(|t| format!("{:?}", t.desc.data_type()))
+                c_dtype_opt
+                    .map(|dt| format!("{:?}", dt))
                     .unwrap_or_else(|| "None".to_string()),
                 y_dtype
             ),

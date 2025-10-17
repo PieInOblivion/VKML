@@ -186,17 +186,22 @@ impl Instruction for ConvInstruction {
 
                 let src_dtype = src_desc.data_type();
                 let weight_dtype = weights_tensor.desc.data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
                 let dst_dtype = dst_desc.data_type();
-                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
-                    (DataType::Float, DataType::Float, DataType::Float) => {
+                let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
+                    (DataType::Float, DataType::Float, None, DataType::Float)
+                    | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                         GPUOperation::Conv1D_F32_F32_F32_F32
                     }
                     _ => {
                         return Err(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
-                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
-                            .map(|t| format!("{:?}", t.desc.data_type()))
-                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                            src_dtype,
+                            weight_dtype,
+                            bias_dtype_opt
+                                .map(|dt| format!("{:?}", dt))
+                                .unwrap_or_else(|| "None".to_string()),
+                            dst_dtype
                         )
                         .into());
                     }
@@ -251,17 +256,22 @@ impl Instruction for ConvInstruction {
 
                 let src_dtype = src_desc.data_type();
                 let weight_dtype = weights_tensor.desc.data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
                 let dst_dtype = dst_desc.data_type();
-                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
-                    (DataType::Float, DataType::Float, DataType::Float) => {
+                let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
+                    (DataType::Float, DataType::Float, None, DataType::Float)
+                    | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                         GPUOperation::Conv2D_F32_F32_F32_F32
                     }
                     _ => {
                         return Err(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
-                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
-                            .map(|t| format!("{:?}", t.desc.data_type()))
-                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                            src_dtype,
+                            weight_dtype,
+                            bias_dtype_opt
+                                .map(|dt| format!("{:?}", dt))
+                                .unwrap_or_else(|| "None".to_string()),
+                            dst_dtype
                         )
                         .into());
                     }
@@ -332,17 +342,22 @@ impl Instruction for ConvInstruction {
 
                 let src_dtype = src_desc.data_type();
                 let weight_dtype = weights_tensor.desc.data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
                 let dst_dtype = dst_desc.data_type();
-                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
-                    (DataType::Float, DataType::Float, DataType::Float) => {
+                let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
+                    (DataType::Float, DataType::Float, None, DataType::Float)
+                    | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                         GPUOperation::Conv3D_F32_F32_F32_F32
                     }
                     _ => {
                         return Err(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
-                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
-                            .map(|t| format!("{:?}", t.desc.data_type()))
-                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                            src_dtype,
+                            weight_dtype,
+                            bias_dtype_opt
+                                .map(|dt| format!("{:?}", dt))
+                                .unwrap_or_else(|| "None".to_string()),
+                            dst_dtype
                         )
                         .into());
                     }
@@ -457,13 +472,13 @@ impl Instruction for ConvInstruction {
         }
 
         // Dispatch based on data type
-        // TODO: bias datatype matching. For GPU as well
         let src_dtype = src_desc.data_type();
         let weight_dtype = weight_desc.data_type();
-        // let bias_dtype = bias_guard_opt.is_some();
+        let bias_dtype_opt = bias_guard_opt.as_ref().map(|t| t.desc.data_type());
         let dst_dtype = dst_desc.data_type();
-        match (src_dtype, weight_dtype, dst_dtype) {
-            (DataType::Float, DataType::Float, DataType::Float) => {
+        match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
+            (DataType::Float, DataType::Float, None, DataType::Float)
+            | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                 f32_f32_f32_f32_cpu(
                     src_dims,
                     weight_dims,
@@ -482,9 +497,8 @@ impl Instruction for ConvInstruction {
                 "CPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
                 src_dtype,
                 weight_dtype,
-                bias_guard_opt
-                    .as_ref()
-                    .map(|t| format!("{:?}", t.desc.data_type()))
+                bias_dtype_opt
+                    .map(|dt| format!("{:?}", dt))
                     .unwrap_or_else(|| "None".to_string()),
                 dst_dtype
             ),
