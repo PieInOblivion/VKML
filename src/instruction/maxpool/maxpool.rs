@@ -4,7 +4,7 @@ use crate::instruction::gpu_operations::GPUOperation;
 use crate::instruction::maxpool::push_constants::{
     MaxPool1DPushConstants, MaxPool2DPushConstants, MaxPool3DPushConstants,
 };
-use crate::utils::as_bytes;
+use crate::utils::{as_bytes, calc_begin_and_end_pads};
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{instruction::Instruction, maxpool::f32_f32_cpu::f32_f32_cpu},
@@ -28,59 +28,16 @@ pub struct MaxPoolInstruction {
 }
 
 impl MaxPoolInstruction {
-    // Helper to compute pads_begin and pads_end following same logic as ConvInstruction
-    fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
-        let spatial_rank = if src_desc.ndim() >= 2 {
-            src_desc.ndim() - 2
-        } else {
-            0
-        };
-
-        let mut stride_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        let mut dilation_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        let mut kernel_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        for i in 0..spatial_rank {
-            stride_vec.push(self.strides.get(i).copied().unwrap_or(1));
-            dilation_vec.push(self.dilations.get(i).copied().unwrap_or(1));
-            kernel_vec.push(self.kernel_shape.get(i).copied().unwrap_or(1));
-        }
-
-        let mut pads_begin: Vec<usize> = vec![0; spatial_rank];
-        let mut pads_end: Vec<usize> = vec![0; spatial_rank];
-
-        if self.pads.len() >= spatial_rank * 2 {
-            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-            pads_end[..spatial_rank]
-                .copy_from_slice(&self.pads[spatial_rank..(spatial_rank + spatial_rank)]);
-        } else if self.pads.len() == spatial_rank {
-            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-            pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-        } else if self.auto_pad != AutoPad::NotSet {
-            for i in 0..spatial_rank {
-                let in_i = src_desc.dims()[i + 2];
-                let k = kernel_vec[i] as i64;
-                let s = stride_vec[i] as i64;
-                let d = dilation_vec[i] as i64;
-
-                if self.auto_pad == AutoPad::Valid {
-                    pads_begin[i] = 0;
-                    pads_end[i] = 0;
-                } else {
-                    let out = (in_i + s - 1) / s; // ceil
-                    let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
-                    let pad_needed = if pad_needed > 0 { pad_needed } else { 0 } as usize;
-                    if self.auto_pad == AutoPad::SameUpper {
-                        pads_begin[i] = pad_needed / 2;
-                        pads_end[i] = pad_needed - pads_begin[i];
-                    } else {
-                        pads_end[i] = pad_needed / 2;
-                        pads_begin[i] = pad_needed - pads_end[i];
-                    }
-                }
-            }
-        }
-
-        (pads_begin, pads_end)
+    fn compute_pads(&self, src_desc: &TensorDesc) -> Vec<usize> {
+        let (pb, _pe) = calc_begin_and_end_pads(
+            self.auto_pad.clone(),
+            &self.pads,
+            &self.kernel_shape,
+            &self.strides,
+            &self.dilations,
+            src_desc,
+        );
+        pb
     }
 }
 
@@ -167,7 +124,7 @@ impl Instruction for MaxPoolInstruction {
                     stride: self.strides.first().copied().unwrap_or(1) as u32,
                     dilation: self.dilations.first().copied().unwrap_or(1) as u32,
                     pad_begin: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.first().copied().unwrap_or(0) as u32
                     },
                 };
@@ -215,11 +172,11 @@ impl Instruction for MaxPoolInstruction {
                     d_h: self.dilations.first().copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
                     pad_h: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.first().copied().unwrap_or(0) as u32
                     },
                     pad_w: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.get(1).copied().unwrap_or(0) as u32
                     },
                 };
@@ -275,15 +232,15 @@ impl Instruction for MaxPoolInstruction {
                     d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
                     pad_d: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.first().copied().unwrap_or(0) as u32
                     },
                     pad_h: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.get(1).copied().unwrap_or(0) as u32
                     },
                     pad_w: {
-                        let (pb, _pe) = self.compute_pads(src_desc);
+                        let pb = self.compute_pads(src_desc);
                         pb.get(2).copied().unwrap_or(0) as u32
                     },
                 };
@@ -351,44 +308,7 @@ impl Instruction for MaxPoolInstruction {
             kernel_vec[i] = self.kernel_shape.get(i).copied().unwrap_or(1);
         }
 
-        // compute pads_begin according to same rules as conv
-        let (pads_begin, _pads_end) = {
-            let mut pads_begin = vec![0usize; spatial_rank];
-            let mut pads_end = vec![0usize; spatial_rank];
-
-            if self.pads.len() >= spatial_rank * 2 {
-                pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-                pads_end[..spatial_rank]
-                    .copy_from_slice(&self.pads[spatial_rank..(spatial_rank * 2)]);
-            } else if self.pads.len() == spatial_rank {
-                pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-                pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-            } else if self.auto_pad != AutoPad::NotSet {
-                for i in 0..spatial_rank {
-                    let in_i = src_desc.dims()[i + 2];
-                    let k = kernel_vec[i] as i64;
-                    let s = stride_vec[i] as i64;
-                    let d = dil_vec[i] as i64;
-
-                    if self.auto_pad == AutoPad::Valid {
-                        pads_begin[i] = 0;
-                        pads_end[i] = 0;
-                    } else {
-                        let out = (in_i + s - 1) / s; // ceil
-                        let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
-                        let pad_needed = if pad_needed > 0 { pad_needed } else { 0 } as usize;
-                        if self.auto_pad == AutoPad::SameUpper {
-                            pads_begin[i] = pad_needed / 2;
-                            pads_end[i] = pad_needed - pads_begin[i];
-                        } else {
-                            pads_end[i] = pad_needed / 2;
-                            pads_begin[i] = pad_needed - pads_end[i];
-                        }
-                    }
-                }
-            }
-            (pads_begin, pads_end)
-        };
+        let pads_begin = self.compute_pads(&src_desc);
 
         let src_dtype = src_desc.data_type();
         let dst_dtype = dst_desc.data_type();
