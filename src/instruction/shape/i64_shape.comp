@@ -1,0 +1,29 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+// Output buffer as 32-bit words; each int64 is written as two u32 (low, high) in little-endian
+layout(std430, binding = 0) buffer OutBuffer { uint data[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint slice_len;
+    uint start;
+    uint pad;
+    uint dims_lo[8];
+    uint dims_hi[8];
+} constants;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= constants.slice_len) {
+        return;
+    }
+
+    uint src_idx = constants.start + idx;
+    uint low = constants.dims_lo[src_idx];
+    uint high = constants.dims_hi[src_idx];
+
+    uint out_idx = idx * 2u;
+    data[out_idx] = low;
+    data[out_idx + 1u] = high;
+}

@@ -1,0 +1,25 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBuffer { float a[]; };
+layout(std430, binding = 1) buffer OutBuffer { float b[]; };
+
+layout(push_constant) uniform PC {
+    uint total;          // number of output elements
+    uint reduction_size; // number of elements to reduce per output
+} pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.total;
+    if (gid >= total) return;
+
+    uint base = gid * pc.reduction_size;
+    float sum = 0.0;
+    for (uint i = 0u; i < pc.reduction_size; ++i) {
+        sum += a[base + i];
+    }
+
+    b[gid] = sum / float(pc.reduction_size);
+}

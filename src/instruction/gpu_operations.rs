@@ -40,6 +40,9 @@ const INIT_HE_SHADER_F32: &[u8] = include_shader!("f32_init_he.spv");
 const INIT_UNIFORM_SHADER_F32: &[u8] = include_shader!("f32_init_uniform.spv");
 const INIT_CONSTANT_SHADER: &[u8] = include_shader!("init_constant.spv");
 
+const SHAPE_SHADER_I64: &[u8] = include_shader!("i64_shape.spv");
+const REDUCE_MEAN_SHADER_F32: &[u8] = include_shader!("f32_reducemean_mean.spv");
+
 const GEMM_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_gemm.spv");
 
 #[allow(non_camel_case_types)]
@@ -72,6 +75,8 @@ pub enum GPUOperation {
     InitHe_F32,
     InitUniform_F32,
     InitConstant,
+    Shape_Write_I64,
+    ReduceMean_F32,
     Gemm_F32_F32_F32_F32,
 }
 
@@ -108,6 +113,8 @@ impl GPUOperation {
             GPUOperation::InitHe_F32 => INIT_HE_SHADER_F32,
             GPUOperation::InitUniform_F32 => INIT_UNIFORM_SHADER_F32,
             GPUOperation::InitConstant => INIT_CONSTANT_SHADER,
+            GPUOperation::Shape_Write_I64 => SHAPE_SHADER_I64,
+            GPUOperation::ReduceMean_F32 => REDUCE_MEAN_SHADER_F32,
             GPUOperation::Gemm_F32_F32_F32_F32 => GEMM_SHADER_F32_F32_F32_F32,
         }
     }

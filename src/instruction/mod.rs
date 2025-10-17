@@ -35,8 +35,12 @@ mod mul;
 pub use mul::MulInstruction;
 mod relu;
 pub use relu::ReLUInstruction;
+mod reducemean;
+pub use reducemean::ReduceMeanInstruction;
 mod reshape;
 pub use reshape::ReshapeInstruction;
+mod shape;
+pub use shape::ShapeInstruction;
 mod sigmoid;
 pub use sigmoid::SigmoidInstruction;
 mod softmax;
@@ -148,6 +152,22 @@ pub fn relu(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(ReLUInstruction { src, dst })
 }
 
+pub fn reducemean(
+    src: TensorId,
+    axes: Option<Vec<i64>>,
+    keepdims: i64,
+    noop_with_empty_axes: i64,
+    dst: TensorId,
+) -> Box<dyn Instruction> {
+    Box::new(ReduceMeanInstruction {
+        src,
+        axes,
+        keepdims,
+        noop_with_empty_axes,
+        dst,
+    })
+}
+
 pub fn reshape(
     src: TensorId,
     dst: TensorId,
@@ -159,6 +179,20 @@ pub fn reshape(
         dst,
         shape_values: new_shape,
         allowzero,
+    })
+}
+
+pub fn shape(
+    src: TensorId,
+    dst: TensorId,
+    start: Option<i64>,
+    end: Option<i64>,
+) -> Box<dyn Instruction> {
+    Box::new(ShapeInstruction {
+        src,
+        dst,
+        start,
+        end,
     })
 }
 

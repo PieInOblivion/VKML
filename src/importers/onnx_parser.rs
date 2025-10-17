@@ -205,6 +205,13 @@ impl OnnxParser {
                     allowzero,
                 ))
             }
+            "Shape" => {
+                // optional attributes 'start' and 'end'
+                let start = attributes.get("start").and_then(attr_to_int);
+                let end = attributes.get("end").and_then(attr_to_int);
+
+                Ok(instruction::shape(input_ids[0], output_ids[0], start, end))
+            }
             "Sigmoid" => Ok(instruction::sigmoid(input_ids[0], output_ids[0])),
             "Softmax" => {
                 let axis = attributes.get("axis").and_then(attr_to_int);
@@ -270,6 +277,48 @@ impl OnnxParser {
                     pads,
                     strides,
                     ceil_mode,
+                ))
+            }
+            "ReduceMean" => {
+                let keepdims = attributes
+                    .get("keepdims")
+                    .and_then(attr_to_int)
+                    .unwrap_or(1);
+                let noop_with_empty_axes = attributes
+                    .get("noop_with_empty_axes")
+                    .and_then(attr_to_int)
+                    .unwrap_or(0);
+
+                // axes may be provided as second input (initializer). If present and has bytes, parse i64s
+                let axes = if input_ids.len() >= 2 {
+                    let axes_id = input_ids[1];
+                    if let Some(raw) = &tensors[axes_id] {
+                        if raw.len().is_multiple_of(8) {
+                            let mut v = Vec::new();
+                            for chunk in raw.chunks_exact(8) {
+                                let mut a = [0u8; 8];
+                                a.copy_from_slice(chunk);
+                                v.push(i64::from_le_bytes(a));
+                            }
+                            Some(v)
+                        } else {
+                            return Err(VKMLError::OnnxImporterError(
+                                "ReduceMean: axes initializer has invalid length".to_string(),
+                            ));
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                Ok(instruction::reducemean(
+                    input_ids[0],
+                    axes,
+                    keepdims,
+                    noop_with_empty_axes,
+                    output_ids[0],
                 ))
             }
             "Add" => Ok(instruction::add(input_ids[0], input_ids[1], output_ids[0])),
