@@ -1,7 +1,7 @@
 /// CPU implementation of GEMM for f32
 /// Computes Y = alpha * op(A) * op(B) + beta * C
 /// where op(X) is either X or X^T depending on transpose flags
-pub fn f32_cpu(
+pub fn f32_f32_f32_f32_cpu(
     a_dims: Vec<usize>,
     b_dims: Vec<usize>,
     y_dims: Vec<usize>,

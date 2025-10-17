@@ -1,6 +1,6 @@
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
-pub fn f32_cpu(
+pub fn f32_f32_f32_cpu(
     strides_a: Vec<usize>,
     strides_b: Vec<usize>,
     dst_dims: Vec<i64>,
@@ -31,7 +31,7 @@ pub fn f32_cpu(
     let mut off_b: usize = 0;
 
     for dst_slot in dst_f32.iter_mut().take(num_elements) {
-        *dst_slot = src1_f32[off_a] / src2_f32[off_b];
+        *dst_slot = src1_f32[off_a] + src2_f32[off_b];
 
         // increment odometer
         for d in (0..rank).rev() {

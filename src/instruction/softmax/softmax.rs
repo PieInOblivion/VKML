@@ -4,7 +4,7 @@ use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{
-        gpu_operations::GPUOperation, instruction::Instruction, softmax::f32_cpu::f32_cpu,
+        gpu_operations::GPUOperation, instruction::Instruction, softmax::f32_f32_cpu::f32_f32_cpu,
     },
     tensor_graph::TensorId,
 };
@@ -91,14 +91,18 @@ impl Instruction for SoftmaxInstruction {
         };
 
         let pc_bytes = as_bytes(&push_constants);
+
         // Choose operation based on data type
-        let op_datatype = src_tensor.desc.data_type();
-        let gpu_op = match op_datatype {
-            DataType::Float => GPUOperation::Softmax_F32,
+        let src_dtype = src_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
+        let gpu_op = match (src_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float) => GPUOperation::Softmax_F32_F32,
             _ => {
-                return Err(
-                    format!("GPU Softmax unimplemented for DataType {:?}", op_datatype).into(),
-                );
+                return Err(format!(
+                    "GPU Softmax unimplemented for DataType src:{:?}, dst:{:?}",
+                    src_dtype, dst_dtype
+                )
+                .into());
             }
         };
 
@@ -141,16 +145,20 @@ impl Instruction for SoftmaxInstruction {
             "CPU Softmax currently only supports the last dimension"
         );
 
+        let src_dtype = src_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
+
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        match src_tensor.desc.data_type() {
-            DataType::Float => {
-                f32_cpu(dims, dim, src_bytes, dst_ptr);
+        match (src_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float) => {
+                f32_f32_cpu(dims, dim, src_bytes, dst_ptr);
             }
             _ => unimplemented!(
-                "softmax.rs unimplemented cpu instruction for DataType {:?}",
-                src_tensor.desc.data_type()
+                "softmax.rs unimplemented cpu instruction for DataType src:{:?}, dst:{:?}",
+                src_dtype,
+                dst_dtype
             ),
         }
     }

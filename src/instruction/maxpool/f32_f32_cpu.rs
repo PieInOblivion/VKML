@@ -3,7 +3,7 @@ use bytemuck::{try_cast_slice, try_cast_slice_mut};
 use crate::TensorDesc;
 
 /// N-D max pooling f32 CPU implementation. No indices are produced.
-pub fn f32_cpu(
+pub fn f32_f32_cpu(
     src_dims: Vec<usize>,
     dst_dims: Vec<usize>,
     src_bytes: &[u8],

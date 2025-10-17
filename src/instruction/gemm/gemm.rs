@@ -1,4 +1,4 @@
-use crate::instruction::gemm::f32_cpu::f32_cpu;
+use crate::instruction::gemm::f32_f32_f32_f32_cpu::f32_f32_f32_f32_cpu;
 use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
@@ -125,13 +125,26 @@ impl Instruction for GemmInstruction {
         // Choose optimal workgroup size for 2D matrix operation
         let local_size = gpu.optimal_workgroup_size_2d(n as u64, m as u64);
 
-        let op_datatype = y_tensor.desc.data_type();
-        let gpu_op = match op_datatype {
-            DataType::Float => GPUOperation::Gemm_F32,
+        let a_dtype = a_tensor.desc.data_type();
+        let b_dtype = b_tensor.desc.data_type();
+        //let c_dtype = c_tensor.desc.data_type();
+        let y_dtype = y_tensor.desc.data_type();
+        let gpu_op = match (a_dtype, b_dtype, y_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                GPUOperation::Gemm_F32_F32_F32_F32
+            }
             _ => {
-                return Err(
-                    format!("GPU GEMM unimplemented for DataType {:?}", op_datatype).into(),
-                );
+                return Err(format!(
+                    "GPU GEMM unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",
+                    a_dtype,
+                    b_dtype,
+                    c_tensor
+                        .as_ref()
+                        .map(|t| format!("{:?}", t.desc.data_type()))
+                        .unwrap_or_else(|| "None".to_string()),
+                    y_dtype
+                )
+                .into());
             }
         };
 
@@ -162,8 +175,6 @@ impl Instruction for GemmInstruction {
         let c_tensor = self.c.map(|c| cm.tensor_read(c));
         let y_tensor = cm.tensor_write(self.y);
 
-        let dtype = y_tensor.desc.data_type();
-
         let a_dims_i64 = a_tensor.desc.dims();
         let b_dims_i64 = b_tensor.desc.dims();
         let y_dims_i64 = y_tensor.desc.dims();
@@ -172,14 +183,20 @@ impl Instruction for GemmInstruction {
         let b_dims: Vec<usize> = b_dims_i64.iter().map(|&d| d as usize).collect();
         let y_dims: Vec<usize> = y_dims_i64.iter().map(|&d| d as usize).collect();
 
+        let a_dtype = a_tensor.desc.data_type();
+        let b_dtype = b_tensor.desc.data_type();
+        //let c_dtype = c_tensor.desc.data_type();
+        let y_dtype = y_tensor.desc.data_type();
+
         let a_bytes = a_tensor.get_cpu_memory_slice_or_panic();
         let b_bytes = b_tensor.get_cpu_memory_slice_or_panic();
         let c_bytes = c_tensor.map(|t| t.get_cpu_memory_slice_or_panic());
         let y_bytes = y_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        match dtype {
-            DataType::Float => {
-                f32_cpu(
+        // TODO: Option data type match for c dtype
+        match (a_dtype, b_dtype, y_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                f32_f32_f32_f32_cpu(
                     a_dims,
                     b_dims,
                     y_dims,
@@ -193,7 +210,16 @@ impl Instruction for GemmInstruction {
                     self.trans_b,
                 );
             }
-            other => panic!("Gemm: unimplemented CPU for DataType {:?}", other),
+            _ => unimplemented!(
+                "Gemm: unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",
+                a_dtype,
+                b_dtype,
+                c_tensor
+                    .as_ref()
+                    .map(|t| format!("{:?}", t.desc.data_type()))
+                    .unwrap_or_else(|| "None".to_string()),
+                y_dtype
+            ),
         }
     }
 }

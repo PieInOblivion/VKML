@@ -3,7 +3,7 @@ use bytemuck::{try_cast_slice, try_cast_slice_mut};
 use crate::TensorDesc;
 
 /// A simple single-threaded N-D convolution for f32 tensors.
-pub fn f32_cpu(
+pub fn f32_f32_f32_f32_cpu(
     src_dims: Vec<usize>,
     weight_dims: Vec<usize>,
     dst_dims: Vec<usize>,

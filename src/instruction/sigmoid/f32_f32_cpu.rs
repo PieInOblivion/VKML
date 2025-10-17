@@ -1,7 +1,7 @@
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
 // Broadcast-aware sigmoid helper: dst = 1/(1+exp(-src))
-pub fn f32_cpu(
+pub fn f32_f32_cpu(
     strides_a: Vec<usize>,
     _strides_b: Vec<usize>,
     dst_dims: Vec<i64>,

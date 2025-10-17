@@ -6,7 +6,10 @@ use crate::tensor::TensorDesc;
 use crate::utils::bytes::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{conv::f32_cpu::f32_cpu, gpu_operations::GPUOperation, instruction::Instruction},
+    instruction::{
+        conv::f32_f32_f32_f32_cpu::f32_f32_f32_f32_cpu, gpu_operations::GPUOperation,
+        instruction::Instruction,
+    },
     tensor_graph::TensorId,
 };
 use onnx_extractor::DataType;
@@ -31,7 +34,7 @@ pub struct ConvInstruction {
 impl ConvInstruction {
     // Helper to compute pads_begin and pads_end following the same logic
     // used in execute_cpu (handles explicit pads, symmetric pads, and auto_pad).
-    pub fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
+    fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
         let spatial_rank = if src_desc.ndim() >= 2 {
             src_desc.ndim() - 2
         } else {
@@ -225,7 +228,25 @@ impl Instruction for ConvInstruction {
                 let total: u64 = (src_dims[0] as u64) * (dst_dims[1] as u64) * (output_len as u64);
                 let local_size = gpu.optimal_workgroup_size_1d(total);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv1D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let weight_dtype = weights_tensor.desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float, DataType::Float) => {
+                        GPUOperation::Conv1D_F32_F32_F32_F32
+                    }
+                    _ => {
+                        return Err(format!(
+                            "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
+                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
+                            .map(|t| format!("{:?}", t.desc.data_type()))
+                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
@@ -272,7 +293,25 @@ impl Instruction for ConvInstruction {
 
                 let local_size = gpu.optimal_workgroup_size_2d(out_h, out_w);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv2D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let weight_dtype = weights_tensor.desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float, DataType::Float) => {
+                        GPUOperation::Conv2D_F32_F32_F32_F32
+                    }
+                    _ => {
+                        return Err(format!(
+                            "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
+                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
+                            .map(|t| format!("{:?}", t.desc.data_type()))
+                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
@@ -335,7 +374,25 @@ impl Instruction for ConvInstruction {
                 // pick a cubic local workgroup size based on spatial dims
                 let local_size = gpu.optimal_workgroup_size_3d(out_w, out_h, out_d);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::Conv3D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let weight_dtype = weights_tensor.desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, weight_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float, DataType::Float) => {
+                        GPUOperation::Conv3D_F32_F32_F32_F32
+                    }
+                    _ => {
+                        return Err(format!(
+                            "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
+                            src_dtype, weight_dtype, bias_tensor_opt.as_ref()
+                            .map(|t| format!("{:?}", t.desc.data_type()))
+                            .unwrap_or_else(|| "None".to_string()), dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
@@ -346,7 +403,7 @@ impl Instruction for ConvInstruction {
                 // dispatch over (w, h, depth * batch)
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);
             }
-            _ => panic!("Unsupported spatial rank {} for GPU conv", spatial_rank),
+            _ => unimplemented!("Unsupported spatial rank {} for GPU conv", spatial_rank),
         }
 
         Ok(())
@@ -444,10 +501,14 @@ impl Instruction for ConvInstruction {
         }
 
         // Dispatch based on data type
-        let dst_data_type = dst_desc.data_type();
-        match dst_data_type {
-            DataType::Float => {
-                f32_cpu(
+        // TODO: bias datatype matching. For GPU as well
+        let src_dtype = src_desc.data_type();
+        let weight_dtype = weight_desc.data_type();
+        // let bias_dtype = bias_guard_opt.is_some();
+        let dst_dtype = dst_desc.data_type();
+        match (src_dtype, weight_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                f32_f32_f32_f32_cpu(
                     src_dims,
                     weight_dims,
                     dst_dims,
@@ -461,9 +522,15 @@ impl Instruction for ConvInstruction {
                     self.group as usize,
                 );
             }
-            other => panic!(
-                "conv.rs execute_cpu: unimplemented CPU Conv for DataType {:?}",
-                other
+            _ => unimplemented!(
+                "CPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
+                src_dtype,
+                weight_dtype,
+                bias_guard_opt
+                    .as_ref()
+                    .map(|t| format!("{:?}", t.desc.data_type()))
+                    .unwrap_or_else(|| "None".to_string()),
+                dst_dtype
             ),
         }
     }

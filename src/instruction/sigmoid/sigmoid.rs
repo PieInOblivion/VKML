@@ -2,7 +2,7 @@ use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
     instruction::{
-        gpu_operations::GPUOperation, instruction::Instruction, sigmoid::f32_cpu::f32_cpu,
+        gpu_operations::GPUOperation, instruction::Instruction, sigmoid::f32_f32_cpu::f32_f32_cpu,
     },
     tensor::TensorDesc,
     tensor_graph::TensorId,
@@ -52,16 +52,21 @@ impl Instruction for SigmoidInstruction {
         let src_mem = src_tensor.get_gpu_memory_or_panic();
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
+
         // Prepare CPU-side values
         let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+
         // Choose operation based on data type
-        let op_datatype = dst_tensor.desc.data_type();
-        let gpu_op = match op_datatype {
-            DataType::Float => GPUOperation::Sigmoid_F32,
+        let src_dtype = src_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
+        let gpu_op = match (src_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float) => GPUOperation::Sigmoid_F32_F32,
             _ => {
-                return Err(
-                    format!("GPU Sigmoid unimplemented for DataType {:?}", op_datatype).into(),
-                );
+                return Err(format!(
+                    "GPU Sigmoid unimplemented for DataType src:{:?}, dst:{:?}",
+                    src_dtype, dst_dtype
+                )
+                .into());
             }
         };
 
@@ -99,16 +104,20 @@ impl Instruction for SigmoidInstruction {
 
         let sa = TensorDesc::broadcast_strides(a, &c);
 
-        let op_datatype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
 
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        match op_datatype {
-            DataType::Float => f32_cpu(sa, vec![], c, src_bytes, &[], dst_ptr),
+        match (src_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float) => {
+                f32_f32_cpu(sa, vec![], c, src_bytes, &[], dst_ptr)
+            }
             _ => unimplemented!(
-                "sigmoid.rs unimplemented cpu instruction for DataType {:?}",
-                dst_tensor.desc.data_type()
+                "sigmoid.rs unimplemented cpu instruction for DataType src:{:?}, dst:{:?}",
+                src_dtype,
+                dst_dtype
             ),
         }
     }

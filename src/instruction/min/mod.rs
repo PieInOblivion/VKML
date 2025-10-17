@@ -1,4 +1,4 @@
-mod f32_cpu;
+mod f32_f32_f32_cpu;
 mod min;
 pub use min::MinInstruction;
 mod push_constants;

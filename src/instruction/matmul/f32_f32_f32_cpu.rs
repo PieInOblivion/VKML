@@ -1,6 +1,6 @@
 use bytemuck::{try_cast_slice, try_cast_slice_mut};
 
-pub fn f32_cpu(
+pub fn f32_f32_f32_cpu(
     src1_dims: Vec<usize>,
     src2_dims: Vec<usize>,
     dst_dims: Vec<usize>,

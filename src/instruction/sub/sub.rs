@@ -3,7 +3,10 @@ use crate::instruction::sub::push_constants::SubPushConstants;
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{gpu_operations::GPUOperation, instruction::Instruction, sub::f32_cpu::f32_cpu},
+    instruction::{
+        gpu_operations::GPUOperation, instruction::Instruction,
+        sub::f32_f32_f32_cpu::f32_f32_f32_cpu,
+    },
     tensor::TensorDesc,
     tensor_graph::TensorId,
 };
@@ -124,12 +127,21 @@ impl Instruction for SubInstruction {
         };
 
         let push_constant_bytes = as_bytes(&push_const_values);
+
         // Choose operation based on tensor DataType
-        let op_datatype = dst_tensor.desc.data_type();
-        let gpu_op = match op_datatype {
-            DataType::Float => GPUOperation::Subtract_F32,
+        let src1_dtype = src1_desc.data_type();
+        let src2_dtype = src2_desc.data_type();
+        let dst_dtype = dst_desc.data_type();
+        let gpu_op = match (src1_dtype, src2_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                GPUOperation::Subtract_F32_F32_F32
+            }
             _ => {
-                return Err(format!("GPU Sub unimplemented for DataType {:?}", op_datatype).into());
+                return Err(format!(
+                    "GPU Sub unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
+                    src1_dtype, src2_dtype, dst_dtype
+                )
+                .into());
             }
         };
 
@@ -174,17 +186,23 @@ impl Instruction for SubInstruction {
         let sa = TensorDesc::broadcast_strides(a, &c);
         let sb = TensorDesc::broadcast_strides(b, &c);
 
-        let op_datatype = dst_tensor.desc.data_type();
+        let src1_dtype = src1_tensor.desc.data_type();
+        let src2_dtype = src2_tensor.desc.data_type();
+        let dst_dtype = dst_tensor.desc.data_type();
 
         let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
         let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        match op_datatype {
-            DataType::Float => f32_cpu(sa, sb, c, src1_bytes, src2_bytes, dst_ptr),
+        match (src1_dtype, src2_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float, DataType::Float) => {
+                f32_f32_f32_cpu(sa, sb, c, src1_bytes, src2_bytes, dst_ptr)
+            }
             _ => unimplemented!(
-                "sub.rs unimplemented cpu instruction for DataType {:?}",
-                dst_tensor.desc.data_type()
+                "sub.rs unimplemented cpu instruction for DataType src1:{:?}, src2:{:?}, dst:{:?}",
+                src1_dtype,
+                src2_dtype,
+                dst_dtype
             ),
         }
     }

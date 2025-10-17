@@ -7,7 +7,7 @@ use crate::instruction::maxpool::push_constants::{
 use crate::utils::as_bytes;
 use crate::{
     gpu::vk_gpu::Gpu,
-    instruction::{instruction::Instruction, maxpool::f32_cpu::f32_cpu},
+    instruction::{instruction::Instruction, maxpool::f32_f32_cpu::f32_f32_cpu},
     tensor::TensorDesc,
     tensor_graph::TensorId,
 };
@@ -29,7 +29,7 @@ pub struct MaxPoolInstruction {
 
 impl MaxPoolInstruction {
     // Helper to compute pads_begin and pads_end following same logic as ConvInstruction
-    pub fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
+    fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
         let spatial_rank = if src_desc.ndim() >= 2 {
             src_desc.ndim() - 2
         } else {
@@ -178,7 +178,20 @@ impl Instruction for MaxPoolInstruction {
                 let total: u64 = (src_dims[0] as u64) * (src_dims[1] as u64) * (output_len as u64);
                 let local_size = gpu.optimal_workgroup_size_1d(total);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool1D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float) => GPUOperation::MaxPool1D_F32_F32,
+                    _ => {
+                        return Err(format!(
+                            "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
+                            src_dtype, dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [total, 1, 1]);
@@ -220,7 +233,20 @@ impl Instruction for MaxPoolInstruction {
 
                 let local_size = gpu.optimal_workgroup_size_2d(out_h, out_w);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool2D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float) => GPUOperation::MaxPool2D_F32_F32,
+                    _ => {
+                        return Err(format!(
+                            "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
+                            src_dtype, dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, batch_nc]);
@@ -272,7 +298,20 @@ impl Instruction for MaxPoolInstruction {
 
                 let local_size = gpu.optimal_workgroup_size_3d(out_w, out_h, out_d);
 
-                gpu.bind_compute_pipeline(command_buffer, GPUOperation::MaxPool3D_F32, local_size);
+                let src_dtype = src_desc.data_type();
+                let dst_dtype = dst_desc.data_type();
+                let gpu_op = match (src_dtype, dst_dtype) {
+                    (DataType::Float, DataType::Float) => GPUOperation::MaxPool3D_F32_F32,
+                    _ => {
+                        return Err(format!(
+                            "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
+                            src_dtype, dst_dtype
+                        )
+                        .into());
+                    }
+                };
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
                 gpu.bind_push_constants(command_buffer, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);
@@ -351,15 +390,20 @@ impl Instruction for MaxPoolInstruction {
             (pads_begin, pads_end)
         };
 
-        // call f32_cpu helper
-        match dst_desc.data_type() {
-            DataType::Float => {
-                f32_cpu(
+        let src_dtype = src_desc.data_type();
+        let dst_dtype = dst_desc.data_type();
+        match (src_dtype, dst_dtype) {
+            (DataType::Float, DataType::Float) => {
+                f32_f32_cpu(
                     src_dims, dst_dims, src_bytes, dst_ptr, kernel_vec, stride_vec, pads_begin,
                     dil_vec,
                 );
             }
-            other => panic!("MaxPool: unimplemented CPU for DataType {:?}", other),
+            _ => unimplemented!(
+                "MaxPool: unimplemented CPU for DataType src:{:?}, dst:{:?}",
+                src_dtype,
+                dst_dtype
+            ),
         }
     }
 
