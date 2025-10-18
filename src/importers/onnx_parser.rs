@@ -51,6 +51,7 @@ impl OnnxParser {
                 onnx_op,
                 &tensor_name_to_id,
                 &tensor_bytes,
+                &tensor_descs,
             )?;
             operations.push(instruction);
         }
@@ -89,6 +90,7 @@ impl OnnxParser {
         onnx_op: &OnnxOperation,
         tensor_map: &HashMap<String, TensorId>,
         tensors: &[Option<Box<[u8]>>],
+        tensor_descs: &[TensorDesc],
     ) -> Result<Box<dyn Instruction>, VKMLError> {
         // Resolve tensor names to IDs
         let input_ids = onnx_op
@@ -358,6 +360,16 @@ impl OnnxParser {
                     && let Some(v) = attr_to_vec(val)
                 {
                     kernel_shape = v.iter().map(|x| *x as usize).collect();
+                } else {
+                    // If kernel_shape is not in attributes, infer from weight tensor shape
+                    // Weight tensor shape is typically [M, C/group, k_h, k_w] for 2D conv
+                    let weight_desc = &tensor_descs[weights];
+                    let weight_dims = weight_desc.dims();
+                    if weight_dims.len() >= 3 {
+                        // For 2D/3D conv: weight is [M, C/group, k_h, k_w] or [M, C/group, k_d, k_h, k_w]
+                        // kernel_shape should be the spatial dimensions
+                        kernel_shape = weight_dims[2..].iter().map(|&d| d as usize).collect();
+                    }
                 }
 
                 // Parse auto_pad per ONNX (default NOTSET)

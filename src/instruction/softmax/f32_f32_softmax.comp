@@ -26,9 +26,6 @@ void main() {
     max_vals[local_id] = -3.402823466e+38; // -FLT_MAX
     sum_vals[local_id] = 0.0;
 
-    // Ensure all threads initialized shared memory
-    barrier();
-
     // Calculate base index for this batch
     uint base_idx = batch_idx * constants.feature_size;
 
@@ -38,14 +35,15 @@ void main() {
     }
 
     // Reduction to find the maximum
-    for (uint stride = gl_WorkGroupSize.x/2; stride > 0; stride >>= 1) {
-        barrier();
-        if (local_id < stride) {
-            max_vals[local_id] = max(max_vals[local_id], max_vals[local_id + stride]);
-        }
-    }
-
+    // Sequential addressing reduction that works for any workgroup size
     barrier();
+    for (uint stride = 1; stride < gl_WorkGroupSize.x; stride *= 2) {
+        uint index = 2 * stride * local_id;
+        if (index + stride < gl_WorkGroupSize.x) {
+            max_vals[index] = max(max_vals[index], max_vals[index + stride]);
+        }
+        barrier();
+    }
 
     // Now max_vals[0] contains the maximum value for this batch
     float max_val = max_vals[0];
@@ -59,14 +57,15 @@ void main() {
     }
 
     // Reduction to compute total sum
-    for (uint stride = gl_WorkGroupSize.x/2; stride > 0; stride >>= 1) {
-        barrier();
-        if (local_id < stride) {
-            sum_vals[local_id] += sum_vals[local_id + stride];
-        }
-    }
-
+    // Sequential addressing reduction that works for any workgroup size
     barrier();
+    for (uint stride = 1; stride < gl_WorkGroupSize.x; stride *= 2) {
+        uint index = 2 * stride * local_id;
+        if (index + stride < gl_WorkGroupSize.x) {
+            sum_vals[index] += sum_vals[index + stride];
+        }
+        barrier();
+    }
 
     // Now sum_vals[0] contains the sum of exponentials for this batch
     float sum = sum_vals[0];
