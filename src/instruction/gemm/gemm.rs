@@ -133,6 +133,10 @@ impl Instruction for GemmInstruction {
             | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                 GPUOperation::Gemm_F32_F32_F32_F32
             }
+            (DataType::Float16, DataType::Float16, None, DataType::Float16)
+            | (DataType::Float16, DataType::Float16, Some(DataType::Float16), DataType::Float16) => {
+                GPUOperation::Gemm_F16_F16_F16_F16
+            }
             _ => {
                 return Err(format!(
                     "GPU GEMM unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",

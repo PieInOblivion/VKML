@@ -28,7 +28,7 @@ fn main() {
                     let out_path = out_dir.join(file_name.replace(".comp", ".spv"));
 
                     let result = Command::new("glslc")
-                        .arg("--target-env=vulkan1.0")
+                        .arg("--target-env=vulkan1.3")
                         .arg("-fshader-stage=compute")
                         .arg("-o")
                         .arg(&out_path)

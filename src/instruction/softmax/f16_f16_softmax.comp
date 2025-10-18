@@ -1,0 +1,83 @@
+#version 450
+
+// Enable 16-bit storage and float16 arithmetic
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBuffer { float16_t a[]; };
+layout(std430, binding = 1) buffer OutBuffer { float16_t b[]; };
+
+// Expects batch_size and feature_size in push constants
+layout(push_constant) uniform PushConstants {
+    uint batch_size;
+    uint feature_size;
+} constants;
+
+// Use f32 temporaries for reductions and exp for stability
+shared float max_vals[256];
+shared float sum_vals[256];
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint batch_idx = gl_WorkGroupID.x;
+
+    if (batch_idx >= constants.batch_size) {
+        return;
+    }
+
+    // Init shared accumulators
+    max_vals[local_id] = -3.402823e+38; // -FLT_MAX
+    sum_vals[local_id] = 0.0;
+
+    uint base_idx = batch_idx * constants.feature_size;
+
+    // Find max per work item using f16 loads, store as f32 for reduction
+    float16_t local_max_f16 = float16_t(-65504.0);
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        local_max_f16 = max(local_max_f16, a[base_idx + i]);
+    }
+    max_vals[local_id] = float(local_max_f16);
+
+    // Reduce maxima (f32)
+    barrier();
+    for (uint stride = 1; stride < gl_WorkGroupSize.x; stride *= 2) {
+        uint index = 2 * stride * local_id;
+        if (index + stride < gl_WorkGroupSize.x) {
+            max_vals[index] = max(max_vals[index], max_vals[index + stride]);
+        }
+        barrier();
+    }
+
+    float max_val = max_vals[0];
+
+    // Compute exp(x - max) in f32, store intermediate as f16, accumulate sum in f32
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        uint idx = base_idx + i;
+        float diff = float(a[idx]) - max_val;
+        float exp_val = exp(diff);
+        b[idx] = float16_t(exp_val);
+        sum_vals[local_id] += exp_val;
+    }
+
+    // Reduce sums (f32)
+    barrier();
+    for (uint stride = 1; stride < gl_WorkGroupSize.x; stride *= 2) {
+        uint index = 2 * stride * local_id;
+        if (index + stride < gl_WorkGroupSize.x) {
+            sum_vals[index] += sum_vals[index + stride];
+        }
+        barrier();
+    }
+
+    float sum = sum_vals[0];
+
+    // Normalize and write final probabilities as f16
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        uint idx = base_idx + i;
+        float v = float(b[idx]);
+        b[idx] = float16_t(v / sum);
+    }
+}

@@ -53,14 +53,14 @@ impl Instruction for ReLUInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        // Prepare CPU-side values
-        let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
+        let num_elements = dst_tensor.desc.num_elements() as u64;
 
         // Choose operation based on DataType
         let src_dtype = src_tensor.desc.data_type();
         let dst_dtype = dst_tensor.desc.data_type();
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::ReLU_F32_F32,
+            (DataType::Float16, DataType::Float16) => GPUOperation::ReLU_F16_F16,
             _ => {
                 return Err(format!(
                     "GPU ReLU unimplemented for DataType src:{:?}, dst:{:?}",

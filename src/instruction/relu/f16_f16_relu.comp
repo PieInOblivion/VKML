@@ -1,0 +1,22 @@
+#version 450
+
+// Use 16-bit storage and enable float16 arithmetic
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBuffer { float16_t a[]; };
+layout(std430, binding = 1) buffer OutBuffer { float16_t b[]; };
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= a.length()) {
+        return;
+    }
+
+    // ReLU in float16: compute max(0, x) using f16 operations
+    float16_t val = a[idx];
+    b[idx] = max(float16_t(0.0), val);
+}

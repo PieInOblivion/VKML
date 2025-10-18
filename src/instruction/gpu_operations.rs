@@ -15,8 +15,10 @@ const MAX_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_max.spv");
 const MIN_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_min.spv");
 
 const RELU_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_relu.spv");
+const RELU_SHADER_F16_F16: &[u8] = include_shader!("f16_f16_relu.spv");
 const SIGMOID_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_sigmoid.spv");
 const SOFTMAX_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_softmax.spv");
+const SOFTMAX_SHADER_F16_F16: &[u8] = include_shader!("f16_f16_softmax.spv");
 
 const CONV1D_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_conv1d.spv");
 const CONV2D_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_conv2d.spv");
@@ -44,6 +46,7 @@ const SHAPE_SHADER_I64: &[u8] = include_shader!("i64_shape.spv");
 const REDUCE_MEAN_SHADER_F32: &[u8] = include_shader!("f32_reducemean_mean.spv");
 
 const GEMM_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_gemm.spv");
+const GEMM_SHADER_F16_F16_F16_F16: &[u8] = include_shader!("f16_f16_f16_f16_gemm.spv");
 
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -55,8 +58,10 @@ pub enum GPUOperation {
     Maximum_F32_F32_F32,
     Minimum_F32_F32_F32,
     ReLU_F32_F32,
+    ReLU_F16_F16,
     Sigmoid_F32_F32,
     Softmax_F32_F32,
+    Softmax_F16_F16,
     Conv1D_F32_F32_F32_F32,
     Conv2D_F32_F32_F32_F32,
     Conv3D_F32_F32_F32_F32,
@@ -78,6 +83,7 @@ pub enum GPUOperation {
     Shape_Write_I64,
     ReduceMean_F32,
     Gemm_F32_F32_F32_F32,
+    Gemm_F16_F16_F16_F16,
 }
 
 impl GPUOperation {
@@ -93,8 +99,10 @@ impl GPUOperation {
             GPUOperation::Maximum_F32_F32_F32 => MAX_SHADER_F32_F32_F32,
             GPUOperation::Minimum_F32_F32_F32 => MIN_SHADER_F32_F32_F32,
             GPUOperation::ReLU_F32_F32 => RELU_SHADER_F32_F32,
+            GPUOperation::ReLU_F16_F16 => RELU_SHADER_F16_F16,
             GPUOperation::Sigmoid_F32_F32 => SIGMOID_SHADER_F32_F32,
             GPUOperation::Softmax_F32_F32 => SOFTMAX_SHADER_F32_F32,
+            GPUOperation::Softmax_F16_F16 => SOFTMAX_SHADER_F16_F16,
             GPUOperation::Conv1D_F32_F32_F32_F32 => CONV1D_SHADER_F32_F32_F32_F32,
             GPUOperation::Conv2D_F32_F32_F32_F32 => CONV2D_SHADER_F32_F32_F32_F32,
             GPUOperation::Conv3D_F32_F32_F32_F32 => CONV3D_SHADER_F32_F32_F32_F32,
@@ -116,6 +124,7 @@ impl GPUOperation {
             GPUOperation::Shape_Write_I64 => SHAPE_SHADER_I64,
             GPUOperation::ReduceMean_F32 => REDUCE_MEAN_SHADER_F32,
             GPUOperation::Gemm_F32_F32_F32_F32 => GEMM_SHADER_F32_F32_F32_F32,
+            GPUOperation::Gemm_F16_F16_F16_F16 => GEMM_SHADER_F16_F16_F16_F16,
         }
     }
 

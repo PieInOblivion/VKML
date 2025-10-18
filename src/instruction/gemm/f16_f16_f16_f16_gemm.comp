@@ -1,0 +1,72 @@
+#version 450
+
+// Enable 16-bit storage and float16 arithmetic. Accumulate in f32 for accuracy.
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBufferA { float16_t a[]; }; // A (half)
+layout(std430, binding = 1) buffer InBufferB { float16_t b[]; }; // B (half)
+layout(std430, binding = 2) buffer InBufferC { float16_t c[]; }; // C (half, optional)
+layout(std430, binding = 3) buffer OutBuffer { float16_t y[]; }; // Y (half)
+
+layout(push_constant) uniform PushConstants {
+    uint m;             // Height of result
+    uint k;             // Inner dimension
+    uint n;             // Width of result
+    uint stride_a0;     // Row stride for matrix A
+    uint stride_a1;     // Column stride for matrix A
+    uint stride_b0;     // Row stride for matrix B
+    uint stride_b1;     // Column stride for matrix B
+    uint stride_y0;     // Row stride for result Y
+    uint stride_y1;     // Column stride for result Y
+    uint trans_a;       // Transpose flag for A (0 or 1)
+    uint trans_b;       // Transpose flag for B (0 or 1)
+    uint alpha;         // f32 bits for alpha
+    uint beta;          // f32 bits for beta
+    uint has_c;         // Whether C is provided (0 or 1)
+} params;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    if (row >= params.m || col >= params.n) {
+        return;
+    }
+
+    // Decode alpha/beta stored as uint bits
+    float alpha_f32 = uintBitsToFloat(params.alpha);
+    float beta_f32 = uintBitsToFloat(params.beta);
+
+    // Accumulate dot-product in f32 for better precision
+    float sum = 0.0;
+
+    // Compute strides depending on transpose flags
+    uint stride_a_k = (params.trans_a != 0) ? params.stride_a0 : params.stride_a1;
+    uint stride_a_m = (params.trans_a != 0) ? params.stride_a1 : params.stride_a0;
+    uint stride_b_k = (params.trans_b != 0) ? params.stride_b1 : params.stride_b0;
+    uint stride_b_n = (params.trans_b != 0) ? params.stride_b0 : params.stride_b1;
+
+    // Multiply in f16, widen to f32 when adding to sum
+    for (uint i = 0; i < params.k; i++) {
+        uint a_idx = row * stride_a_m + i * stride_a_k;
+        uint b_idx = i * stride_b_k + col * stride_b_n;
+        float16_t a_val = a[a_idx];
+        float16_t b_val = b[b_idx];
+        sum += float(a_val * b_val);
+    }
+
+    float result = alpha_f32 * sum;
+
+    if (params.has_c != 0) {
+        uint c_idx = row * params.n + col;
+        // Add C (bias) scaled by beta
+        result += beta_f32 * float(c[c_idx]);
+    }
+
+    uint y_idx = row * params.stride_y0 + col * params.stride_y1;
+    y[y_idx] = float16_t(result);
+}

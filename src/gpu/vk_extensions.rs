@@ -56,6 +56,8 @@ pub struct VkExtensions {
     cooperative_matrix: Option<Vec<CoopMatrixShape>>,
     memory_budget: bool,
     push_descriptor: bool,
+    shader_float_16_int8: bool,
+    storage_16bit: bool,
 }
 
 impl VkExtensions {
@@ -63,6 +65,8 @@ impl VkExtensions {
     pub const VK_KHR_COOPERATIVE_MATRIX: &'static str = "VK_KHR_cooperative_matrix";
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
     pub const VK_KHR_PUSH_DESCRIPTOR: &'static str = "VK_KHR_push_descriptor";
+    pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
+    pub const VK_KHR_16BIT_STORAGE: &'static str = "VK_KHR_16bit_storage";
 
     pub fn from_extension_properties(
         instance: &Instance,
@@ -83,6 +87,12 @@ impl VkExtensions {
                 }
                 Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
                 Self::VK_KHR_PUSH_DESCRIPTOR => res.push_descriptor = true,
+                Self::VK_KHR_SHADER_FLOAT16_INT8 => {
+                    res.shader_float_16_int8 = true;
+                }
+                Self::VK_KHR_16BIT_STORAGE => {
+                    res.storage_16bit = true;
+                }
                 _ => {}
             }
         }
@@ -169,6 +179,32 @@ impl VkExtensions {
             holders.push(feat);
         }
 
+        if self.shader_float_16_int8 {
+            let mut feat = Box::new(vk::PhysicalDeviceShaderFloat16Int8Features {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+                next: ptr::null_mut(),
+                shader_float16: vk::TRUE,
+                shader_int8: vk::FALSE,
+            });
+            feat.next = head as *mut _;
+            head = (&*feat) as *const _ as *mut c_void;
+            holders.push(feat);
+        }
+
+        if self.storage_16bit {
+            let mut feat = Box::new(vk::PhysicalDevice16BitStorageFeatures {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                next: ptr::null_mut(),
+                storage_buffer_16bit_access: vk::TRUE,
+                uniform_and_storage_buffer_16bit_access: vk::TRUE,
+                storage_push_constant16: vk::FALSE,
+                storage_input_output16: vk::FALSE,
+            });
+            feat.next = head as *mut _;
+            head = (&*feat) as *const _ as *mut c_void;
+            holders.push(feat);
+        }
+
         DeviceCreateExtras {
             names,
             name_ptrs,
@@ -181,5 +217,9 @@ impl VkExtensions {
 
     pub fn coop_matrix_shapes(&self) -> Option<Vec<CoopMatrixShape>> {
         self.cooperative_matrix.clone()
+    }
+
+    pub fn supports_fp16(&self) -> bool {
+        self.shader_float_16_int8 && self.storage_16bit
     }
 }

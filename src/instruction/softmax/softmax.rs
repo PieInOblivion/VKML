@@ -82,7 +82,7 @@ impl Instruction for SoftmaxInstruction {
         );
 
         let feature_size = dims[dim] as usize;
-        let batch_size = src_mem.size as usize / std::mem::size_of::<f32>() / feature_size;
+        let batch_size = src_tensor.desc.num_elements() / feature_size;
 
         // Create push constants struct (compute before GPU ops)
         let push_constants = SoftmaxPushConstants {
@@ -97,6 +97,7 @@ impl Instruction for SoftmaxInstruction {
         let dst_dtype = dst_tensor.desc.data_type();
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::Softmax_F32_F32,
+            (DataType::Float16, DataType::Float16) => GPUOperation::Softmax_F16_F16,
             _ => {
                 return Err(format!(
                     "GPU Softmax unimplemented for DataType src:{:?}, dst:{:?}",
@@ -108,7 +109,12 @@ impl Instruction for SoftmaxInstruction {
 
         // Choose an optimal local workgroup for per-batch parallelism
         // We want one workgroup per batch; pick local_size sized to GPU limits
-        let local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
+        let mut local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
+
+        // Clamp the X component to shader max local size x (256)
+        if local_size[0] > 256 {
+            local_size[0] = 256;
+        }
 
         // Bind pipeline and descriptors (src=0, dst=1)
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
