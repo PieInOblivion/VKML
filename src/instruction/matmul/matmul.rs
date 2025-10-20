@@ -435,8 +435,7 @@ fn execute_gpu_matmul(
                 let m = src1_dims[0];
                 let n = src2_dims[1];
 
-                // For cooperative matrices, dispatch one workgroup per 16x16 tile
-                // Each workgroup has 32 threads (one subgroup)
+                // For cooperative matrices, workgroup size is hardcoded in shader
                 let coop_local_size = [32, 1, 1];
                 let num_tiles_x = (n as usize).div_ceil(16); // ceil(n / 16)
                 let num_tiles_y = (m as usize).div_ceil(16); // ceil(m / 16)

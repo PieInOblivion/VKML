@@ -35,6 +35,7 @@ pub struct Gpu {
     max_shared_memory_size: u32,
     max_compute_queue_count: u32,
     max_push_descriptors: u32,
+    subgroup_size: u32, // eg: 32 for NVIDIA/Intel, 64 for AMD
 
     physical_device: vk::PhysicalDevice,
     compute_queue: vk::Queue,
@@ -171,9 +172,10 @@ impl Gpu {
             };
 
             // Query device properties for info fields and limits
+            let mut subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
             let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
                 s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
-                next: ptr::null_mut(),
+                next: &mut subgroup_properties as *mut _ as *mut c_void,
                 max_push_descriptors: 0,
             };
 
@@ -185,6 +187,7 @@ impl Gpu {
 
             instance.get_physical_device_properties2(physical_device, &mut props2);
             let properties = props2.properties;
+            let subgroup_size = subgroup_properties.subgroup_size;
 
             // Extract device name
             let name = String::from_utf8_lossy(
@@ -229,6 +232,7 @@ impl Gpu {
                 max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
                 max_compute_queue_count,
                 max_push_descriptors: push_props.max_push_descriptors,
+                subgroup_size,
 
                 physical_device,
                 compute_queue,
@@ -493,6 +497,10 @@ impl Gpu {
 
     pub fn extensions(&self) -> &VkExtensions {
         &self.extensions
+    }
+
+    pub fn subgroup_size(&self) -> u32 {
+        self.subgroup_size
     }
 
     pub fn get_device(&self) -> &Device {
