@@ -1,0 +1,45 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBufferA { float16_t a[]; }; // Matrix [m,k]
+layout(std430, binding = 1) buffer InBufferB { float16_t b[]; }; // Matrix [k,n]
+layout(std430, binding = 2) buffer OutBuffer { float16_t c[]; }; // Result [m,n]
+
+layout(push_constant) uniform PushConstants {
+    uint m;             // Height of matrix A and result
+    uint k;             // Width of matrix A, height of matrix B
+    uint n;             // Width of matrix B and result
+    uint stride_a0;     // Row stride for matrix a
+    uint stride_a1;     // Column stride for matrix a
+    uint stride_b0;     // Row stride for matrix b
+    uint stride_b1;     // Column stride for matrix b
+    uint stride_c0;     // Row stride for result c
+    uint stride_c1;     // Column stride for result c
+} dims;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    // Check bounds
+    if (row >= dims.m || col >= dims.n) {
+        return;
+    }
+
+    float16_t sum = float16_t(0.0);
+
+    // Matrix multiplication
+    for (uint i = 0; i < dims.k; i++) {
+        uint a_idx = row * dims.stride_a0 + i * dims.stride_a1;
+        uint b_idx = i * dims.stride_b0 + col * dims.stride_b1;
+        sum += a[a_idx] * b[b_idx];
+    }
+
+    // Store result
+    uint c_idx = row * dims.stride_c0 + col * dims.stride_c1;
+    c[c_idx] = sum;
+}

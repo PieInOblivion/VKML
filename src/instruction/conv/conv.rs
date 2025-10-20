@@ -263,6 +263,13 @@ impl Instruction for ConvInstruction {
                     | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                         GPUOperation::Conv2D_F32_F32_F32_F32
                     }
+                    (DataType::Float16, DataType::Float16, None, DataType::Float16)
+                    | (
+                        DataType::Float16,
+                        DataType::Float16,
+                        Some(DataType::Float16),
+                        DataType::Float16,
+                    ) => GPUOperation::Conv2D_F16_F16_F16_F16,
                     _ => {
                         return Err(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",

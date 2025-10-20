@@ -1,0 +1,36 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InA { float16_t a[]; };
+layout(std430, binding = 1) buffer InB { float16_t b[]; };
+layout(std430, binding = 2) buffer Out { float16_t c[]; };
+
+layout(push_constant) uniform PC {
+    uint rank;
+    uint pad;
+    uint total;
+    uint dims[8];
+    uint strides_a[8];
+    uint strides_b[8];
+} pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.total;
+    if (gid >= total) return;
+    uint idx = gid;
+    uint offA = 0;
+    uint offB = 0;
+    for (int i = int(pc.rank) - 1; i >= 0; --i) {
+        uint d = pc.dims[i];
+        uint r = idx % d;
+        idx /= d;
+        offA += r * pc.strides_a[i];
+        offB += r * pc.strides_b[i];
+    }
+    c[gid] = a[offA] + b[offB];
+}

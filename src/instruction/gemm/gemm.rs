@@ -146,50 +146,6 @@ impl Instruction for GemmInstruction {
             }
         };
 
-        // Cooperative matrix path for F16 GEMM
-        //if gpu_op == GPUOperation::Gemm_F16_F16_F16_F16 {
-        if false {
-            if let Some(coop_shapes) = gpu.extensions().get_coop_matrix_sizes(
-                DataType::Float16,
-                DataType::Float16,
-                DataType::Float16,
-                DataType::Float16,
-            ) {
-                // currently hardcoded for 16x16x16 coop hardware shape
-                let has_16x16x16 = coop_shapes
-                    .iter()
-                    .any(|shape| shape.m == 16 && shape.n == 16 && shape.k == 16);
-
-                if has_16x16x16 {
-                    // For cooperative matrices, dispatch one workgroup per 16x16 tile
-                    // Each workgroup has 32 threads (one subgroup)
-                    let coop_local_size = [32, 1, 1];
-                    let num_tiles_x = n.div_ceil(16); // ceil(n / 16)
-                    let num_tiles_y = m.div_ceil(16); // ceil(m / 16)
-
-                    gpu.bind_compute_pipeline(
-                        command_buffer,
-                        GPUOperation::Gemm_F16_F16_F16_F16_Coop_16_16_16,
-                        coop_local_size,
-                    );
-                    gpu.bind_storage_buffers_optional(
-                        command_buffer,
-                        &[Some(a_gpu_mem), Some(b_gpu_mem), c_gpu_mem, Some(y_gpu_mem)],
-                    );
-                    gpu.bind_push_constants(command_buffer, as_bytes(&pc));
-
-                    // Dispatch workgroups: one per tile
-                    gpu.dispatch(
-                        command_buffer,
-                        coop_local_size,
-                        [num_tiles_x as u64, num_tiles_y as u64, 1],
-                    );
-
-                    return Ok(());
-                }
-            }
-        }
-
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
         gpu.bind_storage_buffers_optional(
             command_buffer,

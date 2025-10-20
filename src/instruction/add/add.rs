@@ -136,6 +136,9 @@ impl Instruction for AddInstruction {
             (DataType::Float, DataType::Float, DataType::Float) => {
                 GPUOperation::Addition_F32_F32_F32
             }
+            (DataType::Float16, DataType::Float16, DataType::Float16) => {
+                GPUOperation::Addition_F16_F16_F16
+            }
             _ => {
                 return Err(format!(
                     "GPU Add unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",

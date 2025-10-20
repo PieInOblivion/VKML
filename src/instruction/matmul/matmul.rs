@@ -169,6 +169,14 @@ fn determine_operation(
             )
             .into()),
         },
+        (DataType::Float16, DataType::Float16, DataType::Float16) => match (a_rank, b_rank) {
+            (2, 2) => Ok(GPUOperation::MatMul2D2D_F16_F16_F16), // Will be replaced by coop matrix if available
+            _ => Err(format!(
+                "Unsupported F16 MatMul dimensions: a_rank:{}, b_rank:{}",
+                a_rank, b_rank
+            )
+            .into()),
+        },
         _ => Err(format!(
             "GPU MatMul unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
             src1_dtype, src2_dtype, dst_dtype
@@ -241,7 +249,7 @@ fn execute_gpu_matmul(
             )
         }
 
-        GPUOperation::MatMul2D2D_F32_F32_F32 => {
+        GPUOperation::MatMul2D2D_F32_F32_F32 | GPUOperation::MatMul2D2D_F16_F16_F16 => {
             // [m,k] × [k,n] → [m,n]
             let m = src1_dims[0];
             let k = src1_dims[1];

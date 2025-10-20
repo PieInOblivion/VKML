@@ -194,6 +194,7 @@ impl Instruction for MaxPoolInstruction {
                 let dst_dtype = dst_desc.data_type();
                 let gpu_op = match (src_dtype, dst_dtype) {
                     (DataType::Float, DataType::Float) => GPUOperation::MaxPool2D_F32_F32,
+                    (DataType::Float16, DataType::Float16) => GPUOperation::MaxPool2D_F16_F16,
                     _ => {
                         return Err(format!(
                             "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
