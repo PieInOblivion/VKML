@@ -18,6 +18,7 @@ use vulkanalia::{
 
 use crate::{
     compute::memory_tracker::MemoryTracker,
+    gpu::workgroup::optimal_workgroup_size,
     instruction::GPUOperation,
     utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
@@ -590,163 +591,35 @@ impl Gpu {
             .fetch_add(count, Ordering::Relaxed)
     }
 
-    fn optimal_workgroup_size_generic(
-        &self,
-        dims: [Option<u64>; 3],
-        increments: [u32; 3],
-    ) -> [u32; 3] {
-        fn div_ceil(value: u64, divisor: u64) -> u64 {
-            debug_assert!(divisor > 0);
-            value.div_ceil(divisor)
-        }
-
-        fn build_candidates(limit: u32, increment: u32) -> Vec<u32> {
-            if limit == 0 {
-                return vec![1];
-            }
-
-            let mut values = Vec::new();
-            values.push(limit.max(1));
-
-            let step = increment.max(1);
-            if step > 1 && limit > step {
-                let mut current = ((limit - 1) / step) * step;
-                while current >= step && current > 0 {
-                    if values.last() != Some(&current) {
-                        values.push(current);
-                    }
-                    if current < step {
-                        break;
-                    }
-                    current = current.saturating_sub(step);
-                }
-            }
-
-            if !values.contains(&1) {
-                values.push(1);
-            }
-
-            values.sort_unstable_by(|a, b| b.cmp(a));
-            values.dedup();
-            values
-        }
-
-        let mut target_elements = 1u64;
-        for dimension in dims.iter().copied() {
-            let value = dimension.unwrap_or(1);
-            if value == 0 {
-                return [1, 1, 1];
-            }
-            target_elements = target_elements.saturating_mul(value);
-        }
-
-        let max_sizes = self.max_workgroup_size;
-        let candidates: [Vec<u32>; 3] = array::from_fn(|i| match dims[i] {
-            Some(dimension) => {
-                let gpu_limit = max_sizes[i];
-                let limit = dimension.min(gpu_limit as u64).max(1) as u32;
-                build_candidates(limit, increments[i].max(1))
-            }
-            None => vec![1],
-        });
-
-        let max_threads_per_group = self.max_workgroup_invocations as u64;
-
-        let mut best_sizes = [1u32; 3];
-        let mut best_overspill = u64::MAX;
-        let mut best_threads_per_group = 0u64;
-        let mut best_workgroups_product = u64::MAX;
-
-        for &size_x in &candidates[0] {
-            for &size_y in &candidates[1] {
-                for &size_z in &candidates[2] {
-                    let sizes = [size_x.max(1), size_y.max(1), size_z.max(1)];
-
-                    if sizes[0] > max_sizes[0] || sizes[1] > max_sizes[1] || sizes[2] > max_sizes[2]
-                    {
-                        continue;
-                    }
-
-                    let threads_per_group = sizes
-                        .iter()
-                        .try_fold(1u64, |acc, &s| acc.checked_mul(s as u64));
-
-                    let threads_per_group = match threads_per_group {
-                        Some(value) if value > 0 && value <= max_threads_per_group => value,
-                        _ => continue,
-                    };
-
-                    let workgroups_product = (0..3).try_fold(1u64, |acc, i| {
-                        if let Some(dimension) = dims[i] {
-                            let size = sizes[i] as u64;
-                            let workgroups = div_ceil(dimension, size);
-                            acc.checked_mul(workgroups)
-                        } else {
-                            Some(acc)
-                        }
-                    });
-
-                    let workgroups_product = match workgroups_product {
-                        Some(value) if value > 0 => value,
-                        _ => continue,
-                    };
-
-                    let total_threads = match threads_per_group.checked_mul(workgroups_product) {
-                        Some(value) => value,
-                        None => continue,
-                    };
-
-                    let overspill = total_threads.saturating_sub(target_elements);
-
-                    let is_better = overspill < best_overspill
-                        || (overspill == best_overspill
-                            && threads_per_group > best_threads_per_group)
-                        || (overspill == best_overspill
-                            && threads_per_group == best_threads_per_group
-                            && workgroups_product < best_workgroups_product);
-
-                    if is_better {
-                        best_sizes = sizes;
-                        best_overspill = overspill;
-                        best_threads_per_group = threads_per_group;
-                        best_workgroups_product = workgroups_product;
-                    }
-                }
-            }
-        }
-
-        if best_overspill == u64::MAX {
-            [1, 1, 1]
-        } else {
-            best_sizes
-        }
-    }
-
     /// Calculate optimal workgroup size for 1D compute operations (element-wise ops)
-    /// Counts in increments of 64 up to either total_elements or GPU limits
     pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> [u32; 3] {
-        self.optimal_workgroup_size_generic([Some(total_elements), None, None], [64, 1, 1])
+        optimal_workgroup_size(
+            self.max_workgroup_size,
+            self.max_workgroup_invocations,
+            [Some(total_elements), None, None],
+        )
     }
 
     /// Calculate optimal workgroup size for 2D compute operations (matmul, conv2d)
-    /// Returns square tiles, counting in increments of 8 per dimension
     ///
     /// Note: For batched 2D operations (e.g., batched matmul), use this function
     /// and handle the batch dimension in the dispatch call, not the workgroup size.
     /// Standard pattern: workgroup = [tile, tile], dispatch = [m/tile, n/tile, batch]
     pub fn optimal_workgroup_size_2d(&self, rows: u64, cols: u64) -> [u32; 3] {
-        self.optimal_workgroup_size_generic([Some(rows), Some(cols), None], [8, 8, 1])
+        optimal_workgroup_size(
+            self.max_workgroup_size,
+            self.max_workgroup_invocations,
+            [Some(rows), Some(cols), None],
+        )
     }
 
     /// Calculate optimal workgroup size for 3D spatial operations (conv3d, maxpool3d)
-    /// Returns cubic tiles, counting in increments of 2 per dimension
-    ///
-    /// This is for true 3D spatial operations, not batched 2D operations.
-    /// For batched 2D, use optimal_workgroup_size_2d() instead.
-    ///
-    /// Uses the minimum of max_workgroup_size dimensions to ensure cubic tiles fit.
     pub fn optimal_workgroup_size_3d(&self, x: u64, y: u64, z: u64) -> [u32; 3] {
-        self.optimal_workgroup_size_generic([Some(x), Some(y), Some(z)], [2, 2, 2])
+        optimal_workgroup_size(
+            self.max_workgroup_size,
+            self.max_workgroup_invocations,
+            [Some(x), Some(y), Some(z)],
+        )
     }
 
     /// Begin recording a compute command buffer
