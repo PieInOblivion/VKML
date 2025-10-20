@@ -164,8 +164,8 @@ impl Instruction for GemmInstruction {
                     // For cooperative matrices, dispatch one workgroup per 16x16 tile
                     // Each workgroup has 32 threads (one subgroup)
                     let coop_local_size = [32, 1, 1];
-                    let num_tiles_x = (n + 15) / 16; // ceil(n / 16)
-                    let num_tiles_y = (m + 15) / 16; // ceil(m / 16)
+                    let num_tiles_x = n.div_ceil(16); // ceil(n / 16)
+                    let num_tiles_y = m.div_ceil(16); // ceil(m / 16)
 
                     gpu.bind_compute_pipeline(
                         command_buffer,
