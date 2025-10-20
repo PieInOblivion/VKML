@@ -222,4 +222,28 @@ impl VkExtensions {
     pub fn supports_fp16(&self) -> bool {
         self.shader_float_16_int8 && self.storage_16bit
     }
+
+    /// Query cooperative matrix shapes matching the given data types
+    /// Returns None if cooperative matrix extension is not available
+    /// Returns Some(Vec) with matching shapes (may be empty if no match)
+    pub fn get_coop_matrix_sizes(
+        &self,
+        a_type: DataType,
+        b_type: DataType,
+        c_type: DataType,
+        result_type: DataType,
+    ) -> Option<Vec<CoopMatrixShape>> {
+        self.cooperative_matrix.as_ref().map(|shapes| {
+            shapes
+                .iter()
+                .filter(|shape| {
+                    shape.a_type == a_type
+                        && shape.b_type == b_type
+                        && shape.c_type == c_type
+                        && shape.result_type == result_type
+                })
+                .cloned()
+                .collect()
+        })
+    }
 }

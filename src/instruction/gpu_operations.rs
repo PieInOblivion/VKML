@@ -47,6 +47,8 @@ const REDUCE_MEAN_SHADER_F32: &[u8] = include_shader!("f32_reducemean_mean.spv")
 
 const GEMM_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_gemm.spv");
 const GEMM_SHADER_F16_F16_F16_F16: &[u8] = include_shader!("f16_f16_f16_f16_gemm.spv");
+const GEMM_SHADER_F16_F16_F16_F16_COOP_16_16_16: &[u8] =
+    include_shader!("f16_f16_f16_f16_gemm_coop_16_16_16.spv");
 
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -84,6 +86,7 @@ pub enum GPUOperation {
     ReduceMean_F32,
     Gemm_F32_F32_F32_F32,
     Gemm_F16_F16_F16_F16,
+    Gemm_F16_F16_F16_F16_Coop_16_16_16,
 }
 
 impl GPUOperation {
@@ -125,6 +128,9 @@ impl GPUOperation {
             GPUOperation::ReduceMean_F32 => REDUCE_MEAN_SHADER_F32,
             GPUOperation::Gemm_F32_F32_F32_F32 => GEMM_SHADER_F32_F32_F32_F32,
             GPUOperation::Gemm_F16_F16_F16_F16 => GEMM_SHADER_F16_F16_F16_F16,
+            GPUOperation::Gemm_F16_F16_F16_F16_Coop_16_16_16 => {
+                GEMM_SHADER_F16_F16_F16_F16_COOP_16_16_16
+            }
         }
     }
 

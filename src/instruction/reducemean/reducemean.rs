@@ -1,4 +1,5 @@
 use crate::gpu::vk_gpu::Gpu;
+use crate::instruction::reducemean::f32_cpu::f32_cpu;
 use crate::instruction::reducemean::push_constants::ReduceMeanPushConstants;
 use crate::instruction::{GPUOperation, Instruction};
 use crate::utils::as_bytes;
@@ -180,59 +181,15 @@ impl Instruction for ReduceMeanInstruction {
         let dst_t = cm.tensor_write(self.dst);
         dst_t.desc = TensorDesc::new(out_dims.clone(), src_desc.data_type());
 
+        let src_bytes = src_t.get_cpu_memory_slice_or_panic();
+        let out_bytes = dst_t.get_cpu_memory_mut_slice_or_panic();
+
         // For simplicity, only implement numeric float32 path
         match src_desc.data_type() {
             DataType::Float => {
-                let src_bytes = src_t.get_cpu_memory_slice_or_panic();
-                let src_f32: Vec<f32> = src_bytes
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-
-                // naive reduction: iterate over all indices and accumulate into output buffer
-                let out_num: usize = dst_t.desc.num_elements();
-                let mut out_vals = vec![0f32; out_num];
-
-                // compute strides
-                let src_strides = TensorDesc::compute_strides(src_desc.dims());
-                let out_strides = TensorDesc::compute_strides(dst_t.desc.dims());
-
-                let total: usize = src_f32.len();
-                for idx in 0..total {
-                    // compute multi-index of src
-                    let mut rem = idx;
-                    let mut out_idx = 0usize;
-                    for (dim_i, &s) in src_strides.iter().enumerate() {
-                        let coord = rem / s;
-                        rem %= s;
-                        if !axes_vec.contains(&(dim_i as i64)) {
-                            out_idx += coord
-                                * out_strides[dim_i
-                                    - axes_vec.iter().filter(|&&a| a < dim_i as i64).count()];
-                        }
-                    }
-                    out_vals[out_idx] += src_f32[idx];
-                }
-
-                // divide by reduction size per output element
-                // reduction_size: product of dims over axes
-                let mut reduction_size = 1usize;
-                for &a in &axes_vec {
-                    reduction_size *= src_desc.dims()[a as usize] as usize;
-                }
-                for v in out_vals.iter_mut() {
-                    *v /= reduction_size as f32;
-                }
-
-                // write to dst bytes
-                let out_bytes = dst_t.get_cpu_memory_mut_slice_or_panic();
-                for (i, &val) in out_vals.iter().enumerate() {
-                    let b = val.to_le_bytes();
-                    let off = i * 4;
-                    out_bytes[off..off + 4].copy_from_slice(&b);
-                }
+                f32_cpu(src_bytes, &src_dims, &axes_vec, keep, out_bytes);
             }
-            _ => panic!(
+            _ => unimplemented!(
                 "ReduceMean CPU: DataType {:?} not implemented",
                 src_desc.data_type()
             ),

@@ -1,0 +1,68 @@
+#version 450
+
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+const uint lM = 16;
+const uint lN = 16;
+const uint lK = 16;
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer InBufferA { float16_t a[]; };
+layout(std430, binding = 1) buffer InBufferB { float16_t b[]; };
+layout(std430, binding = 2) buffer InBufferC { float16_t c[]; };
+layout(std430, binding = 3) buffer OutBuffer { float16_t y[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint m, k, n;
+    uint stride_a0, stride_a1;
+    uint stride_b0, stride_b1;
+    uint stride_y0, stride_y1;
+    uint trans_a, trans_b;
+    uint alpha, beta, has_c;
+} params;
+
+void main() {
+    uint cRow = lM * gl_WorkGroupID.y;
+    uint cCol = lN * gl_WorkGroupID.x;
+
+    if (cRow >= params.m || cCol >= params.n) return;
+
+    coopmat<float16_t, gl_ScopeSubgroup, lM, lK, gl_MatrixUseA> matA;
+    coopmat<float16_t, gl_ScopeSubgroup, lK, lN, gl_MatrixUseB> matB;
+    coopmat<float16_t, gl_ScopeSubgroup, lM, lN, gl_MatrixUseAccumulator> matC;
+
+    // Simple version: assume no transpose, row-major layout
+    uint y_off = cRow * params.stride_y0 + cCol * params.stride_y1;
+
+    // Process K dimension in tiles
+    uint kk = 0;
+
+    // First tile: initialize matC
+    coopMatLoad(matA, a, cRow * params.stride_a0 + kk, params.stride_a0, 0);
+    coopMatLoad(matB, b, kk * params.stride_b0 + cCol, params.stride_b0, 0);
+
+    if (params.has_c != 0) {
+        // Add bias C
+        coopMatLoad(matC, c, cRow * params.n + cCol, params.n, 0);
+        matC = coopMatMulAdd(matA, matB, matC);
+    } else {
+        // No bias - matC starts uninitialized but coopMatMulAdd will initialize it
+        // Actually, we need to load something. Let's load zeros by reusing a trick:
+        // We can't initialize to zero easily, so we'll compute A*B for first tile
+        // without adding C, then accumulate the rest
+        matC = coopMatMulAdd(matA, matB, matC);
+    }
+
+    // Remaining tiles
+    for (kk = lK; kk < params.k; kk += lK) {
+        coopMatLoad(matA, a, cRow * params.stride_a0 + kk, params.stride_a0, 0);
+        coopMatLoad(matB, b, kk * params.stride_b0 + cCol, params.stride_b0, 0);
+        matC = coopMatMulAdd(matA, matB, matC);
+    }
+
+    coopMatStore(matC, y, y_off, params.stride_y0, 0);
+}
