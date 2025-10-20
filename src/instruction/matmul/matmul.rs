@@ -417,6 +417,51 @@ fn execute_gpu_matmul(
         }
     };
 
+    // Cooperative matrix optimization for F16 2D×2D MatMul
+    if operation == GPUOperation::MatMul2D2D_F16_F16_F16 {
+        if let Some(coop_shapes) = gpu.extensions().get_coop_matrix_sizes(
+            DataType::Float16,
+            DataType::Float16,
+            DataType::Float16,
+            DataType::Float16,
+        ) {
+            // Check if 16x16x16 cooperative matrix is supported
+            let has_16x16x16 = coop_shapes
+                .iter()
+                .any(|shape| shape.m == 16 && shape.n == 16 && shape.k == 16);
+
+            if has_16x16x16 {
+                // Extract dimensions from push constants for cooperative matrix dispatch
+                let m = src1_dims[0];
+                let n = src2_dims[1];
+
+                // For cooperative matrices, dispatch one workgroup per 16x16 tile
+                // Each workgroup has 32 threads (one subgroup)
+                let coop_local_size = [32, 1, 1];
+                let num_tiles_x = (n as usize).div_ceil(16); // ceil(n / 16)
+                let num_tiles_y = (m as usize).div_ceil(16); // ceil(m / 16)
+
+                gpu.bind_compute_pipeline(
+                    command_buffer,
+                    GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16,
+                    coop_local_size,
+                );
+                gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
+                gpu.bind_push_constants(command_buffer, &push_constants_bytes);
+
+                // Dispatch workgroups: one per tile
+                gpu.dispatch(
+                    command_buffer,
+                    coop_local_size,
+                    [num_tiles_x as u64, num_tiles_y as u64, 1],
+                );
+
+                return Ok(());
+            }
+        }
+    }
+
+    // Standard pipeline path
     gpu.bind_compute_pipeline(command_buffer, operation, local_size);
     gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 

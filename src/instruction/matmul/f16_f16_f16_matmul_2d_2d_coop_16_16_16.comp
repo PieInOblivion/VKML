@@ -1,0 +1,114 @@
+#version 450
+
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer InBufferA { float16_t a[]; }; // Matrix [m,k]
+layout(std430, binding = 1) buffer InBufferB { float16_t b[]; }; // Matrix [k,n]
+layout(std430, binding = 2) buffer OutBuffer { float16_t c[]; }; // Result [m,n]
+
+layout(push_constant) uniform PushConstants {
+    uint m;             // Height of matrix A and result
+    uint k;             // Width of matrix A, height of matrix B
+    uint n;             // Width of matrix B and result
+    uint stride_a0;     // Row stride for matrix a
+    uint stride_a1;     // Column stride for matrix a
+    uint stride_b0;     // Row stride for matrix b
+    uint stride_b1;     // Column stride for result b
+    uint stride_c0;     // Row stride for result c
+    uint stride_c1;     // Column stride for result c
+} dims;
+
+// Shared memory tiles for staging data
+shared float16_t tileA[16 * 16];
+shared float16_t tileB[16 * 16];
+shared float16_t tileC[16 * 16];
+
+void main() {
+    // Each workgroup computes one 16x16 tile of the output matrix
+    // Workgroup IDs tell us which tile we're computing
+    uint tile_row = gl_WorkGroupID.y; // Which 16-row tile (M dimension)
+    uint tile_col = gl_WorkGroupID.x; // Which 16-col tile (N dimension)
+
+    // Calculate the starting position of our tile in the output matrix
+    uint out_row = tile_row * 16;
+    uint out_col = tile_col * 16;
+
+    // Bounds check: skip if this tile is completely outside the matrix
+    if (out_row >= dims.m || out_col >= dims.n) {
+        return;
+    }
+
+    // Initialize cooperative matrix accumulator to zero
+    // CRITICAL: Must initialize before accumulation loop!
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> matC =
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(float16_t(0.0));
+
+    // Loop over K dimension in 16-element chunks
+    uint num_k_tiles = (dims.k + 15) / 16; // Ceiling division
+
+    for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
+        uint k_offset = k_tile * 16;
+
+        if (k_offset >= dims.k) {
+            break;
+        }
+
+        // Load tiles from global memory into shared memory
+        // Each thread loads multiple elements in parallel
+        for (uint idx = gl_LocalInvocationIndex; idx < 256; idx += gl_WorkGroupSize.x) {
+            uint i = idx / 16;
+            uint j = idx % 16;
+
+            uint row_a = out_row + i;
+            uint col_a = k_offset + j;
+            uint row_b = k_offset + i;
+            uint col_b = out_col + j;
+
+            tileA[idx] = (row_a < dims.m && col_a < dims.k)
+                       ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
+                       : float16_t(0.0);
+
+            tileB[idx] = (row_b < dims.k && col_b < dims.n)
+                       ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
+                       : float16_t(0.0);
+        }
+
+        // Synchronize to ensure all threads have finished loading
+        memoryBarrierShared();
+        barrier();
+
+        // Load cooperative matrices from shared memory
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> matA;
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> matB;
+
+        coopMatLoad(matA, tileA, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(matB, tileB, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+
+        // Perform matrix multiply-accumulate: matC += matA * matB
+        matC = coopMatMulAdd(matA, matB, matC);
+    }
+
+    // Store result from cooperative matrix to shared memory
+    coopMatStore(matC, tileC, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+
+    memoryBarrierShared();
+    barrier();
+
+    // Write result from shared memory back to global memory
+    for (uint idx = gl_LocalInvocationIndex; idx < 256; idx += gl_WorkGroupSize.x) {
+        uint i = idx / 16;
+        uint j = idx % 16;
+
+        uint row = out_row + i;
+        uint col = out_col + j;
+
+        if (row < dims.m && col < dims.n) {
+            c[row * dims.stride_c0 + col * dims.stride_c1] = tileC[idx];
+        }
+    }
+}
