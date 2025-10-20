@@ -76,6 +76,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 println!("  Inputs:");
                 for input in inputs {
                     let tensor = cm.tensor_read(input);
+                    let dtype = format!("{:?}", tensor.desc.data_type());
                     let shape = format!("{:?}", tensor.desc.dims());
 
                     let location = match &tensor.device {
@@ -92,8 +93,9 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                         .join(", ");
 
                     println!(
-                        "    Tensor {} - Shape: {} - Location: {} - Producers: {}",
+                        "    Tensor {} - DType: {} - Shape: {} - Location: {} - Producers: {}",
                         input,
+                        dtype,
                         shape,
                         location,
                         if producers.is_empty() {
@@ -108,6 +110,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                 println!("  Outputs:");
                 for output in outputs {
                     let tensor = cm.tensor_read(output);
+                    let dtype = format!("{:?}", tensor.desc.data_type());
                     let shape = format!("{:?}", tensor.desc.dims());
 
                     let location = match &tensor.device {
@@ -123,8 +126,9 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
                         .collect();
 
                     println!(
-                        "    Tensor {} - Shape: {} - Location: {} - Consumers: {}",
+                        "    Tensor {} - DType: {} - Shape: {} - Location: {} - Consumers: {}",
                         output,
+                        dtype,
                         shape,
                         location,
                         if consumers.is_empty() {
