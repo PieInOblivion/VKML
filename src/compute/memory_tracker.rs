@@ -21,7 +21,6 @@ impl MemoryTracker {
         let new = match prev.checked_add(size) {
             Some(v) => v,
             None => {
-                self.current.fetch_sub(size, Ordering::Release);
                 panic!(
                     "Memory allocation would overflow: current {} + size {}",
                     prev, size

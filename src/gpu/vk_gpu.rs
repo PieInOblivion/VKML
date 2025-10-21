@@ -549,6 +549,10 @@ impl Gpu {
         self.memory_tracker.get_maximum()
     }
 
+    pub fn memory_available(&self) -> u64 {
+        self.memory_tracker.get_available()
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
