@@ -116,12 +116,14 @@ impl Instruction for SoftmaxInstruction {
             local_size[0] = 256;
         }
 
+        let binding_count = 2; // src, dst
+
         // Bind pipeline and descriptors (src=0, dst=1)
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // Push constants
-        gpu.bind_push_constants(command_buffer, pc_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
         // Calculate dispatch size based on batch size (one workgroup per batch)
         gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);

@@ -108,15 +108,16 @@ impl Instruction for InitConstantInstruction {
         // Choose operation and workgroup
         let gpu_op = GPUOperation::InitConstant;
         let local_size = gpu.optimal_workgroup_size_1d(total_words as u64);
+        let binding_count = 1; // dst only
 
         // Bind pipeline first so push-descriptors are associated with the correct layout
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
 
         // bind dst buffer at binding 0
         gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
         // push constants and dispatch
-        gpu.bind_push_constants(command_buffer, pc_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [total_words as u64, 1, 1]);

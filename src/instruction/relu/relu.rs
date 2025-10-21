@@ -72,9 +72,10 @@ impl Instruction for ReLUInstruction {
 
         // Choose an optimal local workgroup size for this 1D element-wise op
         let local_size = gpu.optimal_workgroup_size_1d(num_elements);
+        let binding_count = 2; // src, dst
 
         // Bind pipeline first so descriptor push is associated with the correct layout
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
 
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 

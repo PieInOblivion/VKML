@@ -75,13 +75,15 @@ impl Instruction for InitXavierInstruction {
 
         // Choose and bind workgroup after we know total elements
         let local_size = gpu.optimal_workgroup_size_1d(dst_elems);
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        let binding_count = 1; // dst only
+
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
 
         // Bind descriptor (dst at binding 0)
         gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
         // Push constants
-        gpu.bind_push_constants(command_buffer, pc_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
         // Dispatch
         gpu.dispatch(command_buffer, local_size, [dst_elems, 1, 1]);

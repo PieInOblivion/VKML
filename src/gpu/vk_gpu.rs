@@ -1,5 +1,4 @@
 use std::{
-    array,
     collections::HashMap,
     ffi::{CString, c_void},
     ptr,
@@ -40,15 +39,15 @@ pub struct Gpu {
 
     physical_device: vk::PhysicalDevice,
     compute_queue: vk::Queue,
-    descriptor_set_layout: vk::DescriptorSetLayout,
     memory_tracker: MemoryTracker,
     extensions: VkExtensions,
 
     // Drop order matters: fields drop top-to-bottom
     timeline_semaphore: OnceLock<vk::Semaphore>,
     next_semaphore_value: AtomicU64,
-    pipelines: RwLock<HashMap<(GPUOperation, [u32; 3]), vk::Pipeline>>,
-    pipeline_layout: vk::PipelineLayout,
+    pipelines: RwLock<HashMap<(GPUOperation, [u32; 3], usize), vk::Pipeline>>,
+    descriptor_set_layouts: Box<[OnceLock<vk::DescriptorSetLayout>]>,
+    pipeline_layouts: Box<[OnceLock<vk::PipelineLayout>]>,
     command_pool: vk::CommandPool,
     device: Arc<Device>,
     instance: Arc<Instance>,
@@ -169,47 +168,17 @@ impl Gpu {
 
             let command_pool = device.create_command_pool(&command_pool_info, None)?;
 
-            // Create 4 identical storage buffer bindings
-            let bindings: [vk::DescriptorSetLayoutBinding; 4] =
-                array::from_fn(|i| vk::DescriptorSetLayoutBinding {
-                    binding: i as u32,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::COMPUTE,
-                    immutable_samplers: ptr::null(),
-                });
-
-            let descriptor_layout_info = vk::DescriptorSetLayoutCreateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                next: ptr::null(),
-                flags: vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR,
-                binding_count: bindings.len() as u32,
-                bindings: bindings.as_ptr(),
-            };
-
-            let descriptor_set_layout =
-                device.create_descriptor_set_layout(&descriptor_layout_info, None)?;
-
-            // 128 bytes is the minimum guaranteed push constant space for the vulkan spec
-            let push_constant_range = vk::PushConstantRange {
-                stage_flags: vk::ShaderStageFlags::COMPUTE,
-                offset: 0,
-                size: 128,
-            };
-
-            let pipeline_layout = {
-                let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
-                    s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
-                    next: std::ptr::null(),
-                    flags: vk::PipelineLayoutCreateFlags::empty(),
-                    set_layout_count: 1,
-                    set_layouts: &descriptor_set_layout,
-                    push_constant_range_count: 1,
-                    push_constant_ranges: &push_constant_range,
-                };
-
-                device.create_pipeline_layout(&pipeline_layout_info, None)?
-            };
+            // caches for descriptor set layouts and pipeline layouts indexed by binding count
+            // uses max_push_descriptors as a reasonable upper bound
+            let max_bindings = push_props.max_push_descriptors as usize;
+            let descriptor_set_layouts = (0..=max_bindings)
+                .map(|_| OnceLock::new())
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let pipeline_layouts = (0..=max_bindings)
+                .map(|_| OnceLock::new())
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
 
             let name = String::from_utf8_lossy(
                 &properties
@@ -266,14 +235,14 @@ impl Gpu {
 
                 physical_device,
                 compute_queue,
-                descriptor_set_layout,
                 memory_tracker: MemoryTracker::new(memory_budget),
                 extensions: vk_extensions,
                 timeline_semaphore: OnceLock::new(),
                 next_semaphore_value: AtomicU64::new(1),
 
                 pipelines: RwLock::new(HashMap::new()),
-                pipeline_layout,
+                descriptor_set_layouts,
+                pipeline_layouts,
                 command_pool,
                 device,
                 instance,
@@ -418,6 +387,7 @@ impl Gpu {
         &self,
         shader_code: &[u8],
         local_size: [u32; 3],
+        binding_count: usize,
     ) -> Result<vk::Pipeline, VKMLError> {
         unsafe {
             // ensure the shader byte length is a multiple of 4 (SPIR-V is in 32-bit words)
@@ -467,6 +437,8 @@ impl Gpu {
                 data: local_size.as_ptr() as *const c_void,
             };
 
+            let pipeline_layout = self.get_pipeline_layout(binding_count);
+
             let pipeline_info = vk::ComputePipelineCreateInfo {
                 s_type: vk::StructureType::COMPUTE_PIPELINE_CREATE_INFO,
                 next: std::ptr::null(),
@@ -480,7 +452,7 @@ impl Gpu {
                     name: entry_point.as_ptr(),
                     specialization_info: &spec_info,
                 },
-                layout: self.pipeline_layout,
+                layout: pipeline_layout,
                 base_pipeline_handle: vk::Pipeline::null(),
                 base_pipeline_index: -1,
             };
@@ -496,8 +468,13 @@ impl Gpu {
         }
     }
 
-    pub fn get_or_create_pipeline(&self, op: GPUOperation, local_size: [u32; 3]) -> vk::Pipeline {
-        let key = (op, local_size);
+    pub fn get_or_create_pipeline(
+        &self,
+        op: GPUOperation,
+        local_size: [u32; 3],
+        binding_count: usize,
+    ) -> vk::Pipeline {
+        let key = (op, local_size, binding_count);
 
         // Fast path: pipeline already exists
         if let Some(pipeline) = self.pipelines.read().unwrap().get(&key) {
@@ -506,7 +483,7 @@ impl Gpu {
 
         // Slow path: create pipeline
         let pipeline = self
-            .create_pipeline(op.get_shader_bytes(), local_size)
+            .create_pipeline(op.get_shader_bytes(), local_size, binding_count)
             .expect_msg(&format!(
                 "Pipeline creation failed {:?} with workgroup {:?}",
                 op, local_size
@@ -521,8 +498,66 @@ impl Gpu {
         pipeline
     }
 
-    pub fn get_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
+    pub fn get_pipeline_layout(&self, binding_count: usize) -> vk::PipelineLayout {
+        assert!(
+            binding_count < self.pipeline_layouts.len(),
+            "Binding count {} exceeds maximum {}",
+            binding_count,
+            self.pipeline_layouts.len() - 1
+        );
+
+        // Get or create the pipeline layout which internally gets/creates descriptor set layout
+        *self.pipeline_layouts[binding_count].get_or_init(|| unsafe {
+            let descriptor_set_layout = self.get_descriptor_set_layout(binding_count);
+
+            // 128 bytes is the minimum guaranteed push constant space for the vulkan spec
+            let push_constant_range = vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::COMPUTE,
+                offset: 0,
+                size: 128,
+            };
+
+            let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
+                s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
+                next: std::ptr::null(),
+                flags: vk::PipelineLayoutCreateFlags::empty(),
+                set_layout_count: 1,
+                set_layouts: &descriptor_set_layout,
+                push_constant_range_count: 1,
+                push_constant_ranges: &push_constant_range,
+            };
+
+            self.device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+                .expect("Failed to create pipeline layout")
+        })
+    }
+
+    fn get_descriptor_set_layout(&self, binding_count: usize) -> vk::DescriptorSetLayout {
+        *self.descriptor_set_layouts[binding_count].get_or_init(|| unsafe {
+            // N identical storage buffer bindings
+            let bindings: Vec<vk::DescriptorSetLayoutBinding> = (0..binding_count)
+                .map(|i| vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::COMPUTE,
+                    immutable_samplers: ptr::null(),
+                })
+                .collect();
+
+            let descriptor_layout_info = vk::DescriptorSetLayoutCreateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                next: ptr::null(),
+                flags: vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR,
+                binding_count: bindings.len() as u32,
+                bindings: bindings.as_ptr(),
+            };
+
+            self.device
+                .create_descriptor_set_layout(&descriptor_layout_info, None)
+                .expect("Failed to create descriptor set layout")
+        })
     }
 
     pub fn extensions(&self) -> &VkExtensions {
@@ -535,10 +570,6 @@ impl Gpu {
 
     pub fn get_device(&self) -> &Device {
         &self.device
-    }
-
-    pub fn get_descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {
-        &self.descriptor_set_layout
     }
 
     pub fn get_command_pool(&self) -> vk::CommandPool {
@@ -668,10 +699,8 @@ impl Gpu {
         Ok(())
     }
 
-    /// Bind up to 4 GPU storage buffers to descriptor set bindings 0-3
+    /// Bind GPU storage buffers to descriptor set bindings
     pub fn bind_storage_buffers(&self, command_buffer: vk::CommandBuffer, buffers: &[&GPUMemory]) {
-        assert!(buffers.len() <= 4, "Maximum 4 buffers supported");
-
         unsafe {
             let buffer_infos: Vec<_> = buffers
                 .iter()
@@ -702,7 +731,7 @@ impl Gpu {
             self.get_device().cmd_push_descriptor_set_khr(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                self.get_layout(),
+                self.get_pipeline_layout(buffers.len()),
                 0,
                 &write_descriptor_sets,
             );
@@ -734,15 +763,13 @@ impl Gpu {
         }
     }
 
-    /// Bind up to 4 GPU storage buffers (supporting Option<&GPUMemory>) to descriptor set bindings 0-3
+    /// Bind GPU storage buffers (supporting Option<&GPUMemory>) to descriptor set bindings
     /// Optional buffers will be bound as null buffers with size 0
     pub fn bind_storage_buffers_optional(
         &self,
         command_buffer: vk::CommandBuffer,
         buffers: &[Option<&GPUMemory>],
     ) {
-        assert!(buffers.len() <= 4, "Maximum 4 buffers supported");
-
         unsafe {
             let buffer_infos: Vec<_> = buffers
                 .iter()
@@ -783,22 +810,23 @@ impl Gpu {
             self.get_device().cmd_push_descriptor_set_khr(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
-                self.get_layout(),
+                self.get_pipeline_layout(buffers.len()),
                 0,
                 &write_descriptor_sets,
             );
         }
     }
 
-    /// Bind a compute pipeline with the specified workgroup size
+    /// Bind a compute pipeline with the specified workgroup size and binding count
     pub fn bind_compute_pipeline(
         &self,
         command_buffer: vk::CommandBuffer,
         operation: GPUOperation,
         local_size: [u32; 3],
+        binding_count: usize,
     ) {
         unsafe {
-            let pipeline = self.get_or_create_pipeline(operation, local_size);
+            let pipeline = self.get_or_create_pipeline(operation, local_size, binding_count);
             self.get_device().cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
@@ -808,11 +836,16 @@ impl Gpu {
     }
 
     /// Push constants to the compute shader
-    pub fn bind_push_constants(&self, command_buffer: vk::CommandBuffer, data: &[u8]) {
+    pub fn bind_push_constants(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        binding_count: usize,
+        data: &[u8],
+    ) {
         unsafe {
             self.get_device().cmd_push_constants(
                 command_buffer,
-                self.get_layout(),
+                self.get_pipeline_layout(binding_count),
                 vk::ShaderStageFlags::COMPUTE,
                 0,
                 data,

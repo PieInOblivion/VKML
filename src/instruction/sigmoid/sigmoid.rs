@@ -72,7 +72,9 @@ impl Instruction for SigmoidInstruction {
 
         // Choose local workgroup and bind pipeline
         let local_size = gpu.optimal_workgroup_size_1d(num_elements);
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        let binding_count = 2; // src, dst
+
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // Dispatch

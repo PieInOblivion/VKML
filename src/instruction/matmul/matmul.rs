@@ -441,14 +441,16 @@ fn execute_gpu_matmul(
             let coop_local_size = [32, 1, 1];
             let num_tiles_x = (n as usize).div_ceil(16); // ceil(n / 16)
             let num_tiles_y = (m as usize).div_ceil(16); // ceil(m / 16)
+            let binding_count = 3; // src1, src2, dst
 
             gpu.bind_compute_pipeline(
                 command_buffer,
                 GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
                 coop_local_size,
+                binding_count,
             );
             gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
-            gpu.bind_push_constants(command_buffer, &push_constants_bytes);
+            gpu.bind_push_constants(command_buffer, binding_count, &push_constants_bytes);
 
             // Dispatch workgroups: one per tile
             gpu.dispatch(
@@ -462,10 +464,11 @@ fn execute_gpu_matmul(
     }
 
     // Standard pipeline path
-    gpu.bind_compute_pipeline(command_buffer, operation, local_size);
+    let binding_count = 3; // src1, src2, dst
+    gpu.bind_compute_pipeline(command_buffer, operation, local_size, binding_count);
     gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
-    gpu.bind_push_constants(command_buffer, &push_constants_bytes);
+    gpu.bind_push_constants(command_buffer, binding_count, &push_constants_bytes);
 
     gpu.dispatch(command_buffer, local_size, work_size);
 

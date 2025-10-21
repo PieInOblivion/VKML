@@ -125,12 +125,13 @@ impl Instruction for ShapeInstruction {
             }
         };
         let local_size = gpu.optimal_workgroup_size_1d(slice_len as u64);
+        let binding_count = 1; // dst only
 
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
         let pc_bytes = as_bytes(&pc);
-        gpu.bind_push_constants(command_buffer, pc_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
         // Dispatch with one work item per shape element
         gpu.dispatch(command_buffer, local_size, [slice_len as u64, 1, 1]);

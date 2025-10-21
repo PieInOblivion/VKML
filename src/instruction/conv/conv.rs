@@ -207,13 +207,15 @@ impl Instruction for ConvInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+                let binding_count = 4; // src, weights, dst, bias (optional)
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 // dispatch: provide total work counts per-dimension; Gpu::dispatch will
                 // compute the needed number of workgroups as ceil(work/local_size)
@@ -284,13 +286,15 @@ impl Instruction for ConvInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+                let binding_count = 4; // src, weights, dst, bias (optional)
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 // dispatch using total work extents (width, height, batch)
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, batch_nm]);
@@ -370,13 +374,15 @@ impl Instruction for ConvInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+                let binding_count = 4; // src, weights, dst, bias (optional)
+
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
                 gpu.bind_storage_buffers_optional(
                     command_buffer,
                     &[Some(src_mem), Some(weights_mem), Some(dst_mem), bias_mem],
                 );
 
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 // dispatch over (w, h, depth * batch)
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);

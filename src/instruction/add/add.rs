@@ -152,12 +152,14 @@ impl Instruction for AddInstruction {
         // Choose an optimal local workgroup size for this 1D element-wise op
         let local_size = gpu.optimal_workgroup_size_1d(total_elements);
 
+        let binding_count = 3; // src1, src2, dst
+
         // Bind pipeline first so descriptor push is associated with the pipeline layout
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
         // Push constants to the shader
-        gpu.bind_push_constants(command_buffer, push_constant_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
         // Minimal check: use tensor shape as the source of truth for element count
         let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();

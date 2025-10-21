@@ -149,11 +149,13 @@ impl Instruction for MulInstruction {
 
         // Choose 1D local workgroup size and bind pipeline/descriptors
         let local_size = gpu.optimal_workgroup_size_1d(total_elements);
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        let binding_count = 3; // src1, src2, dst
+
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
         // Push constants to the shader
-        gpu.bind_push_constants(command_buffer, push_constant_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
         let num_elements: u64 = dst_dims.iter().map(|d| *d as u64).product();
 

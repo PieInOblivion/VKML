@@ -146,13 +146,15 @@ impl Instruction for GemmInstruction {
             }
         };
 
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        let binding_count = 4; // a, b, c (optional), y
+
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers_optional(
             command_buffer,
             &[Some(a_gpu_mem), Some(b_gpu_mem), c_gpu_mem, Some(y_gpu_mem)],
         );
 
-        gpu.bind_push_constants(command_buffer, as_bytes(&pc));
+        gpu.bind_push_constants(command_buffer, binding_count, as_bytes(&pc));
 
         // Dispatch with total work size (n x m)
         // gpu.dispatch will automatically compute workgroups by dividing by local_size

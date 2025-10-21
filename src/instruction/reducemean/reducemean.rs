@@ -118,10 +118,11 @@ impl Instruction for ReduceMeanInstruction {
 
         // Choose a local size for dispatch (1D op)
         let local_size = gpu.optimal_workgroup_size_1d(out_elements);
+        let binding_count = 2; // src, dst
 
-        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
+        gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
-        gpu.bind_push_constants(command_buffer, mean_pc_bytes);
+        gpu.bind_push_constants(command_buffer, binding_count, mean_pc_bytes);
         gpu.dispatch(command_buffer, local_size, [out_elements, 1, 1]);
 
         Ok(())

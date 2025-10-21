@@ -90,6 +90,7 @@ impl Instruction for MaxPoolInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         let src_desc = &src_tensor.desc;
+        let binding_count = 2; // src, dst
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
         // choose shader based on spatial rank
@@ -148,8 +149,8 @@ impl Instruction for MaxPoolInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [total, 1, 1]);
             }
@@ -204,8 +205,8 @@ impl Instruction for MaxPoolInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, batch_nc]);
             }
@@ -269,8 +270,8 @@ impl Instruction for MaxPoolInstruction {
                     }
                 };
 
-                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size);
-                gpu.bind_push_constants(command_buffer, push_constant_bytes);
+                gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
+                gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
                 gpu.dispatch(command_buffer, local_size, [out_w, out_h, total_z]);
             }
