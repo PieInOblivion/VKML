@@ -223,6 +223,10 @@ impl VkExtensions {
         self.shader_float_16_int8 && self.storage_16bit
     }
 
+    pub fn has_memory_budget(&self) -> bool {
+        self.memory_budget
+    }
+
     /// Query cooperative matrix shapes matching the given data types
     /// Returns None if cooperative matrix extension is not available
     /// Returns Some(Vec) with matching shapes (may be empty if no match)

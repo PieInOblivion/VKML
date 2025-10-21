@@ -118,6 +118,45 @@ impl Gpu {
             let device =
                 Arc::new(instance.create_device(physical_device, &device_create_info, None)?);
 
+            // Query device properties
+            let mut subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
+            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
+                next: &mut subgroup_properties as *mut _ as *mut c_void,
+                max_push_descriptors: 0,
+            };
+
+            let mut props2 = vk::PhysicalDeviceProperties2 {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_PROPERTIES_2,
+                next: &mut push_props as *mut _ as *mut c_void,
+                properties: Default::default(),
+            };
+
+            instance.get_physical_device_properties2(physical_device, &mut props2);
+            let properties = props2.properties;
+            let subgroup_size = subgroup_properties.subgroup_size;
+
+            // Memory properties, memory_budget if extension is available
+            let mut budget_props = vk::PhysicalDeviceMemoryBudgetPropertiesEXT {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
+                next: std::ptr::null_mut(),
+                heap_budget: [0; vk::MAX_MEMORY_HEAPS],
+                heap_usage: [0; vk::MAX_MEMORY_HEAPS],
+            };
+
+            let mut memory_props2 = vk::PhysicalDeviceMemoryProperties2 {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+                next: if vk_extensions.has_memory_budget() {
+                    &mut budget_props as *mut _ as *mut c_void
+                } else {
+                    std::ptr::null_mut()
+                },
+                memory_properties: Default::default(),
+            };
+
+            instance.get_physical_device_memory_properties2(physical_device, &mut memory_props2);
+            let memory_properties = memory_props2.memory_properties;
+
             // Get the single compute queue
             let compute_queue = device.get_device_queue(queue_family_index, 0);
 
@@ -172,25 +211,6 @@ impl Gpu {
                 device.create_pipeline_layout(&pipeline_layout_info, None)?
             };
 
-            // Query device properties for info fields and limits
-            let mut subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
-            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
-                next: &mut subgroup_properties as *mut _ as *mut c_void,
-                max_push_descriptors: 0,
-            };
-
-            let mut props2 = vk::PhysicalDeviceProperties2 {
-                s_type: vk::StructureType::PHYSICAL_DEVICE_PROPERTIES_2,
-                next: &mut push_props as *mut _ as *mut c_void,
-                properties: Default::default(),
-            };
-
-            instance.get_physical_device_properties2(physical_device, &mut props2);
-            let properties = props2.properties;
-            let subgroup_size = subgroup_properties.subgroup_size;
-
-            // Extract device name
             let name = String::from_utf8_lossy(
                 &properties
                     .device_name
@@ -208,19 +228,28 @@ impl Gpu {
                 .map(|props| (true, props.queue_count))
                 .unwrap_or((false, 0));
 
-            let memory_properties = instance.get_physical_device_memory_properties(physical_device);
-            let total_memory = {
-                let device_local_heap_index = (0..memory_properties.memory_type_count)
-                    .find(|&i| {
-                        let memory_type = memory_properties.memory_types[i as usize];
-                        memory_type
-                            .property_flags
-                            .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
-                    })
-                    .map(|i| memory_properties.memory_types[i as usize].heap_index)
-                    .unwrap_or(0);
+            // Calculate available memory budget
+            let device_local_heap_index = (0..memory_properties.memory_type_count)
+                .find(|&i| {
+                    let memory_type = memory_properties.memory_types[i as usize];
+                    memory_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+                })
+                .map(|i| memory_properties.memory_types[i as usize].heap_index)
+                .unwrap_or(0);
 
-                memory_properties.memory_heaps[device_local_heap_index as usize].size
+            let memory_budget = if vk_extensions.has_memory_budget() {
+                // use actual budget from VK_EXT_memory_budget, scaled to 95% to account for overhead
+                // use u128 to avoid overflow when multiplying large u64 values
+                let reported_budget =
+                    budget_props.heap_budget[device_local_heap_index as usize] as u128;
+                ((reported_budget * 95) / 100) as u64
+            } else {
+                // use 80% of total device memory
+                let total_memory =
+                    memory_properties.memory_heaps[device_local_heap_index as usize].size as u128;
+                ((total_memory * 80) / 100) as u64
             };
 
             Ok(Self {
@@ -238,7 +267,7 @@ impl Gpu {
                 physical_device,
                 compute_queue,
                 descriptor_set_layout,
-                memory_tracker: MemoryTracker::new((total_memory as f64 * 0.6) as u64), // TODO: 60%, kept low for testing
+                memory_tracker: MemoryTracker::new(memory_budget),
                 extensions: vk_extensions,
                 timeline_semaphore: OnceLock::new(),
                 next_semaphore_value: AtomicU64::new(1),
