@@ -35,8 +35,8 @@ const MATMUL_1D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_1d_2d
 const MATMUL_2D_1D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_1d.spv");
 const MATMUL_2D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_2d.spv");
 const MATMUL_2D_2D_SHADER_F16: &[u8] = include_shader!("f16_f16_f16_matmul_2d_2d.spv");
-const MATMUL_2D_2D_SHADER_F16_COOP_16_16_16: &[u8] =
-    include_shader!("f16_f16_f16_matmul_2d_2d_coop_16_16_16.spv");
+const MATMUL_2D_2D_SHADER_F16_COOP_16_16_16_SG_32: &[u8] =
+    include_shader!("f16_f16_f16_matmul_2d_2d_coop_16_16_16_sg_32.spv");
 const MATMUL_2D_3D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_3d.spv");
 const MATMUL_3D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_3d_2d.spv");
 const MATMUL_3D_3D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_3d_3d.spv");
@@ -86,7 +86,7 @@ pub enum GPUOperation {
     MatMul3D1D_F32_F32_F32,
     MatMul1D3D_F32_F32_F32,
     MatMul2D2D_F16_F16_F16,
-    MatMul2D2D_F16_F16_F16_Coop_16_16_16,
+    MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
     InitXavier_F32,
     InitHe_F32,
     InitUniform_F32,
@@ -132,8 +132,8 @@ impl GPUOperation {
             GPUOperation::MatMul3D1D_F32_F32_F32 => MATMUL_3D_1D_SHADER_F32,
             GPUOperation::MatMul1D3D_F32_F32_F32 => MATMUL_1D_3D_SHADER_F32,
             GPUOperation::MatMul2D2D_F16_F16_F16 => MATMUL_2D_2D_SHADER_F16,
-            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16 => {
-                MATMUL_2D_2D_SHADER_F16_COOP_16_16_16
+            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32 => {
+                MATMUL_2D_2D_SHADER_F16_COOP_16_16_16_SG_32
             }
             GPUOperation::InitXavier_F32 => INIT_XAVIER_SHADER_F32,
             GPUOperation::InitHe_F32 => INIT_HE_SHADER_F32,

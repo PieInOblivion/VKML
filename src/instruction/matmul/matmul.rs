@@ -419,6 +419,7 @@ fn execute_gpu_matmul(
 
     // Cooperative matrix optimization for F16 2D×2D MatMul
     if operation == GPUOperation::MatMul2D2D_F16_F16_F16
+        && gpu.subgroup_size() == 32
         && let Some(coop_shapes) = gpu.extensions().get_coop_matrix_sizes(
             DataType::Float16,
             DataType::Float16,
@@ -443,7 +444,7 @@ fn execute_gpu_matmul(
 
             gpu.bind_compute_pipeline(
                 command_buffer,
-                GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16,
+                GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
                 coop_local_size,
             );
             gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
