@@ -527,7 +527,6 @@ impl ComputeManager {
             }
             DeviceId::Gpu(idx) => {
                 let gpu = &self.gpus.get_gpu(*idx);
-                gpu.allocate_memory(size_in_bytes);
 
                 if let Some(boxed) = init_box {
                     if boxed.len() != desc.size_in_bytes() {

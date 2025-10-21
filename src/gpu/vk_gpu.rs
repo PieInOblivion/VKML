@@ -252,6 +252,7 @@ impl Gpu {
 
     pub fn move_to_gpu(&self, bytes: &[u8]) -> GPUMemory {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
+        self.memory_tracker.allocate(size_in_bytes);
 
         unsafe {
             // Create buffer for raw bytes
@@ -309,6 +310,7 @@ impl Gpu {
 
     pub fn allocate_uninitialised_gpu_memory(&self, bytes: usize) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
+        self.memory_tracker.allocate(size_in_bytes);
 
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
@@ -369,14 +371,6 @@ impl Gpu {
 
             panic!("Failed to find suitable memory type")
         }
-    }
-
-    pub fn allocate_memory(&self, size: u64) {
-        self.memory_tracker.allocate(size)
-    }
-
-    pub fn deallocate_memory(&self, size: u64) {
-        self.memory_tracker.deallocate(size)
     }
 
     pub fn available_memory(&self) -> u64 {
