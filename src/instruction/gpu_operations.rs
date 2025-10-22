@@ -1,58 +1,9 @@
-macro_rules! include_shader {
-    ($name:literal) => {
-        include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $name))
-    };
-}
+use std::sync::OnceLock;
 
-// shader byte constants centralised here so operations can map directly to their SPIR-V
-// The actual .spv files are generated into OUT_DIR by the build script and resolved
-// via the include_shader! macro
-const ADD_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_add.spv");
-const ADD_SHADER_F16_F16_F16: &[u8] = include_shader!("f16_f16_f16_add.spv");
-const SUB_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_sub.spv");
-const MUL_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_mul.spv");
-const DIV_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_div.spv");
-const MAX_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_max.spv");
-const MIN_SHADER_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_min.spv");
-
-const RELU_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_relu.spv");
-const RELU_SHADER_F16_F16: &[u8] = include_shader!("f16_f16_relu.spv");
-const SIGMOID_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_sigmoid.spv");
-const SOFTMAX_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_softmax.spv");
-const SOFTMAX_SHADER_F16_F16: &[u8] = include_shader!("f16_f16_softmax.spv");
-
-const CONV1D_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_conv1d.spv");
-const CONV2D_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_conv2d.spv");
-const CONV2D_SHADER_F16_F16_F16_F16: &[u8] = include_shader!("f16_f16_f16_f16_conv2d.spv");
-const CONV3D_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_conv3d.spv");
-
-const MAXPOOL1D_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_maxpool1d.spv");
-const MAXPOOL2D_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_maxpool2d.spv");
-const MAXPOOL2D_SHADER_F16_F16: &[u8] = include_shader!("f16_f16_maxpool2d.spv");
-const MAXPOOL3D_SHADER_F32_F32: &[u8] = include_shader!("f32_f32_maxpool3d.spv");
-
-const MATMUL_1D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_1d_2d.spv");
-const MATMUL_2D_1D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_1d.spv");
-const MATMUL_2D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_2d.spv");
-const MATMUL_2D_2D_SHADER_F16: &[u8] = include_shader!("f16_f16_f16_matmul_2d_2d.spv");
-const MATMUL_2D_2D_SHADER_F16_COOP_16_16_16_SG_32: &[u8] =
-    include_shader!("f16_f16_f16_matmul_2d_2d_coop_16_16_16_sg_32.spv");
-const MATMUL_2D_3D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_2d_3d.spv");
-const MATMUL_3D_2D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_3d_2d.spv");
-const MATMUL_3D_3D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_3d_3d.spv");
-const MATMUL_3D_1D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_3d_1d.spv");
-const MATMUL_1D_3D_SHADER_F32: &[u8] = include_shader!("f32_f32_f32_matmul_1d_3d.spv");
-
-const INIT_XAVIER_SHADER_F32: &[u8] = include_shader!("f32_init_xavier.spv");
-const INIT_HE_SHADER_F32: &[u8] = include_shader!("f32_init_he.spv");
-const INIT_UNIFORM_SHADER_F32: &[u8] = include_shader!("f32_init_uniform.spv");
-const INIT_CONSTANT_SHADER: &[u8] = include_shader!("init_constant.spv");
-
-const SHAPE_SHADER_I64: &[u8] = include_shader!("i64_shape.spv");
-const REDUCE_MEAN_SHADER_F32: &[u8] = include_shader!("f32_reducemean_mean.spv");
-
-const GEMM_SHADER_F32_F32_F32_F32: &[u8] = include_shader!("f32_f32_f32_f32_gemm.spv");
-const GEMM_SHADER_F16_F16_F16_F16: &[u8] = include_shader!("f16_f16_f16_f16_gemm.spv");
+// Lazy-loaded shader storage
+// Array is indexed by GPUOperation discriminant
+static SHADERS: [OnceLock<Vec<u8>>; GPUOperation::__Count as usize] =
+    [const { OnceLock::new() }; GPUOperation::__Count as usize];
 
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -95,55 +46,21 @@ pub enum GPUOperation {
     ReduceMean_F32,
     Gemm_F32_F32_F32_F32,
     Gemm_F16_F16_F16_F16,
+    __Count,
 }
 
 impl GPUOperation {
     // NOTE: std::mem::variant_count is currently unstable
-    //pub const VARIANT_COUNT: usize = 29;
+    // using __Count sentinal might not be the most reliable. works so far
 
     pub fn get_shader_bytes(&self) -> &[u8] {
-        match self {
-            GPUOperation::Addition_F32_F32_F32 => ADD_SHADER_F32_F32_F32,
-            GPUOperation::Addition_F16_F16_F16 => ADD_SHADER_F16_F16_F16,
-            GPUOperation::Subtract_F32_F32_F32 => SUB_SHADER_F32_F32_F32,
-            GPUOperation::Multiply_F32_F32_F32 => MUL_SHADER_F32_F32_F32,
-            GPUOperation::Divide_F32_F32_F32 => DIV_SHADER_F32_F32_F32,
-            GPUOperation::Maximum_F32_F32_F32 => MAX_SHADER_F32_F32_F32,
-            GPUOperation::Minimum_F32_F32_F32 => MIN_SHADER_F32_F32_F32,
-            GPUOperation::ReLU_F32_F32 => RELU_SHADER_F32_F32,
-            GPUOperation::ReLU_F16_F16 => RELU_SHADER_F16_F16,
-            GPUOperation::Sigmoid_F32_F32 => SIGMOID_SHADER_F32_F32,
-            GPUOperation::Softmax_F32_F32 => SOFTMAX_SHADER_F32_F32,
-            GPUOperation::Softmax_F16_F16 => SOFTMAX_SHADER_F16_F16,
-            GPUOperation::Conv1D_F32_F32_F32_F32 => CONV1D_SHADER_F32_F32_F32_F32,
-            GPUOperation::Conv2D_F32_F32_F32_F32 => CONV2D_SHADER_F32_F32_F32_F32,
-            GPUOperation::Conv3D_F32_F32_F32_F32 => CONV3D_SHADER_F32_F32_F32_F32,
-            GPUOperation::Conv2D_F16_F16_F16_F16 => CONV2D_SHADER_F16_F16_F16_F16,
-            GPUOperation::MaxPool1D_F32_F32 => MAXPOOL1D_SHADER_F32_F32,
-            GPUOperation::MaxPool2D_F32_F32 => MAXPOOL2D_SHADER_F32_F32,
-            GPUOperation::MaxPool3D_F32_F32 => MAXPOOL3D_SHADER_F32_F32,
-            GPUOperation::MaxPool2D_F16_F16 => MAXPOOL2D_SHADER_F16_F16,
-            GPUOperation::MatMul1D2D_F32_F32_F32 => MATMUL_1D_2D_SHADER_F32,
-            GPUOperation::MatMul2D1D_F32_F32_F32 => MATMUL_2D_1D_SHADER_F32,
-            GPUOperation::MatMul2D2D_F32_F32_F32 => MATMUL_2D_2D_SHADER_F32,
-            GPUOperation::MatMul2D3D_F32_F32_F32 => MATMUL_2D_3D_SHADER_F32,
-            GPUOperation::MatMul3D2D_F32_F32_F32 => MATMUL_3D_2D_SHADER_F32,
-            GPUOperation::MatMul3D3D_F32_F32_F32 => MATMUL_3D_3D_SHADER_F32,
-            GPUOperation::MatMul3D1D_F32_F32_F32 => MATMUL_3D_1D_SHADER_F32,
-            GPUOperation::MatMul1D3D_F32_F32_F32 => MATMUL_1D_3D_SHADER_F32,
-            GPUOperation::MatMul2D2D_F16_F16_F16 => MATMUL_2D_2D_SHADER_F16,
-            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32 => {
-                MATMUL_2D_2D_SHADER_F16_COOP_16_16_16_SG_32
-            }
-            GPUOperation::InitXavier_F32 => INIT_XAVIER_SHADER_F32,
-            GPUOperation::InitHe_F32 => INIT_HE_SHADER_F32,
-            GPUOperation::InitUniform_F32 => INIT_UNIFORM_SHADER_F32,
-            GPUOperation::InitConstant => INIT_CONSTANT_SHADER,
-            GPUOperation::Shape_Write_I64 => SHAPE_SHADER_I64,
-            GPUOperation::ReduceMean_F32 => REDUCE_MEAN_SHADER_F32,
-            GPUOperation::Gemm_F32_F32_F32_F32 => GEMM_SHADER_F32_F32_F32_F32,
-            GPUOperation::Gemm_F16_F16_F16_F16 => GEMM_SHADER_F16_F16_F16_F16,
-        }
+        let idx = *self as usize;
+        SHADERS[idx].get_or_init(|| {
+            let filename = self.shader_filename();
+            let path = format!("{}/shaders/{}", env!("OUT_DIR"), filename);
+            std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("Failed to load shader file '{}': {}", path, e))
+        })
     }
 
     pub fn is_init(&self) -> bool {
@@ -156,9 +73,55 @@ impl GPUOperation {
         )
     }
 
-    pub fn expect_init(&self) {
-        if !self.is_init() {
-            panic!("Expected init GPUOperation, found {:?}", self);
+    fn shader_filename(&self) -> &'static str {
+        match self {
+            GPUOperation::Addition_F32_F32_F32 => "f32_f32_f32_add.spv",
+            GPUOperation::Addition_F16_F16_F16 => "f16_f16_f16_add.spv",
+            GPUOperation::Subtract_F32_F32_F32 => "f32_f32_f32_sub.spv",
+            GPUOperation::Multiply_F32_F32_F32 => "f32_f32_f32_mul.spv",
+            GPUOperation::Divide_F32_F32_F32 => "f32_f32_f32_div.spv",
+            GPUOperation::Maximum_F32_F32_F32 => "f32_f32_f32_max.spv",
+            GPUOperation::Minimum_F32_F32_F32 => "f32_f32_f32_min.spv",
+
+            GPUOperation::ReLU_F32_F32 => "f32_f32_relu.spv",
+            GPUOperation::ReLU_F16_F16 => "f16_f16_relu.spv",
+            GPUOperation::Sigmoid_F32_F32 => "f32_f32_sigmoid.spv",
+            GPUOperation::Softmax_F32_F32 => "f32_f32_softmax.spv",
+            GPUOperation::Softmax_F16_F16 => "f16_f16_softmax.spv",
+
+            GPUOperation::Conv1D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv1d.spv",
+            GPUOperation::Conv2D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv2d.spv",
+            GPUOperation::Conv3D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv3d.spv",
+            GPUOperation::Conv2D_F16_F16_F16_F16 => "f16_f16_f16_f16_conv2d.spv",
+
+            GPUOperation::MaxPool1D_F32_F32 => "f32_f32_maxpool1d.spv",
+            GPUOperation::MaxPool2D_F32_F32 => "f32_f32_maxpool2d.spv",
+            GPUOperation::MaxPool3D_F32_F32 => "f32_f32_maxpool3d.spv",
+            GPUOperation::MaxPool2D_F16_F16 => "f16_f16_maxpool2d.spv",
+
+            GPUOperation::MatMul1D2D_F32_F32_F32 => "f32_f32_f32_matmul_1d_2d.spv",
+            GPUOperation::MatMul2D1D_F32_F32_F32 => "f32_f32_f32_matmul_2d_1d.spv",
+            GPUOperation::MatMul2D2D_F32_F32_F32 => "f32_f32_f32_matmul_2d_2d.spv",
+            GPUOperation::MatMul2D3D_F32_F32_F32 => "f32_f32_f32_matmul_2d_3d.spv",
+            GPUOperation::MatMul3D2D_F32_F32_F32 => "f32_f32_f32_matmul_3d_2d.spv",
+            GPUOperation::MatMul3D3D_F32_F32_F32 => "f32_f32_f32_matmul_3d_3d.spv",
+            GPUOperation::MatMul3D1D_F32_F32_F32 => "f32_f32_f32_matmul_3d_1d.spv",
+            GPUOperation::MatMul1D3D_F32_F32_F32 => "f32_f32_f32_matmul_1d_3d.spv",
+            GPUOperation::MatMul2D2D_F16_F16_F16 => "f16_f16_f16_matmul_2d_2d.spv",
+            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32 => {
+                "f16_f16_f16_matmul_2d_2d_coop_16_16_16_sg_32.spv"
+            }
+
+            GPUOperation::InitXavier_F32 => "f32_init_xavier.spv",
+            GPUOperation::InitHe_F32 => "f32_init_he.spv",
+            GPUOperation::InitUniform_F32 => "f32_init_uniform.spv",
+            GPUOperation::InitConstant => "init_constant.spv",
+
+            GPUOperation::Shape_Write_I64 => "i64_shape.spv",
+            GPUOperation::ReduceMean_F32 => "f32_reducemean_mean.spv",
+            GPUOperation::Gemm_F32_F32_F32_F32 => "f32_f32_f32_f32_gemm.spv",
+            GPUOperation::Gemm_F16_F16_F16_F16 => "f16_f16_f16_f16_gemm.spv",
+            GPUOperation::__Count => unreachable!("__Count is not a valid shader operation"),
         }
     }
 }
