@@ -111,7 +111,7 @@ impl std::fmt::Debug for GpuPool {
             .iter()
             .map(|g| {
                 format!(
-                    "{{ name: {:?}, device_type: {:?}, has_compute: {}, memory_budget: {}, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, coop_matrix: {:?} }}",
+                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, coop_matrix: {:?} }}",
                     g.name(),
                     g.device_type(),
                     g.has_compute(),
