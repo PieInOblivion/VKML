@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 // Lazy-loaded shader storage
 // Array is indexed by GPUOperation discriminant
+// using __Count sentinal might not be the most reliable
+// std::mem::variant_count is currently unstable
 static SHADERS: [OnceLock<Vec<u8>>; GPUOperation::__Count as usize] =
     [const { OnceLock::new() }; GPUOperation::__Count as usize];
 
@@ -50,9 +52,6 @@ pub enum GPUOperation {
 }
 
 impl GPUOperation {
-    // NOTE: std::mem::variant_count is currently unstable
-    // using __Count sentinal might not be the most reliable. works so far
-
     pub fn get_shader_bytes(&self) -> &[u8] {
         let idx = *self as usize;
         SHADERS[idx].get_or_init(|| {
