@@ -9,7 +9,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct ConcatInstruction {
     pub sources: Vec<TensorId>,
     pub dst: TensorId,
@@ -55,10 +54,6 @@ impl Instruction for ConcatInstruction {
         Err(VKMLError::Instruction(
             "GPU implementation of Concat not yet supported".to_string(),
         ))
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

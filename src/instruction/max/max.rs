@@ -15,7 +15,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct MaxInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
@@ -72,8 +71,6 @@ impl Instruction for MaxInstruction {
         let src1_dims = src1_desc.dims();
         let src2_dims = src2_desc.dims();
         let dst_dims = dst_desc.dims();
-
-        // Prepare push constant data using shared PushConstants
 
         let rank = dst_dims.len() as u32;
         assert!(
@@ -158,10 +155,6 @@ impl Instruction for MaxInstruction {
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

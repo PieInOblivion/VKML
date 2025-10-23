@@ -1,7 +1,6 @@
 use crate::{ComputeManager, instruction::Instruction, tensor::DeviceId, tensor_graph::TensorId};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 
-#[derive(Clone)]
 pub struct TransferToDeviceInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -36,10 +35,6 @@ impl Instruction for TransferToDeviceInstruction {
         if !new_outputs.is_empty() {
             self.dst = new_outputs[0];
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn must_execute_on_cpu(&self) -> bool {

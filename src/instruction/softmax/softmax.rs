@@ -13,7 +13,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct SoftmaxInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -129,10 +128,6 @@ impl Instruction for SoftmaxInstruction {
         gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

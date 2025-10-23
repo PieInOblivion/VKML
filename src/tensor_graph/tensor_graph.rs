@@ -99,53 +99,60 @@ impl TensorGraph {
 
         for &layer_id in execution_order {
             // Process layers in their execution order
-            let layer_exec = layer_executions.get(&layer_id).unwrap();
+            // First do read-only work while borrowing immutably in a short scope.
+            {
+                let layer_exec = layer_executions.get(&layer_id).unwrap();
 
-            // Create global tensors for this layer's *newly defined* local tensors
-            for (local_idx, local_tensor_desc) in layer_exec.tensors.iter().enumerate() {
-                if !layer_exec.input_mappings.contains_key(&local_idx) {
-                    // Only if not an input reference
-                    let global_tensor_id = tensor_descs.len();
-                    global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
-                    memory_requirements += local_tensor_desc.size_in_bytes();
-                    tensor_descs.push(local_tensor_desc.clone());
-                    tensor_to_layer_map.push(Some(layer_id));
-                    // Ensure latest_producer_op_for_tensor is large enough
-                    if global_tensor_id >= latest_producer_op_for_tensor.len() {
-                        latest_producer_op_for_tensor.resize(global_tensor_id + 1, None);
+                // Create global tensors for this layer's *newly defined* local tensors
+                for (local_idx, local_tensor_desc) in layer_exec.tensors.iter().enumerate() {
+                    if !layer_exec.input_mappings.contains_key(&local_idx) {
+                        // Only if not an input reference
+                        let global_tensor_id = tensor_descs.len();
+                        global_tensor_map.insert((layer_id, local_idx), global_tensor_id);
+                        memory_requirements += local_tensor_desc.size_in_bytes();
+                        tensor_descs.push(local_tensor_desc.clone());
+                        tensor_to_layer_map.push(Some(layer_id));
+                        // Ensure latest_producer_op_for_tensor is large enough
+                        if global_tensor_id >= latest_producer_op_for_tensor.len() {
+                            latest_producer_op_for_tensor.resize(global_tensor_id + 1, None);
+                        }
+                        // Initially, newly defined tensors don't have a producer op from *within this graph's ops*
+                        // unless they are model inputs (handled later) or produced by an op in this layer.
                     }
-                    // Initially, newly defined tensors don't have a producer op from *within this graph's ops*
-                    // unless they are model inputs (handled later) or produced by an op in this layer.
+                }
+                // Map input references to their global IDs (already created by producer layers)
+                for (local_idx, (input_conn_idx, _output_idx_in_conn)) in &layer_exec.input_mappings
+                {
+                    let input_connection =
+                        &model.layers[&layer_id].input_connections[*input_conn_idx];
+                    let src_layer_id = input_connection.get_layerid();
+                    let src_local_output_idx =
+                        layer_executions[&src_layer_id].outputs[input_connection.get_outputidx()];
+                    let global_src_tensor_id =
+                        global_tensor_map[&(src_layer_id, src_local_output_idx)];
+                    global_tensor_map.insert((layer_id, *local_idx), global_src_tensor_id);
                 }
             }
-            // Map input references to their global IDs (already created by producer layers)
-            for (local_idx, (input_conn_idx, _output_idx_in_conn)) in &layer_exec.input_mappings {
-                let input_connection = &model.layers[&layer_id].input_connections[*input_conn_idx];
-                let src_layer_id = input_connection.get_layerid();
-                let src_local_output_idx =
-                    layer_executions[&src_layer_id].outputs[input_connection.get_outputidx()];
-                let global_src_tensor_id = global_tensor_map[&(src_layer_id, src_local_output_idx)];
-                global_tensor_map.insert((layer_id, *local_idx), global_src_tensor_id);
-            }
 
-            // Create global operations for this layer
-            for local_instruction in &layer_exec.instructions {
+            // Now that the immutable borrow ended, take mutable borrow to move instructions
+            // Create operations for this layer (move instructions out of the layer)
+            let layer_exec_mut = layer_executions.get_mut(&layer_id).unwrap();
+            for mut instruction in layer_exec_mut.instructions.drain(..) {
                 let global_op_id = operations.len();
-                let mut global_instruction = local_instruction.clone();
 
-                let global_inputs: Vec<TensorId> = local_instruction
+                let global_inputs: Vec<TensorId> = instruction
                     .get_input_tensor_ids()
                     .iter()
                     .map(|&local_id| global_tensor_map[&(layer_id, local_id)])
                     .collect();
-                let global_outputs: Vec<TensorId> = local_instruction
+                let global_outputs: Vec<TensorId> = instruction
                     .get_output_tensor_ids()
                     .iter()
                     .map(|&local_id| global_tensor_map[&(layer_id, local_id)])
                     .collect();
 
-                global_instruction.remap_tensor_ids(&global_inputs, &global_outputs);
-                operations.push(global_instruction);
+                instruction.remap_tensor_ids(&global_inputs, &global_outputs);
+                operations.push(instruction);
                 operation_to_layer_map.push(layer_id);
 
                 // Update latest_producer_op_for_tensor for all outputs of this new global_op_id.

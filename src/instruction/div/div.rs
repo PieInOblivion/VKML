@@ -15,7 +15,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct DivInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
@@ -73,8 +72,6 @@ impl Instruction for DivInstruction {
         let src1_dims = src1_desc.dims();
         let src2_dims = src2_desc.dims();
         let dst_dims = dst_desc.dims();
-
-        // Prepare push constant data using shared PushConstants
 
         let rank = dst_dims.len() as u32;
         assert!(
@@ -148,7 +145,6 @@ impl Instruction for DivInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
-        // Push constants
         gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
         // Dispatch: dispatch computes num workgroups from local_size and work_size
@@ -156,10 +152,6 @@ impl Instruction for DivInstruction {
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {
@@ -176,7 +168,6 @@ impl Instruction for DivInstruction {
         let b = src2_tensor.desc.dims();
         let c = dst_tensor.desc.dims().to_vec();
 
-        // 1) compute broadcast shape
         let bc = TensorDesc::broadcast_shape(a, b)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
         assert_eq!(bc, c, "Broadcast {:?} != dst {:?}", bc, c);

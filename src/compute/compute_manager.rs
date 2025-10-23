@@ -437,7 +437,7 @@ impl ComputeManager {
 
         // Prepare a per-op list of transfers (with their intended layer id)
         let mut transfers_for_op: Vec<Vec<(Box<dyn Instruction>, Option<LayerId>)>> =
-            vec![Vec::new(); original_ops.len()];
+            (0..original_ops.len()).map(|_| Vec::new()).collect();
 
         // Sort transfers to preserve deterministic order
         transfer_operations.sort_by_key(|(op_idx, _)| *op_idx);

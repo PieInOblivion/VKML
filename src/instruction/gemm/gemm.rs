@@ -15,7 +15,6 @@ use vulkanalia::vk;
 /// GEMM (General Matrix Multiplication) instruction
 /// Computes Y = alpha * op(A) * op(B) + beta * C
 /// where op(X) is either X or X^T depending on transpose flags
-#[derive(Clone)]
 pub struct GemmInstruction {
     pub a: TensorId,
     pub b: TensorId,
@@ -161,10 +160,6 @@ impl Instruction for GemmInstruction {
         gpu.dispatch(command_buffer, local_size, [n as u64, m as u64, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

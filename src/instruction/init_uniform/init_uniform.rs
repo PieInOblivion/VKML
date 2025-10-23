@@ -11,7 +11,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct InitUniformInstruction {
     pub dst: TensorId,
     pub min: f32,
@@ -83,17 +82,11 @@ impl Instruction for InitUniformInstruction {
         // Bind descriptor (dst at binding 0)
         gpu.bind_storage_buffers(command_buffer, &[dst_mem]);
 
-        // Push constants
         gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
-        // Dispatch
         gpu.dispatch(command_buffer, local_size, [dst_elems, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

@@ -9,7 +9,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct ReduceMeanInstruction {
     pub src: TensorId,
     pub axes: Option<Vec<i64>>,
@@ -126,10 +125,6 @@ impl Instruction for ReduceMeanInstruction {
         gpu.dispatch(command_buffer, local_size, [out_elements, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

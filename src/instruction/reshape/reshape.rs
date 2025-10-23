@@ -3,7 +3,6 @@ use crate::{ComputeManager, gpu::vk_gpu::Gpu, instruction::Instruction, tensor_g
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
 
-#[derive(Clone)]
 pub struct ReshapeInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -72,10 +71,6 @@ impl Instruction for ReshapeInstruction {
         }
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

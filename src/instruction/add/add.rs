@@ -15,7 +15,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct AddInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
@@ -73,8 +72,6 @@ impl Instruction for AddInstruction {
         let src1_dims_usize = src1_desc.dims();
         let src2_dims_usize = src2_desc.dims();
         let dst_dims_usize = dst_desc.dims();
-
-        // Prepare push constant data using shared PushConstants
 
         let rank = dst_dims_usize.len() as u32;
         assert!(
@@ -158,7 +155,6 @@ impl Instruction for AddInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
 
-        // Push constants to the shader
         gpu.bind_push_constants(command_buffer, binding_count, push_constant_bytes);
 
         // Minimal check: use tensor shape as the source of truth for element count
@@ -168,10 +164,6 @@ impl Instruction for AddInstruction {
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         Ok(())
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

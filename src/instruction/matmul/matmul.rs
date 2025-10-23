@@ -17,7 +17,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct MatMulInstruction {
     pub src1: TensorId,
     pub src2: TensorId,
@@ -85,10 +84,6 @@ impl Instruction for MatMulInstruction {
             dst_tensor,
             operation,
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

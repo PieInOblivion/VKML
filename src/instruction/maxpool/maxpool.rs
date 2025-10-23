@@ -16,7 +16,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct MaxPoolInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -325,9 +324,5 @@ impl Instruction for MaxPoolInstruction {
                 dst_dtype
             ),
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 }

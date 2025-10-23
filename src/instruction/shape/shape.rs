@@ -9,7 +9,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct ShapeInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -45,11 +44,6 @@ impl Instruction for ShapeInstruction {
         if !new_outputs.is_empty() {
             self.dst = new_outputs[0];
         }
-    }
-
-    // We only implement CPU execution for Shape
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
     }
 
     fn record_into_command_buffer(

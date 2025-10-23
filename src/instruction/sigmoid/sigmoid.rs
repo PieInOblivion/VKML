@@ -12,7 +12,6 @@ use onnx_extractor::DataType;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::vk;
 
-#[derive(Clone)]
 pub struct SigmoidInstruction {
     pub src: TensorId,
     pub dst: TensorId,
@@ -77,18 +76,12 @@ impl Instruction for SigmoidInstruction {
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
-        // Dispatch
         gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
 
         Ok(())
     }
 
-    fn clone_box(&self) -> Box<dyn Instruction> {
-        Box::new(self.clone())
-    }
-
     fn execute_cpu(&self, cm: &ComputeManager) {
-        // Follow add.rs pattern: compute broadcast shapes/strides and delegate to helper
         assert!(
             self.src != self.dst,
             "Cannot use Sigmoid for in-place operation"

@@ -30,19 +30,8 @@ pub trait Instruction: Debug {
         panic!("CPU execution not implemented for {:?}", self)
     }
 
-    // Clone the instruction (since trait objects can't use derive(Clone))
-    // Requires manual implementation for each layer
-    fn clone_box(&self) -> Box<dyn Instruction>;
-
     // Return true if this instruction must be executed on the CPU (eg transfers)
     fn must_execute_on_cpu(&self) -> bool {
         false
-    }
-}
-
-// Enable cloning for boxed instructions
-impl Clone for Box<dyn Instruction> {
-    fn clone(&self) -> Self {
-        self.clone_box()
     }
 }
