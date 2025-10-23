@@ -103,8 +103,8 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     for &op in topo_order {
         // By default use the tensor's device, but if the instruction requires CPU execution
         // force the op onto the CPU slot.
+        let op_ref = &tensor_graph.operations[op];
         let mut device = {
-            let op_ref = &tensor_graph.operations[op];
             let tensor_id = op_ref
                 .get_output_tensor_ids()
                 .first()
@@ -113,10 +113,11 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 .expect("Operation must reference at least one tensor");
             compute_manager.tensor_read(tensor_id).device.clone()
         };
-        let op_ref = &tensor_graph.operations[op];
+
         if op_ref.must_execute_on_cpu() {
             device = DeviceId::Cpu;
         }
+
         let slot = match device {
             DeviceId::Gpu(idx) => idx,
             DeviceId::Cpu => cpu_slot,
@@ -148,21 +149,23 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
         op_to_chunk[op] = chunk_id;
     }
 
-    let mut chunks: Vec<ExecutionChunk> = Vec::with_capacity(chunk_operations.len());
-    for (idx, ops) in chunk_operations.iter().enumerate() {
-        let layers = organise_chain_into_layers(ops, predecessors, successors, op_count);
-
-        chunks.push(ExecutionChunk {
-            device: chunk_devices[idx].clone(),
-            operation_layers: layers,
-            predecessors: Vec::new(),
-            dependents: Vec::new(),
-            initial_dep_count: 0,
-            is_output: false,
-            needs_host_wait: false,
-            command_buffer: OnceLock::new(),
-        });
-    }
+    let mut chunks: Vec<ExecutionChunk> = chunk_operations
+        .iter()
+        .enumerate()
+        .map(|(idx, ops)| {
+            let layers = organise_chain_into_layers(ops, predecessors, successors, op_count);
+            ExecutionChunk {
+                device: chunk_devices[idx].clone(),
+                operation_layers: layers,
+                predecessors: Vec::new(),
+                dependents: Vec::new(),
+                initial_dep_count: 0,
+                is_output: false,
+                needs_host_wait: false,
+                command_buffer: OnceLock::new(),
+            }
+        })
+        .collect();
 
     let chunk_count = chunks.len();
     let mut chunk_predecessors: Vec<Vec<ChunkId>> = vec![Vec::new(); chunk_count];
