@@ -3,7 +3,6 @@ pub use add::AddInstruction;
 mod concat;
 pub use concat::ConcatInstruction;
 mod conv;
-pub use conv::AutoPad;
 pub use conv::ConvInstruction;
 mod div;
 pub use div::DivInstruction;
@@ -50,7 +49,7 @@ pub use sub::SubInstruction;
 mod transfer;
 pub use transfer::TransferToDeviceInstruction;
 
-use crate::{tensor::DeviceId, tensor_graph::TensorId};
+use crate::{tensor::DeviceId, tensor_graph::TensorId, utils::OnnxAutoPad};
 
 pub fn add(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(AddInstruction { src1, src2, dst })
@@ -65,7 +64,7 @@ pub fn conv(
     weights: TensorId,
     bias: Option<TensorId>,
     dst: TensorId,
-    auto_pad: AutoPad,
+    auto_pad: OnnxAutoPad,
     dilations: Vec<usize>,
     group: i64,
     kernel_shape: Vec<usize>,
@@ -121,7 +120,7 @@ pub fn max(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction
 pub fn maxpool(
     src: TensorId,
     dst: TensorId,
-    auto_pad: AutoPad,
+    auto_pad: OnnxAutoPad,
     dilations: Vec<usize>,
     kernel_shape: Vec<usize>,
     pads: Vec<usize>,

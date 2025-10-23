@@ -5,7 +5,7 @@ use crate::instruction::conv::push_constants::{
 };
 use crate::tensor::TensorDesc;
 use crate::utils::bytes::as_bytes;
-use crate::utils::calc_begin_and_end_pads;
+use crate::utils::{OnnxAutoPad, calc_begin_and_end_pads};
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{
@@ -24,7 +24,7 @@ pub struct ConvInstruction {
     pub bias: Option<TensorId>,
     pub dst: TensorId,
 
-    pub auto_pad: AutoPad,
+    pub auto_pad: OnnxAutoPad,
     pub dilations: Vec<usize>,
     pub group: i64,
     pub kernel_shape: Vec<usize>,
@@ -43,15 +43,6 @@ impl ConvInstruction {
             src_desc,
         )
     }
-}
-
-/// How to compute padding for convolution when unspecified
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AutoPad {
-    NotSet,
-    Valid,
-    SameUpper,
-    SameLower,
 }
 
 impl Debug for ConvInstruction {
@@ -452,7 +443,7 @@ impl Instruction for ConvInstruction {
             // symmetric
             pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
             pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-        } else if self.auto_pad != AutoPad::NotSet {
+        } else if self.auto_pad != OnnxAutoPad::NotSet {
             // Compute SAME_UPPER / SAME_LOWER / VALID pads following ONNX semantics
             // Need input spatial sizes
             for i in 0..spatial_rank {
@@ -461,7 +452,7 @@ impl Instruction for ConvInstruction {
                 let s = stride_vec[i] as i64;
                 let d = dilation_vec[i] as i64;
 
-                if self.auto_pad == AutoPad::Valid {
+                if self.auto_pad == OnnxAutoPad::Valid {
                     pads_begin[i] = 0;
                     pads_end[i] = 0;
                 } else {
@@ -469,7 +460,7 @@ impl Instruction for ConvInstruction {
                     let out = (in_i + s - 1) / s; // ceil
                     let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
                     let pad_needed = if pad_needed > 0 { pad_needed } else { 0 } as usize;
-                    if self.auto_pad == AutoPad::SameUpper {
+                    if self.auto_pad == OnnxAutoPad::SameUpper {
                         pads_begin[i] = pad_needed / 2;
                         pads_end[i] = pad_needed - pads_begin[i];
                     } else {

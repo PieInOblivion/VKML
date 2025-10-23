@@ -1,4 +1,4 @@
-use crate::{instruction::AutoPad, tensor::TensorDesc};
+use crate::{tensor::TensorDesc, utils::OnnxAutoPad};
 
 use super::{
     activations::{ActivationLayer, ActivationType},
@@ -33,7 +33,7 @@ impl Layers {
     pub fn conv_with(
         in_features: i64,
         out_features: i64,
-        auto_pad: AutoPad,
+        auto_pad: OnnxAutoPad,
         dilations: Vec<usize>,
         kernel_shape: Vec<usize>,
         pads: Vec<usize>,

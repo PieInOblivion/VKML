@@ -1,9 +1,9 @@
 use onnx_extractor::DataType;
 
 use crate::{
-    instruction::{self, AutoPad},
+    instruction,
     tensor::TensorDesc,
-    utils::error::VKMLError,
+    utils::{OnnxAutoPad, error::VKMLError},
 };
 
 use super::{execution::LayerExecution, layer::Layer};
@@ -12,7 +12,7 @@ use super::{execution::LayerExecution, layer::Layer};
 pub struct ConvLayer {
     pub in_features: i64,  // Input channels
     pub out_features: i64, // Output channels
-    pub auto_pad: AutoPad,
+    pub auto_pad: OnnxAutoPad,
     pub dilations: Vec<usize>,
     pub kernel_shape: Vec<usize>,
     pub pads: Vec<usize>,
@@ -27,7 +27,7 @@ impl ConvLayer {
         Self {
             in_features,
             out_features,
-            auto_pad: AutoPad::Valid,
+            auto_pad: OnnxAutoPad::Valid,
             dilations:
             kernel_shape:
             pads:
@@ -40,7 +40,7 @@ impl ConvLayer {
     pub fn new_with(
         in_features: i64,
         out_features: i64,
-        auto_pad: AutoPad,
+        auto_pad: OnnxAutoPad,
         dilations: Vec<usize>,
         kernel_shape: Vec<usize>,
         pads: Vec<usize>,
@@ -116,7 +116,7 @@ impl Layer for ConvLayer {
         // Prepare pads_begin and pads_end
         let mut pads_begin: Vec<i64> = vec![0; spatial_rank];
         let mut pads_end: Vec<i64> = vec![0; spatial_rank];
-        if self.auto_pad == AutoPad::NotSet {
+        if self.auto_pad == OnnxAutoPad::NotSet {
             // expect pads as [b1,...,bn,e1,...,en] or as empty
             if self.pads.len() >= spatial_rank * 2 {
                 for i in 0..spatial_rank {
@@ -130,7 +130,7 @@ impl Layer for ConvLayer {
                     pads_end[i] = self.pads[i] as i64;
                 }
             }
-        } else if self.auto_pad == AutoPad::Valid {
+        } else if self.auto_pad == OnnxAutoPad::Valid {
             // pads stay zero
         } else {
             // SAME_UPPER or SAME_LOWER: compute pads so that output = ceil(input / stride)
@@ -143,7 +143,7 @@ impl Layer for ConvLayer {
                 let out = (in_i + s - 1) / s; // ceil(in / s)
                 let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
                 let pad_needed = if pad_needed > 0 { pad_needed } else { 0 };
-                if self.auto_pad == AutoPad::SameUpper {
+                if self.auto_pad == OnnxAutoPad::SameUpper {
                     // extra pad at the end
                     pads_begin[i] = pad_needed / 2;
                     pads_end[i] = pad_needed - pads_begin[i];
@@ -333,7 +333,7 @@ impl Layer for ConvLayer {
 
         let mut pads_begin: Vec<i64> = vec![0; spatial_rank];
         let mut pads_end: Vec<i64> = vec![0; spatial_rank];
-        if self.auto_pad == AutoPad::NotSet {
+        if self.auto_pad == OnnxAutoPad::NotSet {
             if self.pads.len() >= spatial_rank * 2 {
                 for i in 0..spatial_rank {
                     pads_begin[i] = self.pads[i] as i64;
@@ -345,7 +345,7 @@ impl Layer for ConvLayer {
                     pads_end[i] = self.pads[i] as i64;
                 }
             }
-        } else if self.auto_pad == AutoPad::Valid {
+        } else if self.auto_pad == OnnxAutoPad::Valid {
             // zero pads
         } else {
             for i in 0..spatial_rank {
@@ -357,7 +357,7 @@ impl Layer for ConvLayer {
                 let out = (in_i + s - 1) / s;
                 let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
                 let pad_needed = if pad_needed > 0 { pad_needed } else { 0 };
-                if self.auto_pad == AutoPad::SameUpper {
+                if self.auto_pad == OnnxAutoPad::SameUpper {
                     pads_begin[i] = pad_needed / 2;
                     pads_end[i] = pad_needed - pads_begin[i];
                 } else {

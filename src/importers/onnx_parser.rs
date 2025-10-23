@@ -1,8 +1,8 @@
 use crate::{
-    instruction::{self, AutoPad, Instruction},
+    instruction::{self, Instruction},
     tensor::TensorDesc,
     tensor_graph::{TensorGraph, TensorId},
-    utils::error::VKMLError,
+    utils::{OnnxAutoPad, error::VKMLError},
 };
 use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation};
 use std::collections::HashMap;
@@ -226,7 +226,7 @@ impl OnnxParser {
                 let mut dilations: Vec<usize> = Vec::new();
                 let mut kernel_shape: Vec<usize> = Vec::new();
                 let mut pads: Vec<usize> = Vec::new();
-                let mut auto_pad = AutoPad::NotSet;
+                let mut auto_pad = OnnxAutoPad::NotSet;
                 let mut ceil_mode = false;
 
                 if let Some(val) = attributes.get("strides")
@@ -257,10 +257,10 @@ impl OnnxParser {
                     && let Some(s) = attr_to_string(val)
                 {
                     auto_pad = match s.as_str() {
-                        "VALID" => AutoPad::Valid,
-                        "SAME_UPPER" => AutoPad::SameUpper,
-                        "SAME_LOWER" => AutoPad::SameLower,
-                        _ => AutoPad::NotSet,
+                        "VALID" => OnnxAutoPad::Valid,
+                        "SAME_UPPER" => OnnxAutoPad::SameUpper,
+                        "SAME_LOWER" => OnnxAutoPad::SameLower,
+                        _ => OnnxAutoPad::NotSet,
                     };
                 }
 
@@ -373,23 +373,23 @@ impl OnnxParser {
                 }
 
                 // Parse auto_pad per ONNX (default NOTSET)
-                let mut auto_pad: Option<AutoPad> = None;
+                let mut auto_pad: Option<OnnxAutoPad> = None;
                 if let Some(val) = attributes.get("auto_pad")
                     && let AttributeValue::String(s) = val
                 {
                     auto_pad = match s.as_str() {
-                        "VALID" => Some(AutoPad::Valid),
-                        "SAME_UPPER" => Some(AutoPad::SameUpper),
-                        "SAME_LOWER" => Some(AutoPad::SameLower),
-                        "NOTSET" | "" => Some(AutoPad::NotSet),
+                        "VALID" => Some(OnnxAutoPad::Valid),
+                        "SAME_UPPER" => Some(OnnxAutoPad::SameUpper),
+                        "SAME_LOWER" => Some(OnnxAutoPad::SameLower),
+                        "NOTSET" | "" => Some(OnnxAutoPad::NotSet),
                         _ => None,
                     };
                 }
-                let auto_pad_val = auto_pad.unwrap_or(AutoPad::NotSet);
+                let auto_pad_val = auto_pad.unwrap_or(OnnxAutoPad::NotSet);
 
                 // pads: only allowed when auto_pad == NOTSET
                 if let Some(val) = attributes.get("pads") {
-                    if auto_pad_val != AutoPad::NotSet {
+                    if auto_pad_val != OnnxAutoPad::NotSet {
                         return Err(VKMLError::OnnxImporter(
                             "Conv: 'pads' and 'auto_pad' cannot be used together".to_string(),
                         ));

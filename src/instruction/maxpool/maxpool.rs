@@ -1,11 +1,10 @@
 use crate::ComputeManager;
 use crate::error::VKMLError;
-use crate::instruction::AutoPad;
 use crate::instruction::gpu_operations::GPUOperation;
 use crate::instruction::maxpool::push_constants::{
     MaxPool1DPushConstants, MaxPool2DPushConstants, MaxPool3DPushConstants,
 };
-use crate::utils::{as_bytes, calc_begin_and_end_pads};
+use crate::utils::{OnnxAutoPad, as_bytes, calc_begin_and_end_pads};
 use crate::{
     gpu::vk_gpu::Gpu,
     instruction::{instruction::Instruction, maxpool::f32_f32_cpu::f32_f32_cpu},
@@ -19,7 +18,7 @@ use vulkanalia::vk;
 pub struct MaxPoolInstruction {
     pub src: TensorId,
     pub dst: TensorId,
-    pub auto_pad: AutoPad,
+    pub auto_pad: OnnxAutoPad,
     pub dilations: Vec<usize>,
     pub kernel_shape: Vec<usize>,
     pub pads: Vec<usize>,
