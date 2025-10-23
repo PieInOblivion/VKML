@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::{ComputeManager, gpu::vk_gpu::Gpu, instruction::Instruction, tensor_graph::TensorId};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vulkanalia::{vk, vk::DeviceV1_0};
@@ -46,7 +47,7 @@ impl Instruction for ReshapeInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // Reshape in Vulkan is a logical operation, not a physical one
         // We essentially need to copy data between the tensors
         let src_tensor = cm.tensor_read(self.src);

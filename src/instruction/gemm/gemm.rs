@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::instruction::gemm::f32_f32_f32_f32_cpu::f32_f32_f32_f32_cpu;
 use crate::instruction::gemm::push_constants::GemmPushConstants;
 use crate::utils::bytes::as_bytes;
@@ -68,7 +69,7 @@ impl Instruction for GemmInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let a_tensor = cm.tensor_read(self.a);
         let b_tensor = cm.tensor_read(self.b);
         let c_tensor = self.c.map(|c| cm.tensor_read(c));
@@ -133,7 +134,7 @@ impl Instruction for GemmInstruction {
                 GPUOperation::Gemm_F16_F16_F16_F16
             }
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU GEMM unimplemented for DataType a:{:?}, b:{:?}, c:{}, y:{:?}",
                     a_dtype,
                     b_dtype,
@@ -141,8 +142,7 @@ impl Instruction for GemmInstruction {
                         .map(|dt| format!("{:?}", dt))
                         .unwrap_or_else(|| "None".to_string()),
                     y_dtype
-                )
-                .into());
+                )));
             }
         };
 
@@ -227,13 +227,12 @@ fn compute_gemm_dimensions(
     y_dims: &[i64],
     trans_a: bool,
     trans_b: bool,
-) -> Result<(usize, usize, usize), Box<dyn std::error::Error>> {
+) -> Result<(usize, usize, usize), VKMLError> {
     if a_dims.len() != 2 || b_dims.len() != 2 || y_dims.len() != 2 {
-        return Err(format!(
+        return Err(VKMLError::Instruction(format!(
             "GEMM requires 2D tensors, got A: {:?}, B: {:?}, Y: {:?}",
             a_dims, b_dims, y_dims
-        )
-        .into());
+        )));
     }
 
     // A is (M, K) or (K, M) if trans_a
@@ -254,20 +253,18 @@ fn compute_gemm_dimensions(
 
     // Verify K dimension matches
     if k_a != k_b {
-        return Err(format!(
+        return Err(VKMLError::Instruction(format!(
             "GEMM: K dimension mismatch: A gives K={}, B gives K={}",
             k_a, k_b
-        )
-        .into());
+        )));
     }
 
     // Verify output dimensions
     if y_dims[0] as usize != m || y_dims[1] as usize != n {
-        return Err(format!(
+        return Err(VKMLError::Instruction(format!(
             "GEMM: output shape mismatch: expected ({}, {}), got ({}, {})",
             m, n, y_dims[0], y_dims[1]
-        )
-        .into());
+        )));
     }
 
     Ok((m, k_a, n))

@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use vulkanalia::{Device, vk, vk::DeviceV1_0};
 
+use crate::error::VKMLError;
+
 pub struct GPUMemory {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
@@ -51,7 +53,7 @@ impl GPUMemory {
     }
 
     /// Read raw bytes from GPU memory.
-    pub fn read_memory(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn read_memory(&self) -> Result<Vec<u8>, VKMLError> {
         let mut output_data = vec![0u8; self.size as usize];
 
         unsafe {

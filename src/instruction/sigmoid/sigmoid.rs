@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::{
     ComputeManager,
     gpu::vk_gpu::Gpu,
@@ -47,7 +48,7 @@ impl Instruction for SigmoidInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let src_tensor = cm.tensor_read(self.src);
         let src_mem = src_tensor.get_gpu_memory_or_panic();
         let dst_tensor = cm.tensor_read(self.dst);
@@ -62,11 +63,10 @@ impl Instruction for SigmoidInstruction {
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::Sigmoid_F32_F32,
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU Sigmoid unimplemented for DataType src:{:?}, dst:{:?}",
                     src_dtype, dst_dtype
-                )
-                .into());
+                )));
             }
         };
 

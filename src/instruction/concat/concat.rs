@@ -1,5 +1,6 @@
 use crate::{
     ComputeManager,
+    error::VKMLError,
     gpu::vk_gpu::Gpu,
     instruction::{concat::f32_cpu::f32_cpu, instruction::Instruction},
     tensor_graph::TensorId,
@@ -49,9 +50,11 @@ impl Instruction for ConcatInstruction {
         _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
         _cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // Complex operation that would require custom shaders
-        Err("GPU implementation of Concat not yet supported".into())
+        Err(VKMLError::Instruction(
+            "GPU implementation of Concat not yet supported".to_string(),
+        ))
     }
 
     fn clone_box(&self) -> Box<dyn Instruction> {

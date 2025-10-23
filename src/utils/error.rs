@@ -23,6 +23,9 @@ pub enum VKMLError {
     #[error("Layer error: {0}")]
     Layer(String),
 
+    #[error("Instruction error: {0}")]
+    Instruction(String),
+
     #[error("Onnx Importer error: {0}")]
     OnnxImporter(String),
 }

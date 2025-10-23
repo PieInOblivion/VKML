@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::gpu::vk_gpu::Gpu;
 use crate::instruction::gpu_operations::GPUOperation;
 use crate::instruction::shape::push_constants::ShapePushConstants;
@@ -56,7 +57,7 @@ impl Instruction for ShapeInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // Compute shape bytes on host, then upload to GPU via a host-visible staging buffer
         let src_desc = cm.tensor_read(self.src).desc.clone();
         let rank = src_desc.ndim() as i64;
@@ -117,11 +118,10 @@ impl Instruction for ShapeInstruction {
         let gpu_op = match dst_dtype {
             DataType::Int64 => GPUOperation::Shape_Write_I64,
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU Shape unimplemented for dst DataType: {:?}, expected Int64",
                     dst_dtype
-                )
-                .into());
+                )));
             }
         };
         let local_size = gpu.optimal_workgroup_size_1d(slice_len as u64);

@@ -1,4 +1,5 @@
 use crate::ComputeManager;
+use crate::error::VKMLError;
 use crate::instruction::mul::push_constants::MulPushConstants;
 use crate::utils::as_bytes;
 use crate::{
@@ -56,7 +57,7 @@ impl Instruction for MulInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let src1_tensor = cm.tensor_read(self.src1);
         let src1_mem = src1_tensor.get_gpu_memory_or_panic();
         let src2_tensor = cm.tensor_read(self.src2);
@@ -139,11 +140,10 @@ impl Instruction for MulInstruction {
                 GPUOperation::Multiply_F32_F32_F32
             }
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU Mul unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
                     src1_dtype, src2_dtype, dst_dtype
-                )
-                .into());
+                )));
             }
         };
 

@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::instruction::matmul::f32_f32_f32_cpu::f32_f32_f32_cpu;
 use crate::instruction::matmul::push_constants::{
     MatMul1D2DPushConstants, MatMul1D3DPushConstants, MatMul2D1DPushConstants,
@@ -58,7 +59,7 @@ impl Instruction for MatMulInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let src1_tensor = cm.tensor_read(self.src1);
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_read(self.dst);
@@ -140,16 +141,15 @@ fn determine_operation(
     src1_dtype: DataType,
     src2_dtype: DataType,
     dst_dtype: DataType,
-) -> Result<GPUOperation, Box<dyn std::error::Error>> {
+) -> Result<GPUOperation, VKMLError> {
     let a_rank = src1_dims.len();
     let b_rank = src2_dims.len();
 
     if a_rank == 0 || b_rank == 0 {
-        return Err(format!(
+        return Err(VKMLError::Instruction(format!(
             "MatMul: zero-rank tensor not supported (a_rank={}, b_rank={})",
             a_rank, b_rank
-        )
-        .into());
+        )));
     }
 
     // Map (shape, datatypes) to GPUOperation
@@ -163,25 +163,22 @@ fn determine_operation(
             (3, 3) => Ok(GPUOperation::MatMul3D3D_F32_F32_F32),
             (3, 1) => Ok(GPUOperation::MatMul3D1D_F32_F32_F32),
             (1, 3) => Ok(GPUOperation::MatMul1D3D_F32_F32_F32),
-            _ => Err(format!(
+            _ => Err(VKMLError::Instruction(format!(
                 "Unsupported MatMul dimensions: a_rank:{}, b_rank:{}",
                 a_rank, b_rank
-            )
-            .into()),
+            ))),
         },
         (DataType::Float16, DataType::Float16, DataType::Float16) => match (a_rank, b_rank) {
             (2, 2) => Ok(GPUOperation::MatMul2D2D_F16_F16_F16), // Will be replaced by coop matrix if available
-            _ => Err(format!(
+            _ => Err(VKMLError::Instruction(format!(
                 "Unsupported F16 MatMul dimensions: a_rank:{}, b_rank:{}",
                 a_rank, b_rank
-            )
-            .into()),
+            ))),
         },
-        _ => Err(format!(
+        _ => Err(VKMLError::Instruction(format!(
             "GPU MatMul unimplemented for DataType src1:{:?}, src2:{:?}, dst:{:?}",
             src1_dtype, src2_dtype, dst_dtype
-        )
-        .into()),
+        ))),
     }
 }
 
@@ -193,7 +190,7 @@ fn execute_gpu_matmul(
     src2_tensor: &Tensor,
     dst_tensor: &Tensor,
     operation: GPUOperation,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), VKMLError> {
     let src1_mem = src1_tensor.get_gpu_memory_or_panic();
     let src2_mem = src2_tensor.get_gpu_memory_or_panic();
     let dst_mem = dst_tensor.get_gpu_memory_or_panic();
@@ -413,7 +410,10 @@ fn execute_gpu_matmul(
         }
 
         _ => {
-            return Err(format!("Unsupported MatMul operation: {:?}", operation).into());
+            return Err(VKMLError::Instruction(format!(
+                "Unsupported MatMul operation: {:?}",
+                operation
+            )));
         }
     };
 

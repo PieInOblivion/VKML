@@ -1,4 +1,5 @@
 use crate::ComputeManager;
+use crate::error::VKMLError;
 use crate::instruction::conv::push_constants::{
     Conv1DPushConstants, Conv2DPushConstants, Conv3DPushConstants,
 };
@@ -109,7 +110,7 @@ impl Instruction for ConvInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // Acquire read guards for tensors so we can access descriptors and GPU memory
         let src_tensor = cm.tensor_read(self.src);
         let weights_tensor = cm.tensor_read(self.weights);
@@ -194,7 +195,7 @@ impl Instruction for ConvInstruction {
                         GPUOperation::Conv1D_F32_F32_F32_F32
                     }
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
                             src_dtype,
                             weight_dtype,
@@ -202,8 +203,7 @@ impl Instruction for ConvInstruction {
                                 .map(|dt| format!("{:?}", dt))
                                 .unwrap_or_else(|| "None".to_string()),
                             dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 
@@ -273,7 +273,7 @@ impl Instruction for ConvInstruction {
                         DataType::Float16,
                     ) => GPUOperation::Conv2D_F16_F16_F16_F16,
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
                             src_dtype,
                             weight_dtype,
@@ -281,8 +281,7 @@ impl Instruction for ConvInstruction {
                                 .map(|dt| format!("{:?}", dt))
                                 .unwrap_or_else(|| "None".to_string()),
                             dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 
@@ -361,7 +360,7 @@ impl Instruction for ConvInstruction {
                         GPUOperation::Conv3D_F32_F32_F32_F32
                     }
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU Conv unimplemented for DataType src:{:?}, weight:{:?}, bias:{:?}, dst:{:?}",
                             src_dtype,
                             weight_dtype,
@@ -369,8 +368,7 @@ impl Instruction for ConvInstruction {
                                 .map(|dt| format!("{:?}", dt))
                                 .unwrap_or_else(|| "None".to_string()),
                             dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 

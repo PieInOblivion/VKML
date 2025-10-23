@@ -1,4 +1,5 @@
 use crate::ComputeManager;
+use crate::error::VKMLError;
 use crate::instruction::init_uniform::push_constants::InitUniformPushConstants;
 use crate::utils::as_bytes;
 use crate::{
@@ -45,7 +46,7 @@ impl Instruction for InitUniformInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
@@ -66,11 +67,10 @@ impl Instruction for InitUniformInstruction {
         let gpu_op = match op_datatype {
             DataType::Float => GPUOperation::InitUniform_F32,
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU InitUniform unimplemented for DataType {:?}",
                     op_datatype
-                )
-                .into());
+                )));
             }
         };
 

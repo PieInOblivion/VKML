@@ -1,4 +1,5 @@
 use crate::ComputeManager;
+use crate::error::VKMLError;
 use crate::instruction::init_constant::push_constants::InitConstantPushConstants;
 use crate::utils::as_bytes;
 use crate::{
@@ -46,7 +47,7 @@ impl Instruction for InitConstantInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 

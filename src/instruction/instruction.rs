@@ -18,11 +18,11 @@ pub trait Instruction: Debug {
         _gpu: &Gpu,
         _command_buffer: vk::CommandBuffer,
         _cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err(Box::new(VKMLError::Vulkan(format!(
+    ) -> Result<(), VKMLError> {
+        Err(VKMLError::Vulkan(format!(
             "GPU execution not implemented for {:?}",
             self
-        ))))
+        )))
     }
 
     // Execute on CPU (default implementation returns error)

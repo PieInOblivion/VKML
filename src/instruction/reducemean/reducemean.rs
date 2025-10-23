@@ -1,3 +1,4 @@
+use crate::error::VKMLError;
 use crate::gpu::vk_gpu::Gpu;
 use crate::instruction::reducemean::f32_cpu::f32_cpu;
 use crate::instruction::reducemean::push_constants::ReduceMeanPushConstants;
@@ -50,7 +51,7 @@ impl Instruction for ReduceMeanInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // GPU implementation: two-pass reduction (sum then scale)
         let src_t = cm.tensor_read(self.src);
         let src_mem = src_t.get_gpu_memory_or_panic();
@@ -108,11 +109,10 @@ impl Instruction for ReduceMeanInstruction {
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::ReduceMean_F32,
             _ => {
-                return Err(format!(
+                return Err(VKMLError::Instruction(format!(
                     "GPU ReduceMean unimplemented for DataType src:{:?}, dst:{:?}",
                     src_dtype, dst_dtype
-                )
-                .into());
+                )));
             }
         };
 

@@ -1,4 +1,5 @@
 use crate::ComputeManager;
+use crate::error::VKMLError;
 use crate::instruction::AutoPad;
 use crate::instruction::gpu_operations::GPUOperation;
 use crate::instruction::maxpool::push_constants::{
@@ -81,7 +82,7 @@ impl Instruction for MaxPoolInstruction {
         gpu: &Gpu,
         command_buffer: vk::CommandBuffer,
         cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), VKMLError> {
         // GPU implementation: bind src(0) and dst(2), push constants and dispatch.
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_read(self.dst);
@@ -141,11 +142,10 @@ impl Instruction for MaxPoolInstruction {
                 let gpu_op = match (src_dtype, dst_dtype) {
                     (DataType::Float, DataType::Float) => GPUOperation::MaxPool1D_F32_F32,
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
                             src_dtype, dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 
@@ -197,11 +197,10 @@ impl Instruction for MaxPoolInstruction {
                     (DataType::Float, DataType::Float) => GPUOperation::MaxPool2D_F32_F32,
                     (DataType::Float16, DataType::Float16) => GPUOperation::MaxPool2D_F16_F16,
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
                             src_dtype, dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 
@@ -262,11 +261,10 @@ impl Instruction for MaxPoolInstruction {
                 let gpu_op = match (src_dtype, dst_dtype) {
                     (DataType::Float, DataType::Float) => GPUOperation::MaxPool3D_F32_F32,
                     _ => {
-                        return Err(format!(
+                        return Err(VKMLError::Instruction(format!(
                             "GPU MaxPool unimplemented for DataType src:{:?}, dst:{:?}",
                             src_dtype, dst_dtype
-                        )
-                        .into());
+                        )));
                     }
                 };
 
