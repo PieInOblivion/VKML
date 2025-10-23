@@ -497,17 +497,15 @@ impl ComputeManager {
         self.tensors.reserve(count);
         let out_ptr: *mut TensorCell = self.tensors.as_mut_ptr();
 
-        let mut tasks: Vec<SingleAllocParams> = Vec::with_capacity(count);
-
-        for i in 0..count {
-            tasks.push(SingleAllocParams {
+        let tasks: Vec<SingleAllocParams> = (0..count)
+            .map(|i| SingleAllocParams {
                 index: i,
                 initialisers_ptr: initialisers.as_mut_ptr(),
                 manager_ptr: self as *const ComputeManager,
                 out_ptrs: out_ptr,
                 tensor_locations_ptr: tensor_locations.as_ptr(),
-            });
-        }
+            })
+            .collect();
 
         global_pool()
             .submit_batch_uniform(single_allocate_task, &tasks)
