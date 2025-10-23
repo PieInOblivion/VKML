@@ -29,7 +29,6 @@ impl MemoryTracker {
         };
 
         if new > self.maximum {
-            self.current.fetch_sub(size, Ordering::Release);
             panic!(
                 "Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used",
                 size, prev, self.maximum
