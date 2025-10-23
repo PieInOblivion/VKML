@@ -424,66 +424,58 @@ impl ComputeManager {
             }
         }
 
-        // If any original model output tensors were remapped to device-local copies during planning,
-        // update the tensor_graph.output_tensor_ids to point to the remapped tensor IDs so callers
-        // (forward) read the final produced tensors.
-        for out_id in self.tensor_graph.output_tensor_ids.iter_mut() {
-            if *out_id < tensor_remappings.len() {
-                let remaps = &tensor_remappings[*out_id];
-                if let Some((_, new_id)) = remaps.last() {
-                    *out_id = *new_id;
-                }
-            }
-        }
-
         // Ensure initialisers matches the new tensor count by extending with None for newly added tensors
         let mut initialisers = initialisers;
         if initialisers.len() < self.tensor_graph.tensor_descs.len() {
             initialisers.resize(self.tensor_graph.tensor_descs.len(), None);
         }
 
-        // 2. Insert transfer operations into the instruction list.
-        // Sort transfers by their original insert position so we can insert in order and compute
-        // how many transfers were inserted before any given op.
+        // 2. Rebuild operations list by interleaving transfer ops before their target op
+        //    and applying remaps immediately
+        let original_ops = std::mem::take(&mut self.tensor_graph.operations);
+        let original_op_layers = std::mem::take(&mut self.tensor_graph.operation_to_layer);
+
+        // Prepare a per-op list of transfers (with their intended layer id)
+        let mut transfers_for_op: Vec<Vec<(Box<dyn Instruction>, Option<LayerId>)>> =
+            vec![Vec::new(); original_ops.len()];
+
+        // Sort transfers to preserve deterministic order
         transfer_operations.sort_by_key(|(op_idx, _)| *op_idx);
-
-        // Keep a simple vector of the insert positions for fast counting later
-        let transfer_positions: Vec<OperationId> =
-            transfer_operations.iter().map(|(op, _)| *op).collect();
-
-        for (inserted, (insert_before_op, transfer_instr)) in
-            transfer_operations.drain(..).enumerate()
-        {
-            let adjusted_pos = insert_before_op + inserted;
-            let layer_id = self.tensor_graph.operation_to_layer[insert_before_op];
-            self.tensor_graph
-                .operations
-                .insert(adjusted_pos, transfer_instr);
-            self.tensor_graph
-                .operation_to_layer
-                .insert(adjusted_pos, layer_id);
+        for (op_idx, transfer_instr) in transfer_operations.drain(..) {
+            let layer_id = original_op_layers[op_idx];
+            transfers_for_op[op_idx].push((transfer_instr, Some(layer_id)));
         }
 
-        // 3. Apply the tensor remappings to all operations. We need to account for how many
-        // transfer ops were inserted before each original op index.
-        let remap_entries: Vec<(OperationId, Vec<usize>, Vec<usize>)> = operation_remappings
-            .into_iter()
-            .enumerate()
-            .filter_map(|(op_id, opt)| opt.map(|(ins, outs)| (op_id, ins, outs)))
-            .collect();
-        // Already sorted since we iterate by index
+        let mut new_ops: Vec<Box<dyn Instruction>> = Vec::with_capacity(
+            transfers_for_op.iter().map(|v| v.len()).sum::<usize>() + original_ops.len(),
+        );
+        let mut new_op_layers: Vec<Option<LayerId>> = Vec::with_capacity(new_ops.capacity());
 
-        // Two-pointer sweep to compute number of transfers inserted before each op
-        let mut t_idx = 0usize;
-        for (op_id, new_inputs, new_outputs) in remap_entries {
-            while t_idx < transfer_positions.len() && transfer_positions[t_idx] <= op_id {
-                t_idx += 1;
+        for (i, mut orig_op) in original_ops.into_iter().enumerate() {
+            // insert any transfers scheduled before this op
+            for (transfer_instr, layer_id) in transfers_for_op[i].drain(..) {
+                new_op_layers.push(layer_id);
+                new_ops.push(transfer_instr);
             }
 
-            let adjusted_op_id = op_id + t_idx;
-            self.tensor_graph.operations[adjusted_op_id]
-                .remap_tensor_ids(&new_inputs, &new_outputs);
+            // apply remap to the original op if needed
+            if let Some((new_inputs, new_outputs)) =
+                operation_remappings.get(i).and_then(|o| o.clone())
+            {
+                orig_op.remap_tensor_ids(&new_inputs, &new_outputs);
+            }
+
+            new_op_layers.push(Some(original_op_layers[i]));
+            new_ops.push(orig_op);
         }
+
+        // Replace graph ops with rebuilt lists
+        self.tensor_graph.operations = new_ops;
+        // Convert Option<LayerId> into LayerId vector; any None shouldn't occur for originals
+        self.tensor_graph.operation_to_layer = new_op_layers
+            .into_iter()
+            .map(|opt| opt.expect("operation layer missing"))
+            .collect();
 
         // Now that planning is complete, actually allocate the tensors
         self.allocate_tensors(tensor_locations, initialisers)?;

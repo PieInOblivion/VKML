@@ -95,19 +95,6 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let successors = &dep_graph.successors;
     let topo_order = &dep_graph.topological_order;
 
-    let op_devices: Vec<DeviceId> = (0..op_count)
-        .map(|op_id| {
-            let op = &tensor_graph.operations[op_id];
-            let tensor_id = op
-                .get_output_tensor_ids()
-                .first()
-                .copied()
-                .or_else(|| op.get_input_tensor_ids().first().copied())
-                .expect("Operation must reference at least one tensor");
-            compute_manager.tensor_read(tensor_id).device.clone()
-        })
-        .collect();
-
     let mut chunk_devices: Vec<DeviceId> = Vec::new();
     let mut chunk_operations: Vec<Vec<OperationId>> = Vec::new();
     let mut op_to_chunk: Vec<ChunkId> = vec![usize::MAX; op_count];
@@ -116,7 +103,16 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     for &op in topo_order {
         // By default use the tensor's device, but if the instruction requires CPU execution
         // force the op onto the CPU slot.
-        let mut device = op_devices[op].clone();
+        let mut device = {
+            let op_ref = &tensor_graph.operations[op];
+            let tensor_id = op_ref
+                .get_output_tensor_ids()
+                .first()
+                .copied()
+                .or_else(|| op_ref.get_input_tensor_ids().first().copied())
+                .expect("Operation must reference at least one tensor");
+            compute_manager.tensor_read(tensor_id).device.clone()
+        };
         let op_ref = &tensor_graph.operations[op];
         if op_ref.must_execute_on_cpu() {
             device = DeviceId::Cpu;

@@ -54,20 +54,6 @@ impl ExecutionState {
             .map(|chunk| AtomicUsize::new(chunk.initial_dep_count))
             .collect();
 
-        // Prime the plan-level cache so command buffers are recorded only once per chunk.
-        for chunk in &plan.chunks {
-            if chunk.command_buffer.get().is_some() {
-                continue;
-            }
-
-            if let DeviceId::Gpu(gpu_idx) = chunk.device {
-                let buffer =
-                    create_gpu_chunk_command_buffer(manager, &chunk.operation_layers, gpu_idx)?;
-
-                let _ = chunk.command_buffer.set(buffer);
-            };
-        }
-
         let outputs_remaining_init = plan.output_chunks.len();
 
         let plan_for_state = Arc::clone(&plan);
@@ -137,12 +123,11 @@ impl ExecutionState {
 
         let chunk = &self.plan.chunks[chunk_id];
 
-        let command_buffer = chunk.command_buffer.get().ok_or_else(|| {
-            VKMLError::Generic(format!(
-                "Missing command buffers for chunk {} on GPU {}",
-                chunk_id, gpu_idx
-            ))
-        })?;
+        let command_buffer = chunk.command_buffer.get_or_init(|| {
+            create_gpu_chunk_command_buffer(compute_manager, &chunk.operation_layers, gpu_idx)
+                .expect("Failed to create command buffer for GPU chunk")
+        });
+
         let command_buffers = std::slice::from_ref(command_buffer);
         let wait_slice: &[(vk::Semaphore, u64)] = &[];
         gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
