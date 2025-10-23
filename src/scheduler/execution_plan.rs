@@ -114,7 +114,13 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     let mut active_chunk_per_slot: Vec<Option<ChunkId>> = vec![None; gpu_count + 1];
 
     for &op in topo_order {
-        let device = op_devices[op].clone();
+        // By default use the tensor's device, but if the instruction requires CPU execution
+        // force the op onto the CPU slot.
+        let mut device = op_devices[op].clone();
+        let op_ref = &tensor_graph.operations[op];
+        if op_ref.must_execute_on_cpu() {
+            device = DeviceId::Cpu;
+        }
         let slot = match device {
             DeviceId::Gpu(idx) => idx,
             DeviceId::Cpu => cpu_slot,

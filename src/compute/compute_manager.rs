@@ -155,6 +155,7 @@ impl ComputeManager {
         Ok(manager)
     }
 
+    // TODO: This needs so much clean up
     // This is essentially a graph partitioning problem.
     // This current approach is a greedy approach that may not fit best for most models,
     // but it is quick to compute, and good enough in most cases.
@@ -411,6 +412,30 @@ impl ComputeManager {
             tensor_locations.push(Some(device_location));
         }
 
+        // If any original model output tensors were remapped to device-local copies during planning,
+        // update the tensor_graph.output_tensor_ids to point to the remapped tensor IDs so callers
+        // (forward) read the final produced tensors. We use the last remap for each tensor if present.
+        for out_id in self.tensor_graph.output_tensor_ids.iter_mut() {
+            if *out_id < tensor_remappings.len() {
+                let remaps = &tensor_remappings[*out_id];
+                if let Some((_, new_id)) = remaps.last() {
+                    *out_id = *new_id;
+                }
+            }
+        }
+
+        // If any original model output tensors were remapped to device-local copies during planning,
+        // update the tensor_graph.output_tensor_ids to point to the remapped tensor IDs so callers
+        // (forward) read the final produced tensors.
+        for out_id in self.tensor_graph.output_tensor_ids.iter_mut() {
+            if *out_id < tensor_remappings.len() {
+                let remaps = &tensor_remappings[*out_id];
+                if let Some((_, new_id)) = remaps.last() {
+                    *out_id = *new_id;
+                }
+            }
+        }
+
         // Ensure initialisers matches the new tensor count by extending with None for newly added tensors
         let mut initialisers = initialisers;
         if initialisers.len() < self.tensor_graph.tensor_descs.len() {
@@ -463,8 +488,9 @@ impl ComputeManager {
         // Now that planning is complete, actually allocate the tensors
         self.allocate_tensors(tensor_locations, initialisers)?;
 
-        // Cache the dependency graph
-        self.cached_dependency_graph = Some(dep_graph);
+        // Cache the dependency graph (recompute after we've modified operations)
+        let new_dep_graph = self.tensor_graph.dependency_graph();
+        self.cached_dependency_graph = Some(new_dep_graph);
 
         Ok(())
     }

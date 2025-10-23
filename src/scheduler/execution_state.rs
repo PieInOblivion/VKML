@@ -135,22 +135,21 @@ impl ExecutionState {
         let local_index = self.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed);
         let signal_value = self.device_semaphore_offsets[gpu_idx] + local_index;
 
-        let command_buffer = self.plan.chunks[chunk_id]
-            .command_buffer
-            .get()
-            .ok_or_else(|| {
-                VKMLError::Generic(format!(
-                    "Missing command buffers for chunk {} on GPU {}",
-                    chunk_id, gpu_idx
-                ))
-            })?;
+        let chunk = &self.plan.chunks[chunk_id];
+
+        let command_buffer = chunk.command_buffer.get().ok_or_else(|| {
+            VKMLError::Generic(format!(
+                "Missing command buffers for chunk {} on GPU {}",
+                chunk_id, gpu_idx
+            ))
+        })?;
         let command_buffers = std::slice::from_ref(command_buffer);
         let wait_slice: &[(vk::Semaphore, u64)] = &[];
         gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
 
-        if self.plan.chunks[chunk_id].needs_host_wait {
+        if chunk.needs_host_wait {
             // Block this worker until the GPU signals completion so dependents see consistent state.
-            gpu.wait_for_timeline_value(signal_value)?
+            gpu.wait_for_timeline_value(signal_value)?;
         }
 
         self.finalize_chunk(chunk_id);

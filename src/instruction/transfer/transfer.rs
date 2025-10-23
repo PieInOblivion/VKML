@@ -1,9 +1,5 @@
-use crate::{
-    ComputeManager, gpu::vk_gpu::Gpu, instruction::Instruction, tensor::DeviceId,
-    tensor_graph::TensorId,
-};
+use crate::{ComputeManager, instruction::Instruction, tensor::DeviceId, tensor_graph::TensorId};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use vulkanalia::vk;
 
 #[derive(Clone)]
 pub struct TransferToDeviceInstruction {
@@ -42,17 +38,12 @@ impl Instruction for TransferToDeviceInstruction {
         }
     }
 
-    fn record_into_command_buffer(
-        &self,
-        _gpu: &Gpu,
-        _command_buffer: vk::CommandBuffer,
-        _cm: &ComputeManager,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err("GPU implementation of transfer not possible yet".into())
-    }
-
     fn clone_box(&self) -> Box<dyn Instruction> {
         Box::new(self.clone())
+    }
+
+    fn must_execute_on_cpu(&self) -> bool {
+        true
     }
 
     fn execute_cpu(&self, cm: &ComputeManager) {

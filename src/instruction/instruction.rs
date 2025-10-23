@@ -33,6 +33,11 @@ pub trait Instruction: Debug {
     // Clone the instruction (since trait objects can't use derive(Clone))
     // Requires manual implementation for each layer
     fn clone_box(&self) -> Box<dyn Instruction>;
+
+    // Return true if this instruction must be executed on the CPU (eg transfers)
+    fn must_execute_on_cpu(&self) -> bool {
+        false
+    }
 }
 
 // Enable cloning for boxed instructions
