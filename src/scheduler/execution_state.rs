@@ -103,7 +103,18 @@ impl ExecutionState {
             }
             DeviceId::Cpu => {
                 self.execute_cpu_chunk(chunk_id, compute_manager)?;
-                self.finalize_chunk(chunk_id);
+            }
+        }
+
+        if chunk.is_output {
+            self.mark_output_complete();
+        }
+
+        for &dependent in &chunk.dependents {
+            let previous =
+                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::Release);
+            if previous == 1 {
+                self.submit_chunk(dependent);
             }
         }
 
@@ -137,7 +148,6 @@ impl ExecutionState {
             gpu.wait_for_timeline_value(signal_value)?;
         }
 
-        self.finalize_chunk(chunk_id);
         Ok(())
     }
 
@@ -147,12 +157,14 @@ impl ExecutionState {
         compute_manager: &ComputeManager,
     ) -> Result<(), VKMLError> {
         let chunk = &self.plan.chunks[chunk_id];
+
         for layer in &chunk.operation_layers {
             for &op_id in layer {
                 let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
                 instruction.execute_cpu(compute_manager);
             }
         }
+
         Ok(())
     }
 
@@ -169,22 +181,6 @@ impl ExecutionState {
     fn await_completion(&self) {
         while self.outputs_remaining.load(Ordering::Acquire) != 0 {
             std::thread::park();
-        }
-    }
-
-    fn finalize_chunk(&self, chunk_id: ChunkId) {
-        let chunk = &self.plan.chunks[chunk_id];
-
-        if chunk.is_output {
-            self.mark_output_complete();
-        }
-
-        for &dependent in &chunk.dependents {
-            let previous =
-                self.chunk_dependencies_remaining[dependent].fetch_sub(1, Ordering::Release);
-            if previous == 1 {
-                self.submit_chunk(dependent);
-            }
         }
     }
 }

@@ -636,18 +636,18 @@ impl ComputeManager {
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
-        if self.cached_plan.is_none() {
-            let plan = create_execution_plan(self)?;
-            self.cached_plan = Some(Arc::new(plan));
+        match &self.cached_plan {
+            Some(existing) => {
+                let arc_plan = Arc::clone(existing);
+                execute_plan(self, arc_plan)
+            }
+            None => {
+                let plan = create_execution_plan(self)?;
+                let arc_plan = Arc::new(plan);
+                self.cached_plan = Some(Arc::clone(&arc_plan));
+                execute_plan(self, arc_plan)
+            }
         }
-
-        let plan = Arc::clone(
-            self.cached_plan
-                .as_ref()
-                .expect("Dynamic execution plan must exist"),
-        );
-
-        execute_plan(self, plan)
     }
 
     pub(crate) fn gpu_count(&self) -> usize {
