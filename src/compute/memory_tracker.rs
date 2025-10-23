@@ -18,26 +18,13 @@ impl MemoryTracker {
 
     pub fn allocate(&self, size: u64) {
         let prev = self.current.fetch_add(size, Ordering::Release);
-        let new = match prev.checked_add(size) {
-            Some(v) => v,
-            None => {
-                panic!(
-                    "Memory allocation would overflow: current {} + size {}",
-                    prev, size
-                );
-            }
-        };
 
-        if new > self.maximum {
+        if prev + size > self.maximum {
             panic!(
                 "Memory limit exceeded: tried to allocate {} bytes when {} of {} bytes are used",
                 size, prev, self.maximum
             );
         }
-    }
-
-    pub fn deallocate(&self, size: u64) {
-        self.current.fetch_sub(size, Ordering::Release);
     }
 
     pub fn get_current(&self) -> u64 {
