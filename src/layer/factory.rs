@@ -34,10 +34,10 @@ impl Layers {
         in_features: i64,
         out_features: i64,
         auto_pad: OnnxAutoPad,
-        dilations: Vec<usize>,
-        kernel_shape: Vec<usize>,
-        pads: Vec<usize>,
-        strides: Vec<usize>,
+        dilations: Vec<i64>,
+        kernel_shape: Vec<i64>,
+        pads: Vec<i64>,
+        strides: Vec<i64>,
         bias: bool,
     ) -> Box<dyn Layer> {
         Box::new(ConvLayer::new_with(

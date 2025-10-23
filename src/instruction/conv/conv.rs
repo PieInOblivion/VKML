@@ -25,23 +25,24 @@ pub struct ConvInstruction {
     pub dst: TensorId,
 
     pub auto_pad: OnnxAutoPad,
-    pub dilations: Vec<usize>,
+    pub dilations: Vec<i64>,
     pub group: i64,
-    pub kernel_shape: Vec<usize>,
-    pub pads: Vec<usize>,
-    pub strides: Vec<usize>,
+    pub kernel_shape: Vec<i64>,
+    pub pads: Vec<i64>,
+    pub strides: Vec<i64>,
 }
 
 impl ConvInstruction {
-    fn compute_pads(&self, src_desc: &TensorDesc) -> (Vec<usize>, Vec<usize>) {
-        calc_begin_and_end_pads(
+    fn compute_pads(&self, src_desc: &TensorDesc) -> Vec<i64> {
+        let (pb, _pe) = calc_begin_and_end_pads(
             self.auto_pad.clone(),
             &self.pads,
             &self.kernel_shape,
             &self.strides,
             &self.dilations,
             src_desc,
-        )
+        );
+        pb
     }
 }
 
@@ -137,6 +138,8 @@ impl Instruction for ConvInstruction {
             0
         };
 
+        let pb = self.compute_pads(src_desc);
+
         match spatial_rank {
             0 | 1 => {
                 // 1D shader
@@ -163,7 +166,7 @@ impl Instruction for ConvInstruction {
                     kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                     stride: self.strides.first().copied().unwrap_or(1) as u32,
                     dilation: self.dilations.first().copied().unwrap_or(1) as u32,
-                    pad_begin: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
+                    pad_begin: pb.first().copied().unwrap_or(0) as u32,
                     group: self.group as u32,
                     has_bias: if self.bias.is_some() { 1 } else { 0 },
                 };
@@ -231,8 +234,8 @@ impl Instruction for ConvInstruction {
                     s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
                     d_h: self.dilations.first().copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                    pad_h: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
-                    pad_w: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
+                    pad_h: pb.first().copied().unwrap_or(0) as u32,
+                    pad_w: pb.get(1).copied().unwrap_or(0) as u32,
                     group: self.group as u32,
                     has_bias: if self.bias.is_some() { 1 } else { 0 },
                 };
@@ -313,9 +316,9 @@ impl Instruction for ConvInstruction {
                     d_d: self.dilations.first().copied().unwrap_or(1) as u32,
                     d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
-                    pad_d: self.compute_pads(src_desc).0.first().copied().unwrap_or(0) as u32,
-                    pad_h: self.compute_pads(src_desc).0.get(1).copied().unwrap_or(0) as u32,
-                    pad_w: self.compute_pads(src_desc).0.get(2).copied().unwrap_or(0) as u32,
+                    pad_d: pb.first().copied().unwrap_or(0) as u32,
+                    pad_h: pb.get(1).copied().unwrap_or(0) as u32,
+                    pad_w: pb.get(2).copied().unwrap_or(0) as u32,
                     group: {
                         if self.group < 1 {
                             panic!(
@@ -401,76 +404,13 @@ impl Instruction for ConvInstruction {
         let dst_tensor = cm.tensor_write(self.dst);
         let dst_desc = dst_tensor.desc.clone();
 
-        // Convert dims to usize vectors
-        let src_dims: Vec<usize> = src_desc.dims().iter().map(|d| *d as usize).collect();
-        let weight_dims: Vec<usize> = weight_desc.dims().iter().map(|d| *d as usize).collect();
-        let dst_dims: Vec<usize> = dst_desc.dims().iter().map(|d| *d as usize).collect();
-
         // Get raw bytes as slices referencing our copied vecs
         let src_bytes: &[u8] = src_bytes_vec.as_slice();
         let weight_bytes: &[u8] = weight_bytes_vec.as_slice();
         let bias_bytes_opt: Option<&[u8]> = bias_bytes_vec_opt.as_deref();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        // Spatial rank and normalize kernel/stride/dilation
-        let spatial_rank = if src_desc.ndim() >= 2 {
-            src_desc.ndim() - 2
-        } else {
-            0
-        };
-        let mut stride_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        let mut dilation_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        let mut kernel_vec: Vec<usize> = Vec::with_capacity(spatial_rank);
-        for i in 0..spatial_rank {
-            stride_vec.push(self.strides.get(i).copied().unwrap_or(1));
-            dilation_vec.push(self.dilations.get(i).copied().unwrap_or(1));
-            kernel_vec.push(self.kernel_shape.get(i).copied().unwrap_or(1));
-        }
-
-        // Compute pads_begin and pads_end based on self.pads or auto_pad
-        // Note: we compute pads_end to preserve ONNX semantics, for shape
-        // inference, validation, and possible pre-padding optimizations.
-        // The inner convolution kernel only needs pads_begin for indexing.
-        let mut pads_begin: Vec<usize> = vec![0; spatial_rank];
-        let mut pads_end: Vec<usize> = vec![0; spatial_rank];
-
-        if self.pads.len() >= spatial_rank * 2 {
-            // ONNX style [b1..bn, e1..en]
-            // copy_from_slice is clearer and lets the optimizer/memcpy do the work
-            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-            pads_end[..spatial_rank].copy_from_slice(&self.pads[spatial_rank..(spatial_rank * 2)]);
-        } else if self.pads.len() == spatial_rank {
-            // symmetric
-            pads_begin[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-            pads_end[..spatial_rank].copy_from_slice(&self.pads[..spatial_rank]);
-        } else if self.auto_pad != OnnxAutoPad::NotSet {
-            // Compute SAME_UPPER / SAME_LOWER / VALID pads following ONNX semantics
-            // Need input spatial sizes
-            for i in 0..spatial_rank {
-                let in_i = src_desc.dims()[i + 2];
-                let k = kernel_vec[i] as i64;
-                let s = stride_vec[i] as i64;
-                let d = dilation_vec[i] as i64;
-
-                if self.auto_pad == OnnxAutoPad::Valid {
-                    pads_begin[i] = 0;
-                    pads_end[i] = 0;
-                } else {
-                    // SAME_UPPER or SAME_LOWER
-                    let out = (in_i + s - 1) / s; // ceil
-                    let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
-                    let pad_needed = if pad_needed > 0 { pad_needed } else { 0 } as usize;
-                    if self.auto_pad == OnnxAutoPad::SameUpper {
-                        pads_begin[i] = pad_needed / 2;
-                        pads_end[i] = pad_needed - pads_begin[i];
-                    } else {
-                        // SameLower
-                        pads_end[i] = pad_needed / 2;
-                        pads_begin[i] = pad_needed - pads_end[i];
-                    }
-                }
-            }
-        }
+        let pads_begin = self.compute_pads(&src_desc);
 
         // Dispatch based on data type
         let src_dtype = src_desc.data_type();
@@ -481,16 +421,16 @@ impl Instruction for ConvInstruction {
             (DataType::Float, DataType::Float, None, DataType::Float)
             | (DataType::Float, DataType::Float, Some(DataType::Float), DataType::Float) => {
                 f32_f32_f32_f32_cpu(
-                    src_dims,
-                    weight_dims,
-                    dst_dims,
+                    src_desc.dims(),
+                    weight_desc.dims(),
+                    dst_desc.dims(),
                     src_bytes,
                     weight_bytes,
                     bias_bytes_opt,
                     dst_ptr,
-                    stride_vec,
-                    pads_begin,
-                    dilation_vec,
+                    &self.strides,
+                    &pads_begin,
+                    &self.dilations,
                     self.group as usize,
                 );
             }

@@ -4,14 +4,14 @@ use crate::TensorDesc;
 
 /// N-D max pooling f32 CPU implementation. No indices are produced.
 pub fn f32_f32_cpu(
-    src_dims: Vec<usize>,
-    dst_dims: Vec<usize>,
+    src_dims: &[i64],
+    dst_dims: &[i64],
     src_bytes: &[u8],
     dst_ptr: &mut [u8],
-    kernel: Vec<usize>,
-    stride: Vec<usize>,
-    pads_begin: Vec<usize>,
-    dilation: Vec<usize>,
+    kernel: &[i64],
+    stride: &[i64],
+    pads_begin: &[i64],
+    dilation: &[i64],
 ) {
     let src_f: &[f32] = try_cast_slice(src_bytes).expect("src bytes not f32");
     let dst_f: &mut [f32] = try_cast_slice_mut(dst_ptr).expect("dst bytes not f32");
@@ -22,15 +22,14 @@ pub fn f32_f32_cpu(
         "MaxPool: dims too small"
     );
 
-    let n = src_dims[0];
-    let c = src_dims[1];
+    // convert primary dims to usize for indexing
+    let n = src_dims[0] as usize;
+    let c = src_dims[1] as usize;
     let spatial_rank = src_dims.len() - 2;
 
     // compute strides
-    let src_strides =
-        TensorDesc::compute_strides(&src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
-    let dst_strides =
-        TensorDesc::compute_strides(&dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
+    let src_strides = TensorDesc::compute_strides(src_dims);
+    let dst_strides = TensorDesc::compute_strides(dst_dims);
 
     let offset = |idxs: &[usize], strides: &[usize]| -> usize {
         idxs.iter().zip(strides.iter()).map(|(i, s)| i * s).sum()
@@ -41,10 +40,10 @@ pub fn f32_f32_cpu(
         for ci in 0..c {
             // iterate over output positions via mixed-radix counting
             let out_counts = &dst_dims[2..];
-            let mut out_index = vec![0usize; spatial_rank];
+            let mut out_index = vec![0; spatial_rank];
             loop {
                 // compute dst offset
-                let mut dst_idxs = vec![0usize; 2 + spatial_rank];
+                let mut dst_idxs = vec![0; 2 + spatial_rank];
                 dst_idxs[0] = ni;
                 dst_idxs[1] = ci;
                 for (i, &v) in out_index.iter().enumerate() {
@@ -58,21 +57,21 @@ pub fn f32_f32_cpu(
                 let mut found = false;
 
                 // nested loops over kernel elements via mixed radix
-                let mut k_multi = vec![0usize; spatial_rank];
+                let mut k_multi = vec![0; spatial_rank];
                 loop {
                     // compute input positions
-                    let mut src_idxs = vec![0usize; 2 + spatial_rank];
+                    let mut src_idxs = vec![0; 2 + spatial_rank];
                     src_idxs[0] = ni;
                     src_idxs[1] = ci;
                     let mut in_bounds = true;
                     for (i, &out_v) in out_index.iter().enumerate() {
-                        let o = out_v as isize;
-                        let s = stride[i] as isize;
-                        let p = pads_begin.get(i).copied().unwrap_or(0) as isize;
-                        let dil = dilation[i] as isize;
-                        let kpos = k_multi[i] as isize;
-                        let in_pos = o * s - p + kpos * dil;
-                        if in_pos < 0 || in_pos >= src_dims[2 + i] as isize {
+                        let o_i = out_v as i64;
+                        let s = stride[i];
+                        let p = pads_begin.get(i).copied().unwrap_or(0);
+                        let dil = dilation[i];
+                        let kpos = k_multi[i] as i64;
+                        let in_pos = o_i * s - p + kpos * dil;
+                        if in_pos < 0 || in_pos >= src_dims[2 + i] {
                             in_bounds = false;
                             break;
                         }
@@ -89,7 +88,7 @@ pub fn f32_f32_cpu(
                     }
 
                     // increment k_multi
-                    let mut carry = 1usize;
+                    let mut carry = 1;
                     for i in (0..spatial_rank).rev() {
                         k_multi[i] += carry;
                         if k_multi[i] >= kernel[i] {
@@ -114,10 +113,10 @@ pub fn f32_f32_cpu(
                 }
 
                 // increment out_index
-                let mut carry = 1usize;
+                let mut carry = 1;
                 for i in (0..spatial_rank).rev() {
                     out_index[i] += carry;
-                    if out_index[i] >= out_counts[i] {
+                    if out_index[i] >= out_counts[i] as usize {
                         out_index[i] = 0;
                         carry = 1;
                     } else {

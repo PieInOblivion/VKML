@@ -222,53 +222,37 @@ impl OnnxParser {
             "Identity" => Ok(instruction::identity(input_ids[0], output_ids[0])),
             "MaxPool" => {
                 // Parse attributes similar to Conv: kernel_shape, pads, strides, dilations, auto_pad, ceil_mode
-                let mut strides: Vec<usize> = Vec::new();
-                let mut dilations: Vec<usize> = Vec::new();
-                let mut kernel_shape: Vec<usize> = Vec::new();
-                let mut pads: Vec<usize> = Vec::new();
-                let mut auto_pad = OnnxAutoPad::NotSet;
-                let mut ceil_mode = false;
-
-                if let Some(val) = attributes.get("strides")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    strides = v.iter().map(|x| *x as usize).collect();
-                }
-
-                if let Some(val) = attributes.get("dilations")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    dilations = v.iter().map(|x| *x as usize).collect();
-                }
-
-                if let Some(val) = attributes.get("kernel_shape")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    kernel_shape = v.iter().map(|x| *x as usize).collect();
-                }
-
-                if let Some(val) = attributes.get("pads")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    pads = v.iter().map(|x| *x as usize).collect();
-                }
-
-                if let Some(val) = attributes.get("auto_pad")
-                    && let Some(s) = attr_to_string(val)
-                {
-                    auto_pad = match s.as_str() {
+                let strides = attributes
+                    .get("strides")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let dilations = attributes
+                    .get("dilations")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let kernel_shape = attributes
+                    .get("kernel_shape")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let pads = attributes
+                    .get("pads")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let auto_pad = attributes
+                    .get("auto_pad")
+                    .and_then(attr_to_string)
+                    .map(|s| match s.as_str() {
                         "VALID" => OnnxAutoPad::Valid,
                         "SAME_UPPER" => OnnxAutoPad::SameUpper,
                         "SAME_LOWER" => OnnxAutoPad::SameLower,
                         _ => OnnxAutoPad::NotSet,
-                    };
-                }
-
-                if let Some(val) = attributes.get("ceil_mode")
-                    && let Some(i) = attr_to_int(val)
-                {
-                    ceil_mode = i != 0;
-                }
+                    })
+                    .unwrap_or(OnnxAutoPad::NotSet);
+                let ceil_mode = attributes
+                    .get("ceil_mode")
+                    .and_then(attr_to_int)
+                    .map(|i| i != 0)
+                    .unwrap_or(false);
 
                 Ok(instruction::maxpool(
                     input_ids[0],
@@ -331,35 +315,25 @@ impl OnnxParser {
             "Min" => Ok(instruction::min(input_ids[0], input_ids[1], output_ids[0])),
             "Relu" => Ok(instruction::relu(input_ids[0], output_ids[0])),
             "Conv" => {
-                // Expect: input, weights, optional bias -> output
-                let src = input_ids[0];
                 let weights = input_ids[1];
-                let bias = input_ids.get(2).copied();
-                let dst = output_ids[0];
 
-                // Simplified parsing: map ONNX attributes directly into instruction fields.
-                let mut strides: Vec<usize> = Vec::new();
-                let mut dilations: Vec<usize> = Vec::new();
-                let mut kernel_shape: Vec<usize> = Vec::new();
-                let mut pads: Vec<usize> = Vec::new();
-                let mut groups = 1;
+                let mut kernel_shape: Vec<i64> = Vec::new();
+                let mut pads: Vec<i64> = Vec::new();
 
-                if let Some(val) = attributes.get("strides")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    strides = v.iter().map(|x| *x as usize).collect();
-                }
-
-                if let Some(val) = attributes.get("dilations")
-                    && let Some(v) = attr_to_vec(val)
-                {
-                    dilations = v.iter().map(|x| *x as usize).collect();
-                }
+                let strides = attributes
+                    .get("strides")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let dilations = attributes
+                    .get("dilations")
+                    .and_then(attr_to_vec)
+                    .unwrap_or_default();
+                let groups = attributes.get("groups").and_then(attr_to_int).unwrap_or(1);
 
                 if let Some(val) = attributes.get("kernel_shape")
                     && let Some(v) = attr_to_vec(val)
                 {
-                    kernel_shape = v.iter().map(|x| *x as usize).collect();
+                    kernel_shape = v;
                 } else {
                     // If kernel_shape is not in attributes, infer from weight tensor shape
                     // Weight tensor shape is typically [M, C/group, k_h, k_w] for 2D conv
@@ -368,7 +342,7 @@ impl OnnxParser {
                     if weight_dims.len() >= 3 {
                         // For 2D/3D conv: weight is [M, C/group, k_h, k_w] or [M, C/group, k_d, k_h, k_w]
                         // kernel_shape should be the spatial dimensions
-                        kernel_shape = weight_dims[2..].iter().map(|&d| d as usize).collect();
+                        kernel_shape = weight_dims[2..].to_vec();
                     }
                 }
 
@@ -405,21 +379,15 @@ impl OnnxParser {
                                 "Invalid 'pads' attribute length for Conv operation".to_string(),
                             ));
                         }
-                        pads = pv.iter().map(|x| *x as usize).collect();
+                        pads = pv;
                     }
                 }
 
-                if let Some(val) = attributes.get("group")
-                    && let AttributeValue::Int(g) = val
-                {
-                    groups = *g;
-                }
-
                 Ok(instruction::conv(
-                    src,
+                    input_ids[0],
                     weights,
-                    bias,
-                    dst,
+                    input_ids.get(2).copied(),
+                    output_ids[0],
                     auto_pad_val,
                     dilations,
                     groups,

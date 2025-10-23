@@ -4,16 +4,16 @@ use crate::TensorDesc;
 
 /// A simple single-threaded N-D convolution for f32 tensors.
 pub fn f32_f32_f32_f32_cpu(
-    src_dims: Vec<usize>,
-    weight_dims: Vec<usize>,
-    dst_dims: Vec<usize>,
+    src_dims: &[i64],
+    weight_dims: &[i64],
+    dst_dims: &[i64],
     src_bytes: &[u8],
     weight_bytes: &[u8],
     bias_bytes: Option<&[u8]>,
     dst_ptr: &mut [u8],
-    stride: Vec<usize>,
-    pads_begin: Vec<usize>,
-    dilation: Vec<usize>,
+    stride: &[i64],
+    pads_begin: &[i64],
+    dilation: &[i64],
     group: usize,
 ) {
     // Cast to f32 slices
@@ -25,9 +25,10 @@ pub fn f32_f32_f32_f32_cpu(
     // src layout: [N, C, D1, D2, ...]
     // dst layout: [N, M, O1, O2, ...]
 
-    let n = src_dims[0];
-    let c = src_dims[1];
-    let m = weight_dims[0];
+    // primary shape dims as usize for looping/indexing
+    let n = src_dims[0] as usize;
+    let c = src_dims[1] as usize;
+    let m = weight_dims[0] as usize;
 
     // Validate group configuration
     if group == 0 || !c.is_multiple_of(group) || !m.is_multiple_of(group) {
@@ -42,12 +43,9 @@ pub fn f32_f32_f32_f32_cpu(
     let spatial_rank = src_dims.len() - 2;
 
     // Compute strides for indexing
-    let src_strides =
-        TensorDesc::compute_strides(&src_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
-    let dst_strides =
-        TensorDesc::compute_strides(&dst_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
-    let weight_strides =
-        TensorDesc::compute_strides(&weight_dims.iter().map(|d| *d as i64).collect::<Vec<_>>());
+    let src_strides = TensorDesc::compute_strides(src_dims);
+    let dst_strides = TensorDesc::compute_strides(dst_dims);
+    let weight_strides = TensorDesc::compute_strides(weight_dims);
 
     // Helper to compute linear offset
     let offset = |idxs: &[usize], strides: &[usize]| -> usize {
@@ -61,18 +59,18 @@ pub fn f32_f32_f32_f32_cpu(
     // We'll iterate over N, M, and spatial output positions, and accumulate over input channels and kernel positions
 
     // Precompute kernel spatial shape and number of kernel elements
-    let kernel_spatial: Vec<usize> = weight_dims[2..].to_vec();
-    let kernel_elems: usize = kernel_spatial.iter().product();
+    let kernel_spatial: Vec<i64> = weight_dims[2..].to_vec();
+    let kernel_elems = kernel_spatial.iter().product();
 
     // Iterate
     for ni in 0..n {
         for mi in 0..m {
             // For each output spatial index, represented as a multi-index
             let out_spatial_counts = &dst_dims[2..];
-            let mut out_index = vec![0usize; spatial_rank];
+            let mut out_index = vec![0; spatial_rank];
             loop {
                 // compute dst linear index
-                let mut dst_idxs = vec![0usize; 2 + spatial_rank];
+                let mut dst_idxs = vec![0; 2 + spatial_rank];
                 dst_idxs[0] = ni;
                 dst_idxs[1] = mi;
                 for (i, &v) in out_index.iter().enumerate() {
@@ -92,7 +90,7 @@ pub fn f32_f32_f32_f32_cpu(
                     for k_idx in 0..kernel_elems {
                         // convert k_idx to multi-index over kernel_spatial
                         let mut rem = k_idx;
-                        let mut k_multi = vec![0usize; spatial_rank];
+                        let mut k_multi = vec![0; spatial_rank];
                         for d in (0..spatial_rank).rev() {
                             let dim = kernel_spatial[d];
                             k_multi[d] = rem % dim;
@@ -100,18 +98,18 @@ pub fn f32_f32_f32_f32_cpu(
                         }
 
                         // compute input spatial position: in_pos = out_pos*stride - pad_begin + k*dilation
-                        let mut src_idxs = vec![0usize; 2 + spatial_rank];
+                        let mut src_idxs = vec![0; 2 + spatial_rank];
                         src_idxs[0] = ni;
                         src_idxs[1] = ci;
                         let mut in_bounds = true;
                         for (i, &out_v) in out_index.iter().enumerate() {
-                            let o = out_v as isize;
-                            let s = stride[i] as isize;
-                            let p_b = pads_begin[i] as isize;
-                            let dil = dilation[i] as isize;
-                            let kpos = k_multi[i] as isize;
-                            let in_pos = o * s - p_b + kpos * dil;
-                            if in_pos < 0 || in_pos >= src_dims[2 + i] as isize {
+                            let o_i = out_v as i64;
+                            let s_i = stride[i];
+                            let p_b = pads_begin[i];
+                            let dil = dilation[i];
+                            let kpos = k_multi[i] as i64;
+                            let in_pos = o_i * s_i - p_b + kpos * dil;
+                            if in_pos < 0 || in_pos >= src_dims[2 + i] {
                                 in_bounds = false;
                                 break;
                             }
@@ -125,11 +123,11 @@ pub fn f32_f32_f32_f32_cpu(
                         // linear offsets
                         let src_off = offset(&src_idxs, &src_strides);
                         // weight index: [mi, ci_in_group, k_multi...]
-                        let mut w_idxs = vec![0usize; 2 + spatial_rank];
+                        let mut w_idxs = vec![0; 2 + spatial_rank];
                         w_idxs[0] = mi;
                         w_idxs[1] = ci - c_start; // channel index within the group
                         for (i, &km) in k_multi.iter().enumerate() {
-                            w_idxs[2 + i] = km;
+                            w_idxs[2 + i] = km as usize;
                         }
                         let w_off = offset(&w_idxs, &weight_strides);
 
@@ -145,10 +143,10 @@ pub fn f32_f32_f32_f32_cpu(
                 dst_f[dst_off] = acc;
 
                 // increment out_index
-                let mut carry = 1usize;
+                let mut carry = 1;
                 for i in (0..spatial_rank).rev() {
                     out_index[i] += carry;
-                    if out_index[i] >= out_spatial_counts[i] {
+                    if out_index[i] >= out_spatial_counts[i] as usize {
                         out_index[i] = 0;
                         carry = 1;
                     } else {

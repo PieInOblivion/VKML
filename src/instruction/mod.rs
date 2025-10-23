@@ -65,11 +65,11 @@ pub fn conv(
     bias: Option<TensorId>,
     dst: TensorId,
     auto_pad: OnnxAutoPad,
-    dilations: Vec<usize>,
+    dilations: Vec<i64>,
     group: i64,
-    kernel_shape: Vec<usize>,
-    pads: Vec<usize>,
-    strides: Vec<usize>,
+    kernel_shape: Vec<i64>,
+    pads: Vec<i64>,
+    strides: Vec<i64>,
 ) -> Box<dyn Instruction> {
     Box::new(ConvInstruction {
         src,
@@ -121,10 +121,10 @@ pub fn maxpool(
     src: TensorId,
     dst: TensorId,
     auto_pad: OnnxAutoPad,
-    dilations: Vec<usize>,
-    kernel_shape: Vec<usize>,
-    pads: Vec<usize>,
-    strides: Vec<usize>,
+    dilations: Vec<i64>,
+    kernel_shape: Vec<i64>,
+    pads: Vec<i64>,
+    strides: Vec<i64>,
     ceil_mode: bool,
 ) -> Box<dyn Instruction> {
     Box::new(MaxPoolInstruction {

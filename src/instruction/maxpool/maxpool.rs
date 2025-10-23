@@ -19,15 +19,15 @@ pub struct MaxPoolInstruction {
     pub src: TensorId,
     pub dst: TensorId,
     pub auto_pad: OnnxAutoPad,
-    pub dilations: Vec<usize>,
-    pub kernel_shape: Vec<usize>,
-    pub pads: Vec<usize>,
-    pub strides: Vec<usize>,
+    pub dilations: Vec<i64>,
+    pub kernel_shape: Vec<i64>,
+    pub pads: Vec<i64>,
+    pub strides: Vec<i64>,
     pub ceil_mode: bool,
 }
 
 impl MaxPoolInstruction {
-    fn compute_pads(&self, src_desc: &TensorDesc) -> Vec<usize> {
+    fn compute_pads(&self, src_desc: &TensorDesc) -> Vec<i64> {
         let (pb, _pe) = calc_begin_and_end_pads(
             self.auto_pad.clone(),
             &self.pads,
@@ -99,6 +99,8 @@ impl Instruction for MaxPoolInstruction {
             0
         };
 
+        let pb = self.compute_pads(src_desc);
+
         match spatial_rank {
             0 | 1 => {
                 let src_dims = src_desc.dims();
@@ -123,10 +125,7 @@ impl Instruction for MaxPoolInstruction {
                     kernel: self.kernel_shape.first().copied().unwrap_or(1) as u32,
                     stride: self.strides.first().copied().unwrap_or(1) as u32,
                     dilation: self.dilations.first().copied().unwrap_or(1) as u32,
-                    pad_begin: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.first().copied().unwrap_or(0) as u32
-                    },
+                    pad_begin: pb.first().copied().unwrap_or(0) as u32,
                 };
 
                 let push_constant_bytes = as_bytes(&pc);
@@ -170,14 +169,8 @@ impl Instruction for MaxPoolInstruction {
                     s_w: self.strides.get(1).copied().unwrap_or(1) as u32,
                     d_h: self.dilations.first().copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(1).copied().unwrap_or(1) as u32,
-                    pad_h: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.first().copied().unwrap_or(0) as u32
-                    },
-                    pad_w: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.get(1).copied().unwrap_or(0) as u32
-                    },
+                    pad_h: pb.first().copied().unwrap_or(0) as u32,
+                    pad_w: pb.get(1).copied().unwrap_or(0) as u32,
                 };
 
                 let push_constant_bytes = as_bytes(&pc);
@@ -230,18 +223,9 @@ impl Instruction for MaxPoolInstruction {
                     d_d: self.dilations.first().copied().unwrap_or(1) as u32,
                     d_h: self.dilations.get(1).copied().unwrap_or(1) as u32,
                     d_w: self.dilations.get(2).copied().unwrap_or(1) as u32,
-                    pad_d: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.first().copied().unwrap_or(0) as u32
-                    },
-                    pad_h: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.get(1).copied().unwrap_or(0) as u32
-                    },
-                    pad_w: {
-                        let pb = self.compute_pads(src_desc);
-                        pb.get(2).copied().unwrap_or(0) as u32
-                    },
+                    pad_d: pb.first().copied().unwrap_or(0) as u32,
+                    pad_h: pb.get(1).copied().unwrap_or(0) as u32,
+                    pad_w: pb.get(2).copied().unwrap_or(0) as u32,
                 };
 
                 let push_constant_bytes = as_bytes(&pc);
@@ -287,25 +271,6 @@ impl Instruction for MaxPoolInstruction {
         let dst_desc = dst_guard.desc.clone();
         let dst_ptr = dst_guard.get_cpu_memory_mut_slice_or_panic();
 
-        // derive dims
-        let src_dims: Vec<usize> = src_desc.dims().iter().map(|d| *d as usize).collect();
-        let dst_dims: Vec<usize> = dst_desc.dims().iter().map(|d| *d as usize).collect();
-
-        // normalize parameters
-        let spatial_rank = if src_dims.len() >= 2 {
-            src_dims.len() - 2
-        } else {
-            0
-        };
-        let mut stride_vec = vec![1usize; spatial_rank];
-        let mut dil_vec = vec![1usize; spatial_rank];
-        let mut kernel_vec = vec![1usize; spatial_rank];
-        for i in 0..spatial_rank {
-            stride_vec[i] = self.strides.get(i).copied().unwrap_or(1);
-            dil_vec[i] = self.dilations.get(i).copied().unwrap_or(1);
-            kernel_vec[i] = self.kernel_shape.get(i).copied().unwrap_or(1);
-        }
-
         let pads_begin = self.compute_pads(&src_desc);
 
         let src_dtype = src_desc.data_type();
@@ -313,8 +278,14 @@ impl Instruction for MaxPoolInstruction {
         match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => {
                 f32_f32_cpu(
-                    src_dims, dst_dims, src_bytes, dst_ptr, kernel_vec, stride_vec, pads_begin,
-                    dil_vec,
+                    src_desc.dims(),
+                    dst_desc.dims(),
+                    src_bytes,
+                    dst_ptr,
+                    &self.kernel_shape,
+                    &self.strides,
+                    &pads_begin,
+                    &self.dilations,
                 );
             }
             _ => unimplemented!(

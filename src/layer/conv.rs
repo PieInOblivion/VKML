@@ -1,5 +1,6 @@
 use onnx_extractor::DataType;
 
+use crate::utils::onnx_autopad::calc_begin_and_end_pads;
 use crate::{
     instruction,
     tensor::TensorDesc,
@@ -13,10 +14,10 @@ pub struct ConvLayer {
     pub in_features: i64,  // Input channels
     pub out_features: i64, // Output channels
     pub auto_pad: OnnxAutoPad,
-    pub dilations: Vec<usize>,
-    pub kernel_shape: Vec<usize>,
-    pub pads: Vec<usize>,
-    pub strides: Vec<usize>,
+    pub dilations: Vec<i64>,
+    pub kernel_shape: Vec<i64>,
+    pub pads: Vec<i64>,
+    pub strides: Vec<i64>,
     pub bias: bool,
 }
 
@@ -41,10 +42,10 @@ impl ConvLayer {
         in_features: i64,
         out_features: i64,
         auto_pad: OnnxAutoPad,
-        dilations: Vec<usize>,
-        kernel_shape: Vec<usize>,
-        pads: Vec<usize>,
-        strides: Vec<usize>,
+        dilations: Vec<i64>,
+        kernel_shape: Vec<i64>,
+        pads: Vec<i64>,
+        strides: Vec<i64>,
         bias: bool,
     ) -> Self {
         Self {
@@ -103,65 +104,23 @@ impl Layer for ConvLayer {
             spatial_input.push(input_dims[2 + i]);
         }
 
-        // Normalize kernel/stride/dilation vectors to spatial_rank, with sensible defaults
-        let mut kernel: Vec<i64> = Vec::with_capacity(spatial_rank);
-        let mut stride: Vec<i64> = Vec::with_capacity(spatial_rank);
-        let mut dilation: Vec<i64> = Vec::with_capacity(spatial_rank);
-        for i in 0..spatial_rank {
-            kernel.push(self.kernel_shape.get(i).copied().unwrap_or(1) as i64);
-            stride.push(self.strides.get(i).copied().unwrap_or(1) as i64);
-            dilation.push(self.dilations.get(i).copied().unwrap_or(1) as i64);
-        }
-
-        // Prepare pads_begin and pads_end
-        let mut pads_begin: Vec<i64> = vec![0; spatial_rank];
-        let mut pads_end: Vec<i64> = vec![0; spatial_rank];
-        if self.auto_pad == OnnxAutoPad::NotSet {
-            // expect pads as [b1,...,bn,e1,...,en] or as empty
-            if self.pads.len() >= spatial_rank * 2 {
-                for i in 0..spatial_rank {
-                    pads_begin[i] = self.pads[i] as i64;
-                    pads_end[i] = self.pads[spatial_rank + i] as i64;
-                }
-            } else if self.pads.len() == spatial_rank {
-                // symmetric pads
-                for i in 0..spatial_rank {
-                    pads_begin[i] = self.pads[i] as i64;
-                    pads_end[i] = self.pads[i] as i64;
-                }
-            }
-        } else if self.auto_pad == OnnxAutoPad::Valid {
-            // pads stay zero
-        } else {
-            // SAME_UPPER or SAME_LOWER: compute pads so that output = ceil(input / stride)
-            for i in 0..spatial_rank {
-                let in_i = spatial_input[i];
-                let k = kernel[i];
-                let s = stride[i];
-                let d = dilation[i];
-
-                let out = (in_i + s - 1) / s; // ceil(in / s)
-                let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
-                let pad_needed = if pad_needed > 0 { pad_needed } else { 0 };
-                if self.auto_pad == OnnxAutoPad::SameUpper {
-                    // extra pad at the end
-                    pads_begin[i] = pad_needed / 2;
-                    pads_end[i] = pad_needed - pads_begin[i];
-                } else {
-                    // SameLower: extra pad at the beginning
-                    pads_end[i] = pad_needed / 2;
-                    pads_begin[i] = pad_needed - pads_end[i];
-                }
-            }
-        }
+        // Compute pads using the shared helper and convert to i64
+        let (pads_begin, pads_end) = calc_begin_and_end_pads(
+            self.auto_pad.clone(),
+            &self.pads,
+            &self.kernel_shape,
+            &self.strides,
+            &self.dilations,
+            input_shape,
+        );
 
         // compute output spatial dims
         let mut out_spatial: Vec<i64> = Vec::with_capacity(spatial_rank);
         for i in 0..spatial_rank {
             let in_i = spatial_input[i];
-            let k = kernel[i];
-            let s = stride[i];
-            let d = dilation[i];
+            let k = self.kernel_shape.get(i).copied().unwrap_or(1);
+            let s = self.strides.get(i).copied().unwrap_or(1);
+            let d = self.dilations.get(i).copied().unwrap_or(1);
             let p_begin = pads_begin[i];
             let p_end = pads_end[i];
 
@@ -171,9 +130,7 @@ impl Layer for ConvLayer {
         }
 
         // Build output tensor dims: [batch, out_channels, spatial...]
-        let mut out_dims: Vec<i64> = Vec::with_capacity(2 + spatial_rank);
-        out_dims.push(batch_size);
-        out_dims.push(self.out_features);
+        let mut out_dims = vec![batch_size, self.out_features];
         out_dims.extend(out_spatial.iter());
 
         Ok(vec![TensorDesc::new(out_dims, DataType::Float)])
@@ -185,7 +142,7 @@ impl Layer for ConvLayer {
         w_dims.push(self.out_features);
         w_dims.push(self.in_features); // group not modeled here; assume 1
         for &k in &self.kernel_shape {
-            w_dims.push(k as i64);
+            w_dims.push(k);
         }
 
         let weights = TensorDesc::new(w_dims, DataType::Float);
@@ -199,7 +156,7 @@ impl Layer for ConvLayer {
         let mut kernel_prod: i64 = 1;
         if !self.kernel_shape.is_empty() {
             for &k in &self.kernel_shape {
-                kernel_prod *= k as i64;
+                kernel_prod *= k;
             }
         }
 
@@ -314,58 +271,26 @@ impl Layer for ConvLayer {
             spatial_input.push(input_dims[2 + i]);
         }
 
-        // determine kernel dims
-        let mut k_dims: Vec<i64> = Vec::with_capacity(spatial_rank);
-        for i in 0..spatial_rank {
-            k_dims.push(self.kernel_shape.get(i).copied().unwrap_or(1) as i64);
-        }
-
         let mut out_spatial: Vec<i64> = Vec::with_capacity(spatial_rank);
         // Compute pads and strides/dilations similar to output_shapes
         let mut kernel: Vec<i64> = Vec::with_capacity(spatial_rank);
         let mut stride: Vec<i64> = Vec::with_capacity(spatial_rank);
         let mut dilation: Vec<i64> = Vec::with_capacity(spatial_rank);
         for i in 0..spatial_rank {
-            kernel.push(self.kernel_shape.get(i).copied().unwrap_or(1) as i64);
-            stride.push(self.strides.get(i).copied().unwrap_or(1) as i64);
-            dilation.push(self.dilations.get(i).copied().unwrap_or(1) as i64);
+            kernel.push(self.kernel_shape.get(i).copied().unwrap_or(1));
+            stride.push(self.strides.get(i).copied().unwrap_or(1));
+            dilation.push(self.dilations.get(i).copied().unwrap_or(1));
         }
 
-        let mut pads_begin: Vec<i64> = vec![0; spatial_rank];
-        let mut pads_end: Vec<i64> = vec![0; spatial_rank];
-        if self.auto_pad == OnnxAutoPad::NotSet {
-            if self.pads.len() >= spatial_rank * 2 {
-                for i in 0..spatial_rank {
-                    pads_begin[i] = self.pads[i] as i64;
-                    pads_end[i] = self.pads[spatial_rank + i] as i64;
-                }
-            } else if self.pads.len() == spatial_rank {
-                for i in 0..spatial_rank {
-                    pads_begin[i] = self.pads[i] as i64;
-                    pads_end[i] = self.pads[i] as i64;
-                }
-            }
-        } else if self.auto_pad == OnnxAutoPad::Valid {
-            // zero pads
-        } else {
-            for i in 0..spatial_rank {
-                let in_i = spatial_input[i];
-                let k = kernel[i];
-                let s = stride[i];
-                let d = dilation[i];
-
-                let out = (in_i + s - 1) / s;
-                let pad_needed = ((out - 1) * s + d * (k - 1) + 1) - in_i;
-                let pad_needed = if pad_needed > 0 { pad_needed } else { 0 };
-                if self.auto_pad == OnnxAutoPad::SameUpper {
-                    pads_begin[i] = pad_needed / 2;
-                    pads_end[i] = pad_needed - pads_begin[i];
-                } else {
-                    pads_end[i] = pad_needed / 2;
-                    pads_begin[i] = pad_needed - pads_end[i];
-                }
-            }
-        }
+        // Compute pads for the inner conv using shared helper.
+        let (pads_begin, pads_end) = calc_begin_and_end_pads(
+            self.auto_pad.clone(),
+            &self.pads,
+            &self.kernel_shape,
+            &self.strides,
+            &self.dilations,
+            input_shape,
+        );
 
         for i in 0..spatial_rank {
             let in_i = spatial_input[i];
@@ -390,7 +315,7 @@ impl Layer for ConvLayer {
         w_dims.push(self.out_features);
         w_dims.push(self.in_features);
         for &k in &self.kernel_shape {
-            w_dims.push(k as i64);
+            w_dims.push(k);
         }
         tensors.push(TensorDesc::new(w_dims, DataType::Float));
 
