@@ -386,7 +386,7 @@ impl Gpu {
         unsafe {
             // ensure the shader byte length is a multiple of 4 (SPIR-V is in 32-bit words)
             if !shader_code.len().is_multiple_of(4) {
-                return Err(VKMLError::Generic(
+                return Err(VKMLError::Vulkan(
                     "shader byte length must be a multiple of 4".to_string(),
                 ));
             }

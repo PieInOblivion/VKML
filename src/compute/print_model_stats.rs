@@ -253,7 +253,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
         .model
         .layers
         .get(&layer_id)
-        .ok_or(VKMLError::VulkanError(format!(
+        .ok_or(VKMLError::ComputeManager(format!(
             "Layer ID {} not found",
             layer_id
         )))?;

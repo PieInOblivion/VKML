@@ -36,7 +36,7 @@ impl Layer for InputLayer {
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         // Input layers ignore input_shapes since they're entry points
         if !input_shapes.is_empty() {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "InputBuffer expects 0 inputs, got {}",
                 input_shapes.len()
             )));

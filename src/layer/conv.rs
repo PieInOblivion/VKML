@@ -67,7 +67,7 @@ impl Layer for ConvLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Conv layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -78,7 +78,7 @@ impl Layer for ConvLayer {
         // Expect input tensor of shape [N, C, D1, D2, ..., Dn]
         let ndim = input_shape.ndim();
         if ndim < 3 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Conv requires input tensor with at least 3 dims (N,C,spatial...), got {:?}",
                 input_shape
             )));
@@ -91,7 +91,7 @@ impl Layer for ConvLayer {
         let input_dims = input_shape.dims();
         let in_channels = input_dims[1];
         if input_dims[1] != self.in_features {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Conv expected {} input channels, got {}",
                 self.in_features, in_channels
             )));
@@ -287,16 +287,14 @@ impl Layer for ConvLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanError(
-                "Conv layer requires an input".to_string(),
-            ));
+            return Err(VKMLError::Layer("Conv layer requires an input".to_string()));
         }
 
         let input_shape = input_shapes[0];
 
         // support N x C x D1 x D2 ... Dn
         if input_shape.ndim() < 3 {
-            return Err(VKMLError::VulkanError(
+            return Err(VKMLError::Layer(
                 "Conv layer expects at least 3D tensor input".into(),
             ));
         }
@@ -304,7 +302,7 @@ impl Layer for ConvLayer {
         let input_dims = input_shape.dims();
         let in_channels = input_dims[1];
         if in_channels != self.in_features {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Conv layer expects {} input channels, got {}",
                 self.in_features, in_channels
             )));

@@ -80,7 +80,7 @@ fn organise_chain_into_layers(
 pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<ExecutionPlan, VKMLError> {
     let tensor_graph = &compute_manager.tensor_graph;
     if tensor_graph.operations.is_empty() {
-        return Err(VKMLError::Generic(
+        return Err(VKMLError::GraphScheduler(
             "Scheduler cannot execute an empty graph".into(),
         ));
     }
@@ -242,7 +242,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     }
 
     if root_chunks.is_empty() {
-        return Err(VKMLError::Generic(
+        return Err(VKMLError::GraphScheduler(
             "Execution plan contains no root chunks".into(),
         ));
     }

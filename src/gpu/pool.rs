@@ -56,14 +56,14 @@ impl GpuPool {
 
                 for &idx in selected_set.iter() {
                     if idx >= physical_devices.len() {
-                        return Err(VKMLError::Generic(format!(
+                        return Err(VKMLError::GpuPool(format!(
                             "Selected GPU index {} out of range",
                             idx
                         )));
                     }
 
                     if !seen.insert(idx) {
-                        return Err(VKMLError::Generic(format!(
+                        return Err(VKMLError::GpuPool(format!(
                             "Duplicate GPU index {} in selection",
                             idx
                         )));

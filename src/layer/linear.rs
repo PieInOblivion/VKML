@@ -35,7 +35,7 @@ impl Layer for LinearLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Linear layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -45,7 +45,7 @@ impl Layer for LinearLayer {
 
         // Check if it's a 2D tensor (batch, features)
         if input_shape.ndim() != 2 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Linear layer requires matrix input, got tensor with {} dimensions",
                 input_shape.ndim()
             )));
@@ -53,7 +53,7 @@ impl Layer for LinearLayer {
 
         let cols = input_shape.dims()[1];
         if cols != self.in_features {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Linear layer expected {} input features, got {}",
                 self.in_features, cols
             )));
@@ -110,7 +110,7 @@ impl Layer for LinearLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanError(
+            return Err(VKMLError::Layer(
                 "LinearLayer requires at least one input".to_string(),
             ));
         }
@@ -118,14 +118,12 @@ impl Layer for LinearLayer {
         let input_shape = input_shapes[0]; // Use the first input shape
 
         if input_shape.ndim() != 2 {
-            return Err(VKMLError::VulkanError(
-                "Linear layer expects matrix input".into(),
-            ));
+            return Err(VKMLError::Layer("Linear layer expects matrix input".into()));
         }
 
         let cols = input_shape.dims()[1];
         if cols != self.in_features {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Linear layer expects {} input features, got {}",
                 self.in_features, cols
             )));

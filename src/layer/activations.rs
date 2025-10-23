@@ -45,7 +45,7 @@ impl Layer for ActivationLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() != 1 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Activation layer requires exactly 1 input, got {}",
                 input_shapes.len()
             )));
@@ -79,7 +79,7 @@ impl Layer for ActivationLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.is_empty() {
-            return Err(VKMLError::VulkanError(
+            return Err(VKMLError::Layer(
                 "Activation layer requires an input".to_string(),
             ));
         }

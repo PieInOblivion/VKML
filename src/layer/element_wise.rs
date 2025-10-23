@@ -43,7 +43,7 @@ impl Layer for ElementWiseLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<Vec<TensorDesc>, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Element-wise operation requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -53,7 +53,7 @@ impl Layer for ElementWiseLayer {
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
             if shape.dims() != first_shape.dims() {
-                return Err(VKMLError::VulkanError(format!(
+                return Err(VKMLError::Layer(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
                     first_shape.dims(),
                     shape.dims()
@@ -79,7 +79,7 @@ impl Layer for ElementWiseLayer {
         input_shapes: &[&TensorDesc],
     ) -> Result<LayerExecution, VKMLError> {
         if input_shapes.len() < 2 {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::Layer(format!(
                 "Element-wise operation requires at least 2 inputs, got {}",
                 input_shapes.len()
             )));
@@ -89,7 +89,7 @@ impl Layer for ElementWiseLayer {
         let first_shape = input_shapes[0];
         for shape in &input_shapes[1..] {
             if shape.dims() != first_shape.dims() {
-                return Err(VKMLError::VulkanError(format!(
+                return Err(VKMLError::Layer(format!(
                     "Element-wise operations require matching dimensions: {:?} vs {:?}",
                     first_shape.dims(),
                     shape.dims()

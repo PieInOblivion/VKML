@@ -98,7 +98,7 @@ impl OnnxParser {
             .iter()
             .map(|name| {
                 tensor_map.get(name).copied().ok_or_else(|| {
-                    VKMLError::OnnxImporterError(format!(
+                    VKMLError::OnnxImporter(format!(
                         "Input tensor '{}' not found for operation '{}'",
                         name, onnx_op.name
                     ))
@@ -111,7 +111,7 @@ impl OnnxParser {
             .iter()
             .map(|name| {
                 tensor_map.get(name).copied().ok_or_else(|| {
-                    VKMLError::OnnxImporterError(format!(
+                    VKMLError::OnnxImporter(format!(
                         "Output tensor '{}' not found for operation '{}'",
                         name, onnx_op.name
                     ))
@@ -169,7 +169,7 @@ impl OnnxParser {
             "Concat" => {
                 let axis = if let Some(a) = attributes.get("axis") {
                     attr_to_int(a).ok_or_else(|| {
-                        VKMLError::OnnxImporterError(
+                        VKMLError::OnnxImporter(
                             "Concat: 'axis' attribute must be an int".to_string(),
                         )
                     })? as usize
@@ -186,7 +186,7 @@ impl OnnxParser {
                     .expect("Reshape parameter tensor missing");
 
                 if !raw.len().is_multiple_of(8) {
-                    return Err(VKMLError::OnnxImporterError(format!(
+                    return Err(VKMLError::OnnxImporter(format!(
                         "Reshape: shape initializer has invalid raw byte length {}",
                         raw.len()
                     )));
@@ -304,7 +304,7 @@ impl OnnxParser {
                             }
                             Some(v)
                         } else {
-                            return Err(VKMLError::OnnxImporterError(
+                            return Err(VKMLError::OnnxImporter(
                                 "ReduceMean: axes initializer has invalid length".to_string(),
                             ));
                         }
@@ -390,18 +390,18 @@ impl OnnxParser {
                 // pads: only allowed when auto_pad == NOTSET
                 if let Some(val) = attributes.get("pads") {
                     if auto_pad_val != AutoPad::NotSet {
-                        return Err(VKMLError::OnnxImporterError(
+                        return Err(VKMLError::OnnxImporter(
                             "Conv: 'pads' and 'auto_pad' cannot be used together".to_string(),
                         ));
                     }
                     if let Some(pv) = attr_to_vec(val) {
                         if pv.iter().any(|x| *x < 0) {
-                            return Err(VKMLError::OnnxImporterError(
+                            return Err(VKMLError::OnnxImporter(
                                 "Pads must be non-negative for Conv operation".to_string(),
                             ));
                         }
                         if pv.len() % 2 != 0 {
-                            return Err(VKMLError::OnnxImporterError(
+                            return Err(VKMLError::OnnxImporter(
                                 "Invalid 'pads' attribute length for Conv operation".to_string(),
                             ));
                         }
@@ -428,7 +428,7 @@ impl OnnxParser {
                     strides,
                 ))
             }
-            unsupported => Err(VKMLError::OnnxImporterError(format!(
+            unsupported => Err(VKMLError::OnnxImporter(format!(
                 "Operation '{}' is not implemented",
                 unsupported
             ))),

@@ -234,21 +234,21 @@ fn create_gpu_chunk_command_buffer(
             .get_device()
             .allocate_command_buffers(&alloc_info)
             .map_err(|err| {
-                VKMLError::VulkanError(format!(
+                VKMLError::Vulkan(format!(
                     "Failed to allocate command buffer for chunk on GPU {}: {}",
                     gpu_idx, err
                 ))
             })?;
 
         let command_buffer = buffers.into_iter().next().ok_or_else(|| {
-            VKMLError::VulkanError(format!(
+            VKMLError::Vulkan(format!(
                 "No command buffer returned for chunk on GPU {}",
                 gpu_idx
             ))
         })?;
 
         gpu.begin_command_buffer(command_buffer).map_err(|err| {
-            VKMLError::VulkanError(format!(
+            VKMLError::Vulkan(format!(
                 "Failed to begin command buffer for GPU {}: {}",
                 gpu_idx, err
             ))
@@ -262,7 +262,7 @@ fn create_gpu_chunk_command_buffer(
                 instruction
                     .record_into_command_buffer(gpu, command_buffer, compute_manager)
                     .map_err(|err| {
-                        VKMLError::VulkanError(format!(
+                        VKMLError::Vulkan(format!(
                             "Failed to record commands for op {}: {}",
                             op_id, err
                         ))
@@ -276,7 +276,7 @@ fn create_gpu_chunk_command_buffer(
         }
 
         gpu.end_command_buffer(command_buffer).map_err(|err| {
-            VKMLError::VulkanError(format!(
+            VKMLError::Vulkan(format!(
                 "Failed to end command buffer for GPU {}: {}",
                 gpu_idx, err
             ))

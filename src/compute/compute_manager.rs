@@ -72,7 +72,7 @@ impl ComputeManager {
             + manager.cpu.memory_tracking.get_available();
 
         if total_memory > total_available {
-            return Err(VKMLError::Generic(format!(
+            return Err(VKMLError::ComputeManager(format!(
                 "Model requires {} bytes but only {} available",
                 total_memory, total_available
             )));
@@ -96,7 +96,7 @@ impl ComputeManager {
         assert!(batch_size > 0, "batch_size must be greater than 0");
 
         let onnx_model = OnnxModel::load_from_file(onnx_path).map_err(|e| {
-            VKMLError::OnnxImporterError(format!(
+            VKMLError::OnnxImporter(format!(
                 "Failed to load ONNX model from '{}': {}",
                 onnx_path, e
             ))
@@ -145,7 +145,7 @@ impl ComputeManager {
             + manager.cpu.memory_tracking.get_available();
 
         if total_memory > total_available {
-            return Err(VKMLError::Generic(format!(
+            return Err(VKMLError::ComputeManager(format!(
                 "Model requires {} bytes but only {} available",
                 total_memory, total_available
             )));
@@ -283,7 +283,7 @@ impl ComputeManager {
             let dev_idx = match chosen_device_idx {
                 Some(i) => i,
                 None => {
-                    return Err(VKMLError::Generic(format!(
+                    return Err(VKMLError::ComputeManager(format!(
                         "Operation {:?} cannot fit on any device during planning",
                         op_id
                     )));
@@ -529,7 +529,7 @@ impl ComputeManager {
                 self.cpu.memory_tracking.allocate(size_in_bytes);
                 if let Some(boxed) = init_box {
                     if boxed.len() != desc.size_in_bytes() {
-                        return Err(VKMLError::Generic(format!(
+                        return Err(VKMLError::ComputeManager(format!(
                             "Initialiser size mismatch for tensor: expected {} got {}",
                             desc.size_in_bytes(),
                             boxed.len()
@@ -546,7 +546,7 @@ impl ComputeManager {
 
                 if let Some(boxed) = init_box {
                     if boxed.len() != desc.size_in_bytes() {
-                        return Err(VKMLError::Generic(format!(
+                        return Err(VKMLError::ComputeManager(format!(
                             "Initialiser size mismatch for tensor: expected {} got {}",
                             desc.size_in_bytes(),
                             boxed.len()
@@ -557,7 +557,7 @@ impl ComputeManager {
                 } else {
                     let gpu_mem = gpu
                         .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
-                        .map_err(|e| VKMLError::VulkanError(e.to_string()))?;
+                        .map_err(|e| VKMLError::Vulkan(e.to_string()))?;
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 }
             }
@@ -568,7 +568,7 @@ impl ComputeManager {
         let input_tensor_ids = self.tensor_graph.get_input_tensor_ids();
 
         if batches.len() != input_tensor_ids.len() {
-            return Err(VKMLError::VulkanError(format!(
+            return Err(VKMLError::ComputeManager(format!(
                 "Expected {} input batches, got {}",
                 input_tensor_ids.len(),
                 batches.len()
@@ -582,7 +582,7 @@ impl ComputeManager {
                 .desc
                 .size_in_bytes();
             if batch.buffer.len_bytes() != expected_bytes {
-                return Err(VKMLError::VulkanError(format!(
+                return Err(VKMLError::ComputeManager(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
                     batch_idx,
                     batch.buffer.len_bytes(),
