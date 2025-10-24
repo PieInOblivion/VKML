@@ -424,12 +424,6 @@ impl ComputeManager {
             }
         }
 
-        // Ensure initialisers matches the new tensor count by extending with None for newly added tensors
-        let mut initialisers = initialisers;
-        if initialisers.len() < self.tensor_graph.tensor_descs.len() {
-            initialisers.resize(self.tensor_graph.tensor_descs.len(), None);
-        }
-
         // 2. Rebuild operations list by interleaving transfer ops before their target op
         //    and applying remaps immediately
         let original_ops = std::mem::take(&mut self.tensor_graph.operations);
