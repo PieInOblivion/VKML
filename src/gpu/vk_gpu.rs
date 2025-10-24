@@ -250,7 +250,7 @@ impl Gpu {
         }
     }
 
-    pub fn move_to_gpu(&self, bytes: &[u8]) -> GPUMemory {
+    pub fn move_to_gpu(&self, bytes: Box<[u8]>) -> GPUMemory {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
 

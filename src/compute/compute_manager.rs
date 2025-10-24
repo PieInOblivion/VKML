@@ -546,7 +546,7 @@ impl ComputeManager {
                             boxed.len()
                         )));
                     }
-                    let gpu_mem = gpu.move_to_gpu(&boxed);
+                    let gpu_mem = gpu.move_to_gpu(boxed);
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else {
                     let gpu_mem = gpu
