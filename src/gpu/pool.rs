@@ -81,7 +81,7 @@ impl GpuPool {
                 init_gpus.sort_by_key(|gpu| {
                     (
                         gpu.device_type() != vk::PhysicalDeviceType::DISCRETE_GPU,
-                        std::cmp::Reverse(gpu.total_memory()),
+                        std::cmp::Reverse(gpu.memory_total()),
                     )
                 });
             }
@@ -111,11 +111,17 @@ impl std::fmt::Debug for GpuPool {
             .iter()
             .map(|g| {
                 format!(
-                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, coop_matrix: {:?} }}",
+                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, memory_in_use: {}, memory_in_use_as_percent: {:.2}%, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, coop_matrix: {:?} }}",
                     g.name(),
                     g.device_type(),
                     g.has_compute(),
                     g.memory_available(),
+                    g.memory_usage(),
+                    if g.memory_total() == 0 {
+                        0.0
+                    } else {
+                        (g.memory_usage() as f64 / g.memory_total() as f64) * 100.0
+                    },
                     g.max_workgroup_count(),
                     g.max_workgroup_size(),
                     g.max_workgroup_invocations(),

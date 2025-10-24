@@ -67,7 +67,7 @@ impl ComputeManager {
             .gpus
             .gpus()
             .iter()
-            .map(|gpu| gpu.available_memory())
+            .map(|gpu| gpu.memory_available())
             .sum::<u64>()
             + manager.cpu.memory_tracking.get_available();
 
@@ -140,7 +140,7 @@ impl ComputeManager {
             .gpus
             .gpus()
             .iter()
-            .map(|gpu| gpu.available_memory())
+            .map(|gpu| gpu.memory_available())
             .sum::<u64>()
             + manager.cpu.memory_tracking.get_available();
 
@@ -212,7 +212,7 @@ impl ComputeManager {
         // Track available memory per device in the desired order (GPUs then CPU)
         let mut available_memory: Vec<(DeviceId, u64)> = Vec::new();
         for (idx, gpu) in self.gpus.gpus().iter().enumerate() {
-            available_memory.push((DeviceId::Gpu(idx), gpu.available_memory()));
+            available_memory.push((DeviceId::Gpu(idx), gpu.memory_available()));
         }
         available_memory.push((DeviceId::Cpu, self.cpu.memory_tracking.get_available()));
 
@@ -680,8 +680,8 @@ impl ComputeManager {
         for (i, gpu) in self.gpus.gpus().iter().enumerate() {
             result.push((
                 format!("GPU {}", i),
-                self.format_memory_mb(gpu.total_memory() - gpu.available_memory()),
-                self.format_memory_mb(gpu.available_memory()),
+                self.format_memory_mb(gpu.memory_total() - gpu.memory_available()),
+                self.format_memory_mb(gpu.memory_available()),
             ));
         }
 

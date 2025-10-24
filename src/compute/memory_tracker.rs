@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct MemoryTracker {
     maximum: u64,
-    current: AtomicU64,
+    in_use: AtomicU64,
 }
 
 // This implementation doesn't require a mutable reference to update
@@ -12,12 +12,12 @@ impl MemoryTracker {
     pub fn new(maximum: u64) -> Self {
         Self {
             maximum,
-            current: AtomicU64::new(0),
+            in_use: AtomicU64::new(0),
         }
     }
 
     pub fn allocate(&self, size: u64) {
-        let prev = self.current.fetch_add(size, Ordering::Release);
+        let prev = self.in_use.fetch_add(size, Ordering::Release);
 
         if prev + size > self.maximum {
             panic!(
@@ -28,7 +28,7 @@ impl MemoryTracker {
     }
 
     pub fn get_current(&self) -> u64 {
-        self.current.load(Ordering::Acquire)
+        self.in_use.load(Ordering::Acquire)
     }
 
     pub fn get_available(&self) -> u64 {

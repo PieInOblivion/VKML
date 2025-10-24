@@ -146,28 +146,6 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
         }
     }
 
-    println!("\n=== ORIGINAL MODEL LAYER CONNECTIONS ===\n");
-
-    println!("\n=== TENSOR GRAPH SUMMARY ===\n");
-    println!("Total Tensors: {}", cm.tensors.len());
-    println!("Total Operations: {}", cm.tensor_graph.operations.len());
-    println!("Input Tensors: {}", cm.tensor_graph.input_tensor_ids.len());
-    println!(
-        "Output Tensors: {}",
-        cm.tensor_graph.output_tensor_ids.len()
-    );
-    println!("Execution Chunks: {}", plan.chunks.len());
-
-    let total_memory = cm.tensor_graph.memory_requirements;
-    println!(
-        "\nMemory Requirements: {}",
-        cm.format_memory_mb(total_memory as u64)
-    );
-
-    println!("{:-<100}", "");
-
-    println!("\n=== ORIGINAL MODEL LAYER CONNECTIONS ===\n");
-
     // Sort layer IDs for consistent output
     let mut layer_ids: Vec<_> = cm.model.layers.keys().cloned().collect();
     layer_ids.sort();
@@ -264,7 +242,12 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
 
     let total_memory = cm.tensor_graph.memory_requirements;
     println!(
-        "\nMemory Requirements: {}",
+        "\nTotal Memory Requirements: {}",
         cm.format_memory_mb(total_memory as u64)
     );
+
+    println!("\nMemory usage by device:");
+    for (device, used, avail) in cm.get_memory_usage_summary() {
+        println!("  {} - In use: {} - Available: {}", device, used, avail);
+    }
 }

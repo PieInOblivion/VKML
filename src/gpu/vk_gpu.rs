@@ -373,10 +373,6 @@ impl Gpu {
         }
     }
 
-    pub fn available_memory(&self) -> u64 {
-        self.memory_tracker.get_available()
-    }
-
     fn create_pipeline(
         &self,
         shader_code: &[u8],
@@ -570,12 +566,16 @@ impl Gpu {
         self.command_pool
     }
 
-    pub fn total_memory(&self) -> u64 {
+    pub fn memory_total(&self) -> u64 {
         self.memory_tracker.get_maximum()
     }
 
     pub fn memory_available(&self) -> u64 {
         self.memory_tracker.get_available()
+    }
+
+    pub fn memory_usage(&self) -> u64 {
+        self.memory_tracker.get_current()
     }
 
     pub fn name(&self) -> &str {
