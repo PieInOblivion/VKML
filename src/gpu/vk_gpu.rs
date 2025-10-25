@@ -250,7 +250,8 @@ impl Gpu {
         }
     }
 
-    // TODO: Change to DEVICE_LOCAL type
+    // TODO: Investigate marking tensors with 'needs_host_visability' in order to allocate to staging buffers
+    // then copy into allocations that are DEVICE_LOCAL only, removing HOST_VISIBLE and HOST_COHERENT
     pub fn move_to_gpu(&self, bytes: &[u8]) -> GPUMemory {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
@@ -276,7 +277,9 @@ impl Gpu {
 
             let memory_type = self.find_memory_type(
                 mem_requirements.memory_type_bits,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::DEVICE_LOCAL,
             );
 
             let alloc_info = vk::MemoryAllocateInfo {
@@ -309,7 +312,6 @@ impl Gpu {
         }
     }
 
-    // TODO: Change to DEVICE_LOCAL type
     pub fn allocate_uninitialised_gpu_memory(&self, bytes: usize) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
@@ -332,7 +334,9 @@ impl Gpu {
 
             let memory_type = self.find_memory_type(
                 mem_requirements.memory_type_bits,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::DEVICE_LOCAL,
             );
 
             let alloc_info = vk::MemoryAllocateInfo {
