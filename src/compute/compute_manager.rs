@@ -1,5 +1,5 @@
-use std::ptr;
 use std::sync::Arc;
+use std::{mem, ptr};
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
@@ -9,6 +9,7 @@ use crate::scheduler::{ExecutionPlan, create_execution_plan, execute_plan};
 use crate::tensor::TensorCell;
 use crate::tensor::{DeviceId, Tensor};
 use crate::utils::error::VKMLError;
+use crate::weight_initialiser::Initialiser;
 use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
@@ -114,7 +115,7 @@ impl ComputeManager {
 
     fn new_from_tensor_graph(
         tensor_graph: TensorGraph,
-        tensor_bytes: Vec<Option<Box<[u8]>>>,
+        initialisers: Vec<Initialiser<'static>>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
@@ -150,7 +151,7 @@ impl ComputeManager {
             )));
         }
 
-        manager.allocate_tensor_graph(tensor_bytes)?;
+        manager.allocate_tensor_graph(initialisers)?;
         Ok(manager)
     }
 
@@ -184,7 +185,7 @@ impl ComputeManager {
     //      - 'initialisers' would likely be an enum of Vec<Option<InitType>>, where init type is an instruction or Box<[u8]>
     fn allocate_tensor_graph(
         &mut self,
-        initialisers: Vec<Option<Box<[u8]>>>,
+        initialisers: Vec<Initialiser<'static>>,
     ) -> Result<(), VKMLError> {
         let dep_graph = self.tensor_graph.dependency_graph();
         let flattened_ops = &dep_graph.topological_order;
@@ -483,7 +484,7 @@ impl ComputeManager {
     fn allocate_tensors(
         &mut self,
         tensor_locations: Vec<Option<DeviceId>>,
-        mut initialisers: Vec<Option<Box<[u8]>>>,
+        mut initialisers: Vec<Initialiser<'static>>,
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
 
@@ -513,45 +514,55 @@ impl ComputeManager {
         &self,
         desc: &TensorDesc,
         target_device: &DeviceId,
-        init_box: Option<Box<[u8]>>,
+        initialiser: Initialiser<'static>,
     ) -> Result<Tensor, VKMLError> {
-        let size_in_bytes = desc.size_in_bytes() as u64;
+        let expected_size = desc.size_in_bytes();
 
         match target_device {
             DeviceId::Cpu => {
-                self.cpu.memory_tracking.allocate(size_in_bytes);
-                if let Some(boxed) = init_box {
-                    if boxed.len() != desc.size_in_bytes() {
-                        return Err(VKMLError::ComputeManager(format!(
-                            "Initialiser size mismatch for tensor: expected {} got {}",
-                            desc.size_in_bytes(),
-                            boxed.len()
-                        )));
-                    }
-                    Ok(Tensor::new_cpu(desc.clone(), boxed))
+                self.cpu.memory_tracking.allocate(expected_size as u64);
+
+                let buffer = if matches!(initialiser, Initialiser::None) {
+                    vec![0u8; expected_size].into_boxed_slice()
                 } else {
-                    let buf = vec![0u8; size_in_bytes as usize];
-                    Ok(Tensor::new_cpu(desc.clone(), buf.into()))
+                    initialiser.into_cpu_buffer()
+                };
+
+                if buffer.len() != expected_size {
+                    return Err(VKMLError::ComputeManager(format!(
+                        "Initialiser size mismatch: expected {} got {}",
+                        expected_size,
+                        buffer.len()
+                    )));
                 }
+
+                Ok(Tensor::new_cpu(desc.clone(), buffer))
             }
             DeviceId::Gpu(idx) => {
                 let gpu = &self.gpus.get_gpu(*idx);
 
-                if let Some(boxed) = init_box {
-                    if boxed.len() != desc.size_in_bytes() {
+                if matches!(initialiser, Initialiser::None) {
+                    let gpu_mem = gpu
+                        .allocate_uninitialised_gpu_memory(expected_size)
+                        .map_err(|e| VKMLError::Vulkan(e.to_string()))?;
+
+                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
+                } else if let Some(slice) = initialiser.as_slice() {
+                    if slice.len() != expected_size {
                         return Err(VKMLError::ComputeManager(format!(
-                            "Initialiser size mismatch for tensor: expected {} got {}",
-                            desc.size_in_bytes(),
-                            boxed.len()
+                            "Initialiser size mismatch: expected {} got {}",
+                            expected_size,
+                            slice.len()
                         )));
                     }
-                    let gpu_mem = gpu.move_to_gpu(boxed);
+
+                    let gpu_mem = gpu.move_to_gpu(slice);
+
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else {
-                    let gpu_mem = gpu
-                        .allocate_uninitialised_gpu_memory(size_in_bytes as usize)
-                        .map_err(|e| VKMLError::Vulkan(e.to_string()))?;
-                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
+                    Err(VKMLError::ComputeManager(
+                        "Unsupported initialiser type for GPU".to_string(),
+                    ))
                 }
             }
         }
@@ -710,14 +721,19 @@ impl ComputeManager {
 
 struct SingleAllocParams {
     index: usize,
-    initialisers_ptr: *mut Option<Box<[u8]>>,
+    initialisers_ptr: *mut Initialiser<'static>,
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
-    let init_box = unsafe { (*params.initialisers_ptr.add(params.index)).take() };
+    let initialiser = unsafe {
+        mem::replace(
+            &mut *params.initialisers_ptr.add(params.index),
+            Initialiser::None,
+        )
+    };
 
     let manager: &ComputeManager = unsafe { &*params.manager_ptr };
 
@@ -729,7 +745,7 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
             .unwrap_or(DeviceId::Cpu)
     };
 
-    let tensor = manager.allocate_tensor(desc, &target, init_box).unwrap();
+    let tensor = manager.allocate_tensor(desc, &target, initialiser).unwrap();
 
     unsafe {
         let slot = params.out_ptrs.add(params.index);

@@ -3,25 +3,26 @@ use crate::{
     tensor::TensorDesc,
     tensor_graph::{TensorGraph, TensorId},
     utils::{OnnxAutoPad, error::VKMLError},
+    weight_initialiser::Initialiser,
 };
-use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation};
-use std::collections::HashMap;
+use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, TensorData};
+use std::{borrow::Cow, collections::HashMap};
 
 /// Convert ONNX model to TensorGraph
 pub fn parse_onnx_model(
     onnx_model: OnnxModel,
     batch_size: i64,
-) -> Result<(TensorGraph, Vec<Option<Box<[u8]>>>), VKMLError> {
+) -> Result<(TensorGraph, Vec<Initialiser<'static>>), VKMLError> {
     let mut tensor_descs = Vec::new();
-    let mut tensor_bytes = Vec::new();
+    let mut initialisers = Vec::new();
     let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
     let mut tensor_name_to_id: HashMap<String, TensorId> = HashMap::new();
 
     let mut memory_requirements = 0;
 
     // Create tensors from ONNX model
-    for (name, onnx_tensor) in onnx_model.tensors {
-        let mut dims = onnx_tensor.shape.clone();
+    for (name, onnx_tensor) in onnx_model.tensors.into_iter() {
+        let mut dims = onnx_tensor.shape().to_vec();
 
         // Replace -1 in first dimension with batch_size
         if let Some(first) = dims.first_mut()
@@ -30,24 +31,36 @@ pub fn parse_onnx_model(
             *first = batch_size;
         }
 
-        let onnx_tensor_desc = TensorDesc::new(dims, onnx_tensor.data_type);
+        let onnx_tensor_desc = TensorDesc::new(dims, onnx_tensor.data_type());
         memory_requirements += onnx_tensor_desc.size_in_bytes();
 
         tensor_descs.push(onnx_tensor_desc.clone());
 
-        let tensor_opt = onnx_tensor.into_bytes().ok();
+        // Extract tensor data using into_data() for zero-copy
+        let initialiser = onnx_tensor
+            .into_data()
+            .ok()
+            .map(|data| match data {
+                TensorData::Raw(bytes) => Initialiser::Bytes(bytes),
+                TensorData::Numeric(cow) => match cow {
+                    Cow::Owned(vec) => Initialiser::OwnedVec(vec),
+                    Cow::Borrowed(slice) => Initialiser::Ref(slice),
+                },
+                TensorData::Strings(parts) => Initialiser::BytesVec(parts),
+            })
+            .unwrap_or(Initialiser::None);
 
-        tensor_bytes.push(tensor_opt);
+        initialisers.push(initialiser);
 
         tensor_name_to_id.insert(name.clone(), tensor_descs.len() - 1);
     }
 
     // Create operations from ONNX nodes; fail fast if an op isn't supported
     for onnx_op in &onnx_model.operations {
-        let instruction = Self::convert_onnx_operation_to_instruction(
+        let instruction = convert_onnx_operation_to_instruction(
             onnx_op,
             &tensor_name_to_id,
-            &tensor_bytes,
+            &initialisers,
             &tensor_descs,
         )?;
         operations.push(instruction);
@@ -79,14 +92,14 @@ pub fn parse_onnx_model(
             operation_to_layer,
             memory_requirements,
         },
-        tensor_bytes,
+        initialisers,
     ))
 }
 
 fn convert_onnx_operation_to_instruction(
     onnx_op: &OnnxOperation,
     tensor_map: &HashMap<String, TensorId>,
-    tensors: &[Option<Box<[u8]>>],
+    initialisers: &[Initialiser],
     tensor_descs: &[TensorDesc],
 ) -> Result<Box<dyn Instruction>, VKMLError> {
     // Resolve tensor names to IDs
@@ -176,8 +189,8 @@ fn convert_onnx_operation_to_instruction(
         }
         "Reshape" => {
             let shape_id = input_ids[1];
-            let raw = tensors[shape_id]
-                .as_ref()
+            let raw = initialisers[shape_id]
+                .as_slice()
                 .expect("Reshape parameter tensor missing");
 
             if !raw.len().is_multiple_of(8) {
@@ -273,7 +286,7 @@ fn convert_onnx_operation_to_instruction(
             // axes may be provided as second input (initializer). If present and has bytes, parse i64s
             let axes = if input_ids.len() >= 2 {
                 let axes_id = input_ids[1];
-                if let Some(raw) = &tensors[axes_id] {
+                if let Some(raw) = initialisers[axes_id].as_slice() {
                     if raw.len().is_multiple_of(8) {
                         let mut v = Vec::new();
                         for chunk in raw.chunks_exact(8) {
