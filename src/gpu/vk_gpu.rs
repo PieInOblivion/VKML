@@ -250,6 +250,7 @@ impl Gpu {
         }
     }
 
+    // TODO: Change to DEVICE_LOCAL type
     pub fn move_to_gpu(&self, bytes: Box<[u8]>) -> GPUMemory {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
@@ -308,6 +309,7 @@ impl Gpu {
         }
     }
 
+    // TODO: Change to DEVICE_LOCAL type
     pub fn allocate_uninitialised_gpu_memory(&self, bytes: usize) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
 use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
-use crate::importers::onnx_parser::OnnxParser;
 use crate::instruction;
+use crate::onnx_parser::parse_onnx_model;
 use crate::scheduler::{ExecutionPlan, create_execution_plan, execute_plan};
 use crate::tensor::TensorCell;
 use crate::tensor::{DeviceId, Tensor};
@@ -102,8 +102,7 @@ impl ComputeManager {
             ))
         })?;
 
-        let (tensor_graph, tensor_bytes) =
-            OnnxParser::parse_onnx_model(onnx_model, batch_size as i64)?;
+        let (tensor_graph, tensor_bytes) = parse_onnx_model(onnx_model, batch_size as i64)?;
 
         Self::new_from_tensor_graph(
             tensor_graph,

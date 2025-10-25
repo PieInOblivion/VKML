@@ -52,6 +52,7 @@ impl GPUMemory {
         Ok(())
     }
 
+    // TODO: Change to DEVICE_LOCAL type
     /// Read raw bytes from GPU memory.
     pub fn read_memory(&self) -> Result<Vec<u8>, VKMLError> {
         let mut output_data = vec![0u8; self.size as usize];
