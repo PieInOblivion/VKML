@@ -20,7 +20,7 @@ thiserror = "2"
 sys-info = "0.9"
 bytemuck = "1.23"
 zero-pool = "0.5"
-onnx-extractor = { git = "https://github.com/PieInOblivion/onnx-extractor.git" }
+onnx-extractor = "0.3"
 
 #[dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
