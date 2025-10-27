@@ -242,7 +242,7 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
 
     let total_memory = cm.tensor_graph.memory_requirements;
     println!(
-        "\nTotal Memory Requirements: {}",
+        "\nTotal Model Memory Requirements: {}",
         cm.format_memory_mb(total_memory as u64)
     );
 

@@ -173,7 +173,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
     println!("Exit points: {:?}", exit_points);
 
     println!("\nModel Summary:");
-    println!("Total Memory: {}", cm.format_memory_mb(total_memory));
+    println!("Total Model Memory: {}", cm.format_memory_mb(total_memory));
 
     println!("\nMemory Allocation:");
     for (device, used, available) in cm.get_memory_usage_summary() {
