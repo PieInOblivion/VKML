@@ -215,6 +215,28 @@ fn convert_onnx_operation_to_instruction(
                 allowzero,
             ))
         }
+        "Expand" => {
+            let shape_id = input_ids[1];
+            let raw = initialisers[shape_id]
+                .as_slice()
+                .expect("Expand shape tensor missing");
+
+            if !raw.len().is_multiple_of(8) {
+                return Err(VKMLError::OnnxImporter(format!(
+                    "Expand: shape initializer has invalid raw byte length {}",
+                    raw.len()
+                )));
+            }
+
+            let mut shape_vec: Vec<i64> = Vec::with_capacity(raw.len() / 8);
+            for chunk in raw.chunks_exact(8) {
+                let mut a = [0u8; 8];
+                a.copy_from_slice(chunk);
+                shape_vec.push(i64::from_le_bytes(a));
+            }
+
+            Ok(instruction::expand(input_ids[0], output_ids[0], shape_vec))
+        }
         "Shape" => {
             // optional attributes 'start' and 'end'
             let start = attributes.get("start").and_then(attr_to_int);

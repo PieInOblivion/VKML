@@ -6,6 +6,8 @@ mod conv;
 pub use conv::ConvInstruction;
 mod div;
 pub use div::DivInstruction;
+mod expand;
+pub use expand::ExpandInstruction;
 mod gemm;
 pub use gemm::GemmInstruction;
 mod gpu_operations;
@@ -87,6 +89,14 @@ pub fn conv(
 
 pub fn div(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(DivInstruction { src1, src2, dst })
+}
+
+pub fn expand(src: TensorId, dst: TensorId, shape: Vec<i64>) -> Box<dyn Instruction> {
+    Box::new(ExpandInstruction {
+        src,
+        dst,
+        shape_values: shape,
+    })
 }
 
 pub fn identity(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {

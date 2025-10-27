@@ -1,0 +1,29 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InSrc { float src[]; };
+layout(std430, binding = 1) buffer Out { float dst[]; };
+
+layout(push_constant) uniform PC {
+    uint rank;
+    uint pad;
+    uint total;
+    uint dims[8];
+    uint strides_src[8];
+} pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.total;
+    if (gid >= total) return;
+    uint idx = gid;
+    uint offSrc = 0;
+    for (int i = int(pc.rank) - 1; i >= 0; --i) {
+        uint d = pc.dims[i];
+        uint r = idx % d;
+        idx /= d;
+        offSrc += r * pc.strides_src[i];
+    }
+    dst[gid] = src[offSrc];
+}

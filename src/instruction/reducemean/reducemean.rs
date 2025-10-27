@@ -106,7 +106,8 @@ impl Instruction for ReduceMeanInstruction {
 
         // Select GPUOperation based on DataType trio (src,dst)
         let gpu_op = match (src_dtype, dst_dtype) {
-            (DataType::Float, DataType::Float) => GPUOperation::ReduceMean_F32,
+            (DataType::Float, DataType::Float) => GPUOperation::ReduceMean_F32_F32,
+            (DataType::Float16, DataType::Float16) => GPUOperation::ReduceMean_F16_F16,
             _ => {
                 return Err(VKMLError::Instruction(format!(
                     "GPU ReduceMean unimplemented for DataType src:{:?}, dst:{:?}",
