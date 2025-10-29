@@ -471,8 +471,22 @@ impl ComputeManager {
             .map(|opt| opt.expect("operation layer missing"))
             .collect();
 
-        // Now that planning is complete, actually allocate the tensors
-        self.allocate_tensors(tensor_locations, initialisers)?;
+        // Now that planning is complete, determine which tensors need to be host-visible.
+        // Inputs and outputs should remain host-visible so callers can read/write them.
+        let mut requires_host_visability = vec![false; self.tensor_graph.tensor_descs.len()];
+        for &id in self.tensor_graph.get_input_tensor_ids().iter() {
+            if id < requires_host_visability.len() {
+                requires_host_visability[id] = true;
+            }
+        }
+        for &id in self.tensor_graph.get_output_tensor_ids().iter() {
+            if id < requires_host_visability.len() {
+                requires_host_visability[id] = true;
+            }
+        }
+
+        // Now actually allocate the tensors, passing the host-visibility map.
+        self.allocate_tensors(tensor_locations, initialisers, &requires_host_visability)?;
 
         // Cache the dependency graph (recompute after we've modified operations)
         let new_dep_graph = self.tensor_graph.dependency_graph();
@@ -485,6 +499,7 @@ impl ComputeManager {
         &mut self,
         tensor_locations: Vec<Option<DeviceId>>,
         mut initialisers: Vec<Initialiser<'static>>,
+        requires_host_visability: &Vec<bool>,
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
 
@@ -498,6 +513,7 @@ impl ComputeManager {
                 manager_ptr: self as *const ComputeManager,
                 out_ptrs: out_ptr,
                 tensor_locations_ptr: tensor_locations.as_ptr(),
+                requires_host_vis_ptr: requires_host_visability.as_ptr(),
             })
             .collect();
 
@@ -515,6 +531,7 @@ impl ComputeManager {
         desc: &TensorDesc,
         target_device: &DeviceId,
         initialiser: Initialiser<'static>,
+        requires_host_vis: bool,
     ) -> Result<Tensor, VKMLError> {
         let expected_size = desc.size_in_bytes();
 
@@ -542,7 +559,8 @@ impl ComputeManager {
                 let gpu = &self.gpus.get_gpu(*idx);
 
                 if matches!(initialiser, Initialiser::None) {
-                    let gpu_mem = gpu.allocate_uninitialised_gpu_memory(expected_size, true)?;
+                    let gpu_mem =
+                        gpu.allocate_uninitialised_gpu_memory(expected_size, requires_host_vis)?;
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else if let Some(slice) = initialiser.as_slice() {
@@ -554,8 +572,11 @@ impl ComputeManager {
                         )));
                     }
 
-                    let gpu_mem = gpu.move_to_gpu_host_not_visible(slice)?;
-                    //let gpu_mem = gpu.move_to_gpu_host_visible(slice)?;
+                    let gpu_mem = if requires_host_vis {
+                        gpu.move_to_gpu_host_visible(slice)?
+                    } else {
+                        gpu.move_to_gpu_host_not_visible(slice)?
+                    };
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else {
@@ -724,6 +745,7 @@ struct SingleAllocParams {
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,
+    requires_host_vis_ptr: *const bool,
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
@@ -744,7 +766,12 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
             .unwrap_or(DeviceId::Cpu)
     };
 
-    let tensor = manager.allocate_tensor(desc, &target, initialiser).unwrap();
+    // Read requires_host_vis flag for this tensor from the shared array
+    let requires_host_vis = unsafe { *params.requires_host_vis_ptr.add(params.index) };
+
+    let tensor = manager
+        .allocate_tensor(desc, &target, initialiser, requires_host_vis)
+        .unwrap();
 
     unsafe {
         let slot = params.out_ptrs.add(params.index);
