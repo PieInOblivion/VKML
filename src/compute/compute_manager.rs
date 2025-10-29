@@ -208,6 +208,9 @@ impl ComputeManager {
 
         // Transfer operations to insert: (insert_before_op, transfer_instr)
         let mut transfer_operations: Vec<(OperationId, Box<dyn Instruction>)> = Vec::new();
+        // Also track the tensor id pairs (src, dst) for any scheduled transfers so we can
+        // mark them as host-visible later when building the requires_host_visability map.
+        let mut transfer_tensor_pairs: Vec<(usize, usize)> = Vec::new();
 
         // Track available memory per device in the desired order (GPUs then CPU)
         let mut available_memory: Vec<(DeviceId, u64)> = Vec::new();
@@ -343,6 +346,8 @@ impl ComputeManager {
                                 current_device.clone(),
                             );
                             transfer_operations.push((op_id, transfer_instr));
+                            // record src and dst tensor ids for host-visibility marking later
+                            transfer_tensor_pairs.push((tid, new_tensor_id));
 
                             tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
                             new_inputs.push(new_tensor_id);
@@ -482,6 +487,18 @@ impl ComputeManager {
         for &id in self.tensor_graph.get_output_tensor_ids().iter() {
             if id < requires_host_visability.len() {
                 requires_host_visability[id] = true;
+            }
+        }
+
+        // Any tensors involved in explicit transfer operations must be host-visible
+        // so we can map/read their contents during the transfer. Mark both source
+        // and destination tensor ids as requiring host visibility.
+        for (src, dst) in transfer_tensor_pairs.iter() {
+            if *src < requires_host_visability.len() {
+                requires_host_visability[*src] = true;
+            }
+            if *dst < requires_host_visability.len() {
+                requires_host_visability[*dst] = true;
             }
         }
 
