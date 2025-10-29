@@ -36,6 +36,7 @@ pub struct Gpu {
     max_compute_queue_count: u32,
     max_push_descriptors: u32,
     subgroup_size: u32, // eg: 32 for NVIDIA/Intel, 64 for AMD
+    host_visible_device_local_bytes: u64, // bytes available on the device that satisfy DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
 
     physical_device: vk::PhysicalDevice,
     compute_queue: vk::Queue,
@@ -159,6 +160,36 @@ impl Gpu {
             instance.get_physical_device_memory_properties2(physical_device, &mut memory_props2);
             let memory_properties = memory_props2.memory_properties;
 
+            // Compute how many bytes are available in memory types that are
+            // DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT.
+            let mut hv_dl_heap_indices = std::collections::HashSet::new();
+            for i in 0..memory_properties.memory_type_count {
+                let mem_type = memory_properties.memory_types[i as usize];
+                if mem_type
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+                    && mem_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+                    && mem_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
+                {
+                    hv_dl_heap_indices.insert(mem_type.heap_index as usize);
+                }
+            }
+
+            let mut hv_dl_bytes: u128 = 0;
+            for &heap_idx in hv_dl_heap_indices.iter() {
+                if vk_extensions.has_memory_budget() {
+                    hv_dl_bytes += budget_props.heap_budget[heap_idx] as u128;
+                } else {
+                    hv_dl_bytes += memory_properties.memory_heaps[heap_idx].size as u128;
+                }
+            }
+
+            let host_visible_device_local_bytes = hv_dl_bytes as u64;
+
             // Get the single compute queue
             let compute_queue = device.get_device_queue(queue_family_index, 0);
 
@@ -235,6 +266,7 @@ impl Gpu {
                 max_compute_queue_count,
                 max_push_descriptors: push_props.max_push_descriptors,
                 subgroup_size,
+                host_visible_device_local_bytes,
 
                 physical_device,
                 compute_queue,
@@ -524,11 +556,23 @@ impl Gpu {
                 .expect_msg("Failed to create staging buffer");
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
-            // NOTE: traditionally shouldn't use DEVICE_LOCAL flag. GPU requires REBAR support
-            let memory_type = self.find_memory_type(
-                mem_requirements.memory_type_bits,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
+            // Classic staging buffer design states that we give the memory to vulkan on the cpu side,
+            // then use that to transfer into the gpu memory.
+            // However if the device has enough memory that satisfies host visable, coherent and device local,
+            // such as rebar gpus, then we can put the staging buffer into the gpu itself.
+            // Idealy we wouldn't use stages at all if there is enough.
+            // Might resimplify and only support rebar devices in future.
+            let requested_properties = if self.host_visible_device_local_bytes
+                >= staging_size as u64
+            {
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::DEVICE_LOCAL
+            } else {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            };
+
+            let memory_type = self.find_memory_type(mem_requirements.memory_type_bits, requested_properties);
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
