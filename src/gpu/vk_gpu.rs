@@ -35,7 +35,7 @@ pub struct Gpu {
     max_shared_memory_size: u32,
     max_compute_queue_count: u32,
     max_push_descriptors: u32,
-    subgroup_size: u32, // eg: 32 for NVIDIA/Intel, 64 for AMD
+    subgroup_size: u32,                   // eg: 32 for NVIDIA/Intel, 64 for AMD
     host_visible_device_local_bytes: u64, // bytes available on the device that satisfy DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
 
     physical_device: vk::PhysicalDevice,
@@ -562,17 +562,17 @@ impl Gpu {
             // such as rebar gpus, then we can put the staging buffer into the gpu itself.
             // Idealy we wouldn't use stages at all if there is enough.
             // Might resimplify and only support rebar devices in future.
-            let requested_properties = if self.host_visible_device_local_bytes
-                >= staging_size as u64
-            {
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT
-                    | vk::MemoryPropertyFlags::DEVICE_LOCAL
-            } else {
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            };
+            let requested_properties =
+                if self.host_visible_device_local_bytes >= staging_size as u64 {
+                    vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::DEVICE_LOCAL
+                } else {
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+                };
 
-            let memory_type = self.find_memory_type(mem_requirements.memory_type_bits, requested_properties);
+            let memory_type =
+                self.find_memory_type(mem_requirements.memory_type_bits, requested_properties);
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
@@ -803,6 +803,10 @@ impl Gpu {
 
     pub fn subgroup_size(&self) -> u32 {
         self.subgroup_size
+    }
+
+    pub fn host_visible_device_local_bytes(&self) -> u64 {
+        self.host_visible_device_local_bytes
     }
 
     pub fn get_device(&self) -> &Device {
