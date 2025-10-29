@@ -524,12 +524,10 @@ impl Gpu {
                 .expect_msg("Failed to create staging buffer");
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
-            // NOTE: traditionally shouldn't use DEVICE_LOCAL flag. Needs testing
+            // NOTE: traditionally shouldn't use DEVICE_LOCAL flag. GPU requires REBAR support
             let memory_type = self.find_memory_type(
                 mem_requirements.memory_type_bits,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             );
 
             let alloc_info = vk::MemoryAllocateInfo {
