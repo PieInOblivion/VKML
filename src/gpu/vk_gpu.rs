@@ -562,6 +562,11 @@ impl Gpu {
             // such as rebar gpus, then we can put the staging buffer into the gpu itself.
             // Idealy we wouldn't use stages at all if there is enough.
             // Might resimplify and only support rebar devices in future.
+
+            // Might also limit it to a min of the supported 3 flags memory total or 5% total, likely requires
+            // a second magic number minimum or something though. This would allow us to use the typical 255mb limit of
+            // non-rebar gpus, but need to account for gpus where 255mb > 5% total, or where the limit could be 5mb and
+            // we should use cpu.
             let requested_properties =
                 if self.host_visible_device_local_bytes >= staging_size as u64 {
                     vk::MemoryPropertyFlags::HOST_VISIBLE
