@@ -27,15 +27,14 @@ impl GPUMemory {
     }
 
     /// Copy raw bytes into GPU memory.
-    pub fn copy_into(&self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn copy_into(&self, data: &[u8]) -> Result<(), VKMLError> {
         let data_size = data.len() as vk::DeviceSize;
 
         if data_size > self.size {
-            return Err(format!(
+            return Err(VKMLError::Vulkan(format!(
                 "Data size {} exceeds GPU buffer size {}",
                 data_size, self.size
-            )
-            .into());
+            )));
         }
 
         unsafe {

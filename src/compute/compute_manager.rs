@@ -542,9 +542,7 @@ impl ComputeManager {
                 let gpu = &self.gpus.get_gpu(*idx);
 
                 if matches!(initialiser, Initialiser::None) {
-                    let gpu_mem = gpu
-                        .allocate_uninitialised_gpu_memory(expected_size)
-                        .map_err(|e| VKMLError::Vulkan(e.to_string()))?;
+                    let gpu_mem = gpu.allocate_uninitialised_gpu_memory(expected_size, true)?;
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else if let Some(slice) = initialiser.as_slice() {
@@ -556,7 +554,8 @@ impl ComputeManager {
                         )));
                     }
 
-                    let gpu_mem = gpu.move_to_gpu(slice);
+                    let gpu_mem = gpu.move_to_gpu_host_not_visible(slice)?;
+                    //let gpu_mem = gpu.move_to_gpu_host_visible(slice)?;
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else {

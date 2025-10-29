@@ -3,7 +3,7 @@ use std::{
     ffi::{CString, c_void},
     ptr,
     sync::{
-        Arc, OnceLock, RwLock,
+        Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -41,6 +41,9 @@ pub struct Gpu {
     compute_queue: vk::Queue,
     memory_tracker: MemoryTracker,
     extensions: VkExtensions,
+
+    // staging buffer used for host -> device-only transfers
+    staging_buffer: OnceLock<Mutex<GPUMemory>>,
 
     // Drop order matters: fields drop top-to-bottom
     timeline_semaphore: OnceLock<vk::Semaphore>,
@@ -237,9 +240,11 @@ impl Gpu {
                 compute_queue,
                 memory_tracker: MemoryTracker::new(memory_budget),
                 extensions: vk_extensions,
+
+                staging_buffer: OnceLock::new(),
+
                 timeline_semaphore: OnceLock::new(),
                 next_semaphore_value: AtomicU64::new(1),
-
                 pipelines: RwLock::new(HashMap::new()),
                 descriptor_set_layouts,
                 pipeline_layouts,
@@ -250,14 +255,14 @@ impl Gpu {
         }
     }
 
-    // TODO: Investigate marking tensors with 'needs_host_visability' in order to allocate to staging buffers
-    // then copy into allocations that are DEVICE_LOCAL only, removing HOST_VISIBLE and HOST_COHERENT
-    pub fn move_to_gpu(&self, bytes: &[u8]) -> GPUMemory {
+    /// Move some raw bytes into a host-visible/coherent device allocation and return it.
+    /// The returned GPUMemory will be mappable by the CPU.
+    pub fn move_to_gpu_host_visible(&self, bytes: &[u8]) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
 
+        // host visible path create mappable buffer and copy directly
         unsafe {
-            // Create buffer for raw bytes
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
                 next: ptr::null(),
@@ -269,10 +274,7 @@ impl Gpu {
                 queue_family_indices: ptr::null(),
             };
 
-            let buffer = self
-                .device
-                .create_buffer(&buffer_info, None)
-                .expect_msg("Failed to create buffer");
+            let buffer = self.device.create_buffer(&buffer_info, None)?;
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
             let memory_type = self.find_memory_type(
@@ -289,30 +291,162 @@ impl Gpu {
                 memory_type_index: memory_type,
             };
 
-            let memory = self
-                .device
-                .allocate_memory(&alloc_info, None)
-                .expect_msg("Failed to allocate buffer memory");
-            self.device
-                .bind_buffer_memory(buffer, memory, 0)
-                .expect_msg("Failed to bind buffer memory");
+            let memory = self.device.allocate_memory(&alloc_info, None)?;
+            self.device.bind_buffer_memory(buffer, memory, 0)?;
 
             // Map memory and write raw bytes
-            let data_ptr = self
-                .device
-                .map_memory(memory, 0, size_in_bytes, vk::MemoryMapFlags::empty())
-                .expect_msg("Failed to map buffer memory") as *mut u8;
+            let data_ptr =
+                self.device
+                    .map_memory(memory, 0, size_in_bytes, vk::MemoryMapFlags::empty())?
+                    as *mut u8;
 
             // Copy the data
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len());
 
             self.device.unmap_memory(memory);
 
-            GPUMemory::new(buffer, memory, size_in_bytes, self.device.clone())
+            Ok(GPUMemory::new(
+                buffer,
+                memory,
+                size_in_bytes,
+                self.device.clone(),
+            ))
         }
     }
 
-    pub fn allocate_uninitialised_gpu_memory(&self, bytes: usize) -> Result<GPUMemory, VKMLError> {
+    /// Move raw bytes into a device-local-only allocation using the internal staging buffer
+    pub fn move_to_gpu_host_not_visible(&self, bytes: &[u8]) -> Result<GPUMemory, VKMLError> {
+        let size_in_bytes = bytes.len() as vk::DeviceSize;
+        self.memory_tracker.allocate(size_in_bytes);
+
+        // Device-local path: allocate a DEVICE_LOCAL buffer and copy into it using the staging buffer
+        unsafe {
+            let buffer_info = vk::BufferCreateInfo {
+                s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                next: ptr::null(),
+                flags: vk::BufferCreateFlags::empty(),
+                size: size_in_bytes,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 0,
+                queue_family_indices: ptr::null(),
+            };
+
+            let buffer = self.device.create_buffer(&buffer_info, None)?;
+            let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
+
+            let memory_type = self.find_memory_type(
+                mem_requirements.memory_type_bits,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            );
+
+            let alloc_info = vk::MemoryAllocateInfo {
+                s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+                next: ptr::null(),
+                allocation_size: mem_requirements.size,
+                memory_type_index: memory_type,
+            };
+
+            let memory = self.device.allocate_memory(&alloc_info, None)?;
+            self.device.bind_buffer_memory(buffer, memory, 0)?;
+
+            let dest = GPUMemory::new(buffer, memory, size_in_bytes, self.device.clone());
+
+            // Copy in chunks via staging buffer. Hold the staging mutex for the full transfer
+            // so other threads can't overwrite the staging buffer between chunk writes.
+            let staging_mutex = self.get_or_create_staging_buffer();
+            let staging_guard = staging_mutex.lock().unwrap();
+            let staging_size = staging_guard.size as usize;
+
+            let mut offset_usize = 0usize;
+
+            // single reusable fence for per-chunk waits
+            let fence_info = vk::FenceCreateInfo {
+                s_type: vk::StructureType::FENCE_CREATE_INFO,
+                next: ptr::null(),
+                flags: vk::FenceCreateFlags::empty(),
+            };
+
+            let fence = self.device.create_fence(&fence_info, None)?;
+
+            while offset_usize < bytes.len() {
+                let remaining = bytes.len() - offset_usize;
+                let chunk_size = std::cmp::min(staging_size, remaining);
+                let chunk = &bytes[offset_usize..offset_usize + chunk_size];
+
+                // copy into staging (maps and writes)
+                staging_guard.copy_into(chunk).map_err(|e| {
+                    VKMLError::Vulkan(format!("Failed to copy into staging buffer: {}", e))
+                })?;
+
+                // allocate a temporary command buffer and record a copy from staging -> dest
+                let alloc_info = vk::CommandBufferAllocateInfo {
+                    s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                    next: ptr::null(),
+                    command_pool: self.get_command_pool(),
+                    level: vk::CommandBufferLevel::PRIMARY,
+                    command_buffer_count: 1,
+                };
+
+                let buffers = self.device.allocate_command_buffers(&alloc_info)?;
+                let command_buffer = buffers.into_iter().next().ok_or_else(|| {
+                    VKMLError::Vulkan("No command buffer returned for staging copy".to_string())
+                })?;
+
+                self.begin_command_buffer(command_buffer)?;
+
+                let copy_region = vk::BufferCopy {
+                    src_offset: 0,
+                    dst_offset: offset_usize as vk::DeviceSize,
+                    size: chunk_size as vk::DeviceSize,
+                };
+
+                self.get_device().cmd_copy_buffer(
+                    command_buffer,
+                    staging_guard.buffer,
+                    dest.buffer,
+                    &[copy_region],
+                );
+
+                self.end_command_buffer(command_buffer)?;
+
+                // Submit and wait for completion
+                let submit_info = vk::SubmitInfo {
+                    s_type: vk::StructureType::SUBMIT_INFO,
+                    next: ptr::null(),
+                    wait_semaphore_count: 0,
+                    wait_semaphores: ptr::null(),
+                    wait_dst_stage_mask: ptr::null(),
+                    command_buffer_count: 1,
+                    command_buffers: &command_buffer,
+                    signal_semaphore_count: 0,
+                    signal_semaphores: ptr::null(),
+                };
+
+                // submit using the reusable fence
+                self.device
+                    .queue_submit(self.compute_queue, &[submit_info], fence)?;
+
+                // wait for this fence to be signalled, copy finished
+                self.device.wait_for_fences(&[fence], true, u64::MAX)?;
+
+                // reusable fence to unsignalled state
+                self.device.reset_fences(&[fence])?;
+
+                offset_usize += chunk_size;
+            }
+
+            Ok(dest)
+        }
+    }
+
+    /// Allocate uninitialised GPU memory. If requires_host_visability is true the allocation
+    /// will be host-visible/host-coherent (mappable). Otherwise it will be DEVICE_LOCAL only.
+    pub fn allocate_uninitialised_gpu_memory(
+        &self,
+        bytes: usize,
+        requires_host_visability: bool,
+    ) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
         self.memory_tracker.allocate(size_in_bytes);
 
@@ -332,12 +466,15 @@ impl Gpu {
 
             let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
 
-            let memory_type = self.find_memory_type(
-                mem_requirements.memory_type_bits,
+            let properties = if requires_host_visability {
                 vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT
-                    | vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            );
+                    | vk::MemoryPropertyFlags::DEVICE_LOCAL
+            } else {
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+            };
+
+            let memory_type = self.find_memory_type(mem_requirements.memory_type_bits, properties);
 
             let alloc_info = vk::MemoryAllocateInfo {
                 s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
@@ -357,6 +494,68 @@ impl Gpu {
                 self.device.clone(),
             ))
         }
+    }
+
+    /// Lazily create (and return) the staging buffer mutex. Staging buffer is host-visible and sized
+    /// to 5% of the tracked maximum memory.
+    pub fn get_or_create_staging_buffer(&self) -> &Mutex<GPUMemory> {
+        self.staging_buffer.get_or_init(|| unsafe {
+            // size: 5% of total memory
+            let staging_size = (self.memory_total() / 20) as usize;
+
+            // Account for the staging buffer in the memory tracker
+            self.memory_tracker.allocate(staging_size as vk::DeviceSize);
+
+            // Create a host-visible buffer usable as transfer source.
+            let buffer_info = vk::BufferCreateInfo {
+                s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                next: ptr::null(),
+                flags: vk::BufferCreateFlags::empty(),
+                size: staging_size as vk::DeviceSize,
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                queue_family_index_count: 0,
+                queue_family_indices: ptr::null(),
+            };
+
+            let buffer = self
+                .device
+                .create_buffer(&buffer_info, None)
+                .expect_msg("Failed to create staging buffer");
+            let mem_requirements = self.device.get_buffer_memory_requirements(buffer);
+
+            // NOTE: traditionally shouldn't use DEVICE_LOCAL flag. Needs testing
+            let memory_type = self.find_memory_type(
+                mem_requirements.memory_type_bits,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+            );
+
+            let alloc_info = vk::MemoryAllocateInfo {
+                s_type: vk::StructureType::MEMORY_ALLOCATE_INFO,
+                next: ptr::null(),
+                allocation_size: mem_requirements.size,
+                memory_type_index: memory_type,
+            };
+
+            let memory = self
+                .device
+                .allocate_memory(&alloc_info, None)
+                .expect_msg("Failed to allocate staging memory");
+            self.device
+                .bind_buffer_memory(buffer, memory, 0)
+                .expect_msg("Failed to bind staging buffer memory");
+
+            let staging = GPUMemory::new(
+                buffer,
+                memory,
+                staging_size as vk::DeviceSize,
+                self.device.clone(),
+            );
+
+            Mutex::new(staging)
+        })
     }
 
     pub fn find_memory_type(&self, type_filter: u32, properties: vk::MemoryPropertyFlags) -> u32 {
