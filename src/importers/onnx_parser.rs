@@ -6,13 +6,13 @@ use crate::{
     weight_initialiser::Initialiser,
 };
 use onnx_extractor::{AttributeValue, OnnxModel, OnnxOperation, TensorData};
-use std::{borrow::Cow, collections::HashMap};
+use std::collections::HashMap;
 
 /// Convert ONNX model to TensorGraph
 pub fn parse_onnx_model(
     onnx_model: OnnxModel,
     batch_size: i64,
-) -> Result<(TensorGraph, Vec<Initialiser<'static>>), VKMLError> {
+) -> Result<(TensorGraph, Vec<Initialiser>), VKMLError> {
     let mut tensor_descs = Vec::new();
     let mut initialisers = Vec::new();
     let mut operations: Vec<Box<dyn Instruction>> = Vec::new();
@@ -37,15 +37,13 @@ pub fn parse_onnx_model(
         tensor_descs.push(onnx_tensor_desc.clone());
 
         // Extract tensor data using into_data() for zero-copy
+        // Since we are the only holders of OnnxModel, Cow into_owned will not copy
         let initialiser = onnx_tensor
             .into_data()
             .ok()
             .map(|data| match data {
                 TensorData::Raw(bytes) => Initialiser::Bytes(bytes),
-                TensorData::Numeric(cow) => match cow {
-                    Cow::Owned(vec) => Initialiser::OwnedVec(vec),
-                    Cow::Borrowed(slice) => Initialiser::Ref(slice),
-                },
+                TensorData::Numeric(cow) => Initialiser::OwnedVec(cow.into_owned()),
                 TensorData::Strings(parts) => Initialiser::BytesVec(parts),
             })
             .unwrap_or(Initialiser::None);

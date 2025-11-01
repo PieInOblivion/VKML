@@ -115,7 +115,7 @@ impl ComputeManager {
 
     fn new_from_tensor_graph(
         tensor_graph: TensorGraph,
-        initialisers: Vec<Initialiser<'static>>,
+        initialisers: Vec<Initialiser>,
         gpus: GpuPool,
         cpu_memory_limit_bytes: Option<u64>,
     ) -> Result<Self, VKMLError> {
@@ -183,10 +183,7 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
     //      - 'initialisers' would likely be an enum of Vec<Option<InitType>>, where init type is an instruction or Box<[u8]>
-    fn allocate_tensor_graph(
-        &mut self,
-        initialisers: Vec<Initialiser<'static>>,
-    ) -> Result<(), VKMLError> {
+    fn allocate_tensor_graph(&mut self, initialisers: Vec<Initialiser>) -> Result<(), VKMLError> {
         let dep_graph = self.tensor_graph.dependency_graph();
         let flattened_ops = &dep_graph.topological_order;
 
@@ -515,7 +512,7 @@ impl ComputeManager {
     fn allocate_tensors(
         &mut self,
         tensor_locations: Vec<Option<DeviceId>>,
-        mut initialisers: Vec<Initialiser<'static>>,
+        mut initialisers: Vec<Initialiser>,
         requires_host_visability: &Vec<bool>,
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
@@ -547,7 +544,7 @@ impl ComputeManager {
         &self,
         desc: &TensorDesc,
         target_device: &DeviceId,
-        initialiser: Initialiser<'static>,
+        initialiser: Initialiser,
         requires_host_vis: bool,
     ) -> Result<Tensor, VKMLError> {
         let expected_size = desc.size_in_bytes();
@@ -758,7 +755,7 @@ impl ComputeManager {
 
 struct SingleAllocParams {
     index: usize,
-    initialisers_ptr: *mut Initialiser<'static>,
+    initialisers_ptr: *mut Initialiser,
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,

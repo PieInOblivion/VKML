@@ -1,27 +1,23 @@
 use onnx_extractor::Bytes;
 
-// TODO: Replace the current init_* instructions in /instructions
-
-pub enum Initialiser<'a> {
+pub enum Initialiser {
     None,
-    Ref(&'a [u8]),
     Bytes(Bytes),
     BytesVec(Vec<Bytes>),
     OwnedBox(Box<[u8]>),
     OwnedVec(Vec<u8>),
-    Constant(f32),
+    Constant(Vec<u8>),
     Xavier,
     Uniform(f32, f32),
     He,
 }
 
-impl<'a> Initialiser<'a> {
+impl Initialiser {
     pub fn as_slice(&self) -> Option<&[u8]> {
         match self {
             Initialiser::Bytes(bytes) => Some(bytes.as_ref()),
             Initialiser::OwnedBox(boxed) => Some(boxed.as_ref()),
             Initialiser::OwnedVec(vec) => Some(vec.as_ref()),
-            Initialiser::Ref(slice) => Some(*slice),
             _ => None,
         }
     }
@@ -40,7 +36,6 @@ impl<'a> Initialiser<'a> {
                 }
                 vec.into_boxed_slice()
             }
-            Initialiser::Ref(slice) => slice.to_vec().into_boxed_slice(),
             Initialiser::None => unreachable!("None case should mean caller makes vec set to 0"),
             _ => panic!("into_cpu_buffer called on non-data initialiser variant"),
         }

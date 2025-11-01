@@ -14,14 +14,6 @@ mod gpu_operations;
 pub use gpu_operations::GPUOperation;
 mod identity;
 pub use identity::IdentityInstruction;
-mod init_constant;
-pub use init_constant::InitConstantInstruction;
-mod init_he;
-pub use init_he::InitHeInstruction;
-mod init_uniform;
-pub use init_uniform::InitUniformInstruction;
-mod init_xavier;
-pub use init_xavier::InitXavierInstruction;
 mod instruction;
 pub use instruction::Instruction;
 mod matmul;
@@ -101,22 +93,6 @@ pub fn expand(src: TensorId, dst: TensorId, shape: Vec<i64>) -> Box<dyn Instruct
 
 pub fn identity(src: TensorId, dst: TensorId) -> Box<dyn Instruction> {
     Box::new(IdentityInstruction { src, dst })
-}
-
-pub fn init_constant(dst: TensorId, constant: Vec<u8>) -> Box<dyn Instruction> {
-    Box::new(InitConstantInstruction { dst, constant })
-}
-
-pub fn init_he(dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(InitHeInstruction { dst })
-}
-
-pub fn init_uniform(dst: TensorId, min: f32, max: f32) -> Box<dyn Instruction> {
-    Box::new(InitUniformInstruction { dst, min, max })
-}
-
-pub fn init_xavier(dst: TensorId) -> Box<dyn Instruction> {
-    Box::new(InitXavierInstruction { dst })
 }
 
 pub fn matmul(src1: TensorId, src2: TensorId, dst: TensorId) -> Box<dyn Instruction> {

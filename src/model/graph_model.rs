@@ -1,17 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    instruction::{self, Instruction},
-    layer::layer::Layer,
-    tensor::TensorDesc,
-    utils::error::VKMLError,
+    instruction::Instruction, layer::layer::Layer, tensor::TensorDesc, utils::error::VKMLError,
+    weight_initialiser::Initialiser,
 };
 
 use super::layer_connection::{LayerConnection, LayerId};
 
 pub struct GraphModel {
     pub batch_size: i64,
-    pub weight_init: Box<dyn Instruction>,
+    pub weight_init: Initialiser,
     pub layers: HashMap<LayerId, GraphModelLayer>,
     pub verified: Option<GraphVerifiedData>,
 }
@@ -35,13 +33,13 @@ impl GraphModel {
     pub fn new(batch_size: i64) -> Self {
         Self {
             batch_size,
-            weight_init: instruction::init_he(0),
+            weight_init: Initialiser::He,
             layers: HashMap::new(),
             verified: None,
         }
     }
 
-    pub fn new_with(batch_size: i64, weight_init: Box<dyn Instruction>) -> Self {
+    pub fn new_with(batch_size: i64, weight_init: Initialiser) -> Self {
         Self {
             batch_size,
             weight_init,
