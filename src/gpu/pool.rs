@@ -1,10 +1,11 @@
 use std::{collections::HashSet, ffi::CString, ptr, sync::Arc};
 
 use vulkanalia::{
-    Entry,
+    Entry, Instance,
     loader::{LIBRARY, LibloadingLoader},
     vk::{self, InstanceV1_0},
 };
+use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::{error::VKMLError, gpu::vk_gpu::Gpu, utils::expect_msg::ExpectMsg};
 
@@ -46,13 +47,12 @@ impl GpuPool {
 
             let physical_devices = instance.enumerate_physical_devices()?;
 
-            let mut init_gpus = Vec::new();
-
             // If selected is Some, iterate over those indices and validate them.
             // Otherwise initialise every physical device found.
-            if let Some(selected_set) = selected {
-                init_gpus.reserve_exact(selected_set.len());
+            let init_gpus = if let Some(selected_set) = selected {
+                // validate all indices before spawning any tasks
                 let mut seen = HashSet::new();
+                let mut validated_indices = Vec::with_capacity(selected_set.len());
 
                 for &idx in selected_set.iter() {
                     if idx >= physical_devices.len() {
@@ -69,22 +69,60 @@ impl GpuPool {
                         )));
                     }
 
-                    init_gpus.push(Gpu::new_shared(instance.clone(), physical_devices[idx])?);
-                }
-            } else {
-                init_gpus.reserve_exact(physical_devices.len());
-                for device in physical_devices {
-                    init_gpus.push(Gpu::new_shared(instance.clone(), device)?);
+                    validated_indices.push(idx);
                 }
 
+                let mut gpus = Vec::with_capacity(validated_indices.len());
+
+                let tasks: Vec<GpuInitParams> = validated_indices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &idx)| GpuInitParams {
+                        instance: instance.clone(),
+                        physical_device: physical_devices[idx],
+                        index: i,
+                        out_ptr: gpus.as_mut_ptr(),
+                    })
+                    .collect();
+
+                global_pool()
+                    .submit_batch_uniform(gpu_init_task, &tasks)
+                    .wait();
+
+                gpus.set_len(validated_indices.len());
+
+                gpus
+            } else {
+                let count = physical_devices.len();
+                let mut gpus = Vec::with_capacity(count);
+
+                let tasks: Vec<GpuInitParams> = physical_devices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &physical_device)| GpuInitParams {
+                        instance: instance.clone(),
+                        physical_device,
+                        index: i,
+                        out_ptr: gpus.as_mut_ptr(),
+                    })
+                    .collect();
+
+                global_pool()
+                    .submit_batch_uniform(gpu_init_task, &tasks)
+                    .wait();
+
+                gpus.set_len(count);
+
                 // Sort GPUs: discrete GPUs first, then by total memory (descending)
-                init_gpus.sort_by_key(|gpu| {
+                gpus.sort_by_key(|gpu| {
                     (
                         gpu.device_type() != vk::PhysicalDeviceType::DISCRETE_GPU,
                         std::cmp::Reverse(gpu.memory_total()),
                     )
                 });
-            }
+
+                gpus
+            };
 
             let gpus = Self {
                 gpus: init_gpus,
@@ -140,3 +178,20 @@ impl std::fmt::Debug for GpuPool {
             .finish()
     }
 }
+
+struct GpuInitParams {
+    instance: Arc<Instance>,
+    physical_device: vk::PhysicalDevice,
+    index: usize,
+    out_ptr: *mut Gpu,
+}
+
+zp_define_task_fn!(gpu_init_task, GpuInitParams, |params| {
+    let gpu = Gpu::new_shared(params.instance.clone(), params.physical_device)
+        .expect_msg("Failed to initialize GPU");
+
+    unsafe {
+        let slot = params.out_ptr.add(params.index);
+        ptr::write(slot, gpu);
+    }
+});
