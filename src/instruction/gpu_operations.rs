@@ -42,6 +42,10 @@ pub enum GPUOperation {
     MatMul1D3D_F32_F32_F32,
     MatMul2D2D_F16_F16_F16,
     MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
+    MatMul2D2D_F32_F32_F32_Tiled_4x4,
+    MatMul2D2D_F32_F32_F32_Tiled_8x8,
+    MatMul2D2D_F32_F32_F32_Tiled_16x16,
+    MatMul2D2D_F32_F32_F32_Tiled_32x32,
     InitXavier_F32,
     InitHe_F32,
     InitUniform_F32,
@@ -114,6 +118,18 @@ impl GPUOperation {
             GPUOperation::MatMul2D2D_F16_F16_F16 => "f16_f16_f16_matmul_2d_2d.spv",
             GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32 => {
                 "f16_f16_f16_matmul_2d_2d_coop_16_16_16_sg_32.spv"
+            }
+            GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4 => {
+                "f32_f32_f32_matmul_2d_2d_tiled_4x4.spv"
+            }
+            GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_8x8 => {
+                "f32_f32_f32_matmul_2d_2d_tiled_8x8.spv"
+            }
+            GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_16x16 => {
+                "f32_f32_f32_matmul_2d_2d_tiled_16x16.spv"
+            }
+            GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32 => {
+                "f32_f32_f32_matmul_2d_2d_tiled_32x32.spv"
             }
 
             GPUOperation::InitXavier_F32 => "f32_init_xavier.spv",

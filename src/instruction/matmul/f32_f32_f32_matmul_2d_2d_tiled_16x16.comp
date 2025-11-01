@@ -1,0 +1,77 @@
+#version 450
+
+// 16x16 workgroup (256 threads), 16x16 tile, 2KB shared memory
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; };
+layout(std430, binding = 1) buffer InBufferB { float b[]; };
+layout(std430, binding = 2) buffer OutBuffer { float c[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint m;
+    uint k;
+    uint n;
+    uint stride_a0;
+    uint stride_a1;
+    uint stride_b0;
+    uint stride_b1;
+    uint stride_c0;
+    uint stride_c1;
+} dims;
+
+shared float tileA[256];
+shared float tileB[256];
+
+void main() {
+    uint tile_row = gl_WorkGroupID.y;
+    uint tile_col = gl_WorkGroupID.x;
+
+    uint thread_row = gl_LocalInvocationID.y;
+    uint thread_col = gl_LocalInvocationID.x;
+
+    uint out_row = tile_row * 16 + thread_row;
+    uint out_col = tile_col * 16 + thread_col;
+
+    float acc = 0.0;
+
+    uint num_k_tiles = (dims.k + 15) / 16;
+
+    for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
+        uint k_offset = k_tile * 16;
+        if (k_offset >= dims.k) break;
+
+        // Load tiles using flat indexing (like F16 shader)
+        uint idx = thread_row * 16 + thread_col;
+
+        uint i = idx / 16;
+        uint j = idx % 16;
+
+        uint row_a = tile_row * 16 + i;
+        uint col_a = k_offset + j;
+        uint row_b = k_offset + i;
+        uint col_b = tile_col * 16 + j;
+
+        tileA[idx] = (row_a < dims.m && col_a < dims.k)
+                   ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
+                   : 0.0;
+
+        tileB[idx] = (row_b < dims.k && col_b < dims.n)
+                   ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
+                   : 0.0;
+
+        barrier();
+
+        // Unrolled inner loop for better performance
+        #pragma unroll 16
+        for (uint ki = 0; ki < 16; ki++) {
+            acc += tileA[thread_row * 16 + ki] * tileB[ki * 16 + thread_col];
+        }
+
+        barrier();
+    }
+
+    if (out_row < dims.m && out_col < dims.n) {
+        c[out_row * dims.stride_c0 + out_col * dims.stride_c1] = acc;
+    }
+}

@@ -458,6 +458,57 @@ fn execute_gpu_matmul(
         }
     }
 
+    // Optimized tiled shader for F32 2D×2D MatMul - select best variant
+    if operation == GPUOperation::MatMul2D2D_F32_F32_F32 {
+        let m = src1_dims[0] as u64;
+        let n = src2_dims[1] as u64;
+        let max_shmem = gpu.max_shared_memory_size();
+
+        // Tile size selection: [tile_size, threads, shmem_required_bytes, operation]
+        let variants = [
+            (32, [32, 32, 1], 8192, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32),
+            (16, [16, 16, 1], 2048, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_16x16),
+            (8, [8, 8, 1], 512, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_8x8),
+            (4, [4, 4, 1], 128, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4),
+        ];
+
+        // Select best tile size based on shared memory AND matrix dimensions
+        // Use both min and max dimensions to balance occupancy vs parallelism
+        let min_dim = m.min(n);
+        let max_dim = m.max(n);
+
+        for (tile_size, local_size, shmem_req, op) in variants {
+            if max_shmem >= shmem_req {
+                // Heuristic: check BOTH min and max dimensions
+                // - min_dim ensures we don't waste too many threads
+                // - max_dim ensures we have enough parallelism
+                let (min_threshold, max_threshold) = match tile_size {
+                    32 => (16, 256),    // Conservative: avoid 32×32 for thin matrices
+                    16 => (1, 32),      // Permissive: 16×16 works well even for m=1 if n is large
+                    8 => (1, 8),        // Small tiles work for most cases
+                    4 => (0, 0),        // 4×4 always works (fallback)
+                    _ => (u64::MAX, u64::MAX),
+                };
+
+                if min_dim >= min_threshold && max_dim >= max_threshold {
+                    // Use this variant
+                    let tiled_local_size = local_size;
+                    let binding_count = 3;
+
+                    gpu.bind_compute_pipeline(command_buffer, op, tiled_local_size, binding_count);
+                    gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
+                    gpu.bind_push_constants(command_buffer, binding_count, &push_constants_bytes);
+
+                    // Dispatch with work_size in terms of work items (threads), not workgroups
+                    gpu.dispatch(command_buffer, tiled_local_size, [n, m, 1]);
+
+                    return Ok(());
+                }
+            }
+        }
+        // else: Fall through to standard pipeline if insufficient shared memory for even 4x4
+    }
+
     // Standard pipeline path
     let binding_count = 3; // src1, src2, dst
     gpu.bind_compute_pipeline(command_buffer, operation, local_size, binding_count);

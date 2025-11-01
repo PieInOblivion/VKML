@@ -1,0 +1,77 @@
+#version 450
+
+// 8x8 workgroup (64 threads), 8x8 tile, 512 bytes shared memory
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; };
+layout(std430, binding = 1) buffer InBufferB { float b[]; };
+layout(std430, binding = 2) buffer OutBuffer { float c[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint m;
+    uint k;
+    uint n;
+    uint stride_a0;
+    uint stride_a1;
+    uint stride_b0;
+    uint stride_b1;
+    uint stride_c0;
+    uint stride_c1;
+} dims;
+
+shared float tileA[64];
+shared float tileB[64];
+
+void main() {
+    uint tile_row = gl_WorkGroupID.y;
+    uint tile_col = gl_WorkGroupID.x;
+
+    uint thread_row = gl_LocalInvocationID.y;
+    uint thread_col = gl_LocalInvocationID.x;
+
+    uint out_row = tile_row * 8 + thread_row;
+    uint out_col = tile_col * 8 + thread_col;
+
+    float acc = 0.0;
+
+    uint num_k_tiles = (dims.k + 7) / 8;
+
+    for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
+        uint k_offset = k_tile * 8;
+        if (k_offset >= dims.k) break;
+
+        // Load tiles using flat indexing
+        uint idx = thread_row * 8 + thread_col;
+
+        uint i = idx / 8;
+        uint j = idx % 8;
+
+        uint row_a = tile_row * 8 + i;
+        uint col_a = k_offset + j;
+        uint row_b = k_offset + i;
+        uint col_b = tile_col * 8 + j;
+
+        tileA[idx] = (row_a < dims.m && col_a < dims.k)
+                   ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
+                   : 0.0;
+
+        tileB[idx] = (row_b < dims.k && col_b < dims.n)
+                   ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
+                   : 0.0;
+
+        barrier();
+
+        // Unrolled inner loop for better performance
+        #pragma unroll 8
+        for (uint ki = 0; ki < 8; ki++) {
+            acc += tileA[thread_row * 8 + ki] * tileB[ki * 8 + thread_col];
+        }
+
+        barrier();
+    }
+
+    if (out_row < dims.m && out_col < dims.n) {
+        c[out_row * dims.stride_c0 + out_col * dims.stride_c1] = acc;
+    }
+}
