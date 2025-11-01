@@ -1,7 +1,6 @@
 pub mod bytes;
 pub mod error;
 pub mod expect_msg;
-pub mod math;
 pub mod vk_to_onnx_dtype;
 
 pub mod onnx_autopad;
