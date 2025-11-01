@@ -466,10 +466,30 @@ fn execute_gpu_matmul(
 
         // Tile size selection: [tile_size, threads, shmem_required_bytes, operation]
         let variants = [
-            (32, [32, 32, 1], 8192, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32),
-            (16, [16, 16, 1], 2048, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_16x16),
-            (8, [8, 8, 1], 512, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_8x8),
-            (4, [4, 4, 1], 128, GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4),
+            (
+                32,
+                [32, 32, 1],
+                8192,
+                GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32,
+            ),
+            (
+                16,
+                [16, 16, 1],
+                2048,
+                GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_16x16,
+            ),
+            (
+                8,
+                [8, 8, 1],
+                512,
+                GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_8x8,
+            ),
+            (
+                4,
+                [4, 4, 1],
+                128,
+                GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4,
+            ),
         ];
 
         // Select best tile size based on shared memory AND matrix dimensions
@@ -483,10 +503,10 @@ fn execute_gpu_matmul(
                 // - min_dim ensures we don't waste too many threads
                 // - max_dim ensures we have enough parallelism
                 let (min_threshold, max_threshold) = match tile_size {
-                    32 => (16, 256),    // Conservative: avoid 32×32 for thin matrices
-                    16 => (1, 32),      // Permissive: 16×16 works well even for m=1 if n is large
-                    8 => (1, 8),        // Small tiles work for most cases
-                    4 => (0, 0),        // 4×4 always works (fallback)
+                    32 => (16, 256), // Conservative: avoid 32×32 for thin matrices
+                    16 => (1, 32),   // Permissive: 16×16 works well even for m=1 if n is large
+                    8 => (1, 8),     // Small tiles work for most cases
+                    4 => (0, 0),     // 4×4 always works (fallback)
                     _ => (u64::MAX, u64::MAX),
                 };
 
