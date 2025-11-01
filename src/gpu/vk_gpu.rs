@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{CString, c_void},
     ptr,
     sync::{
@@ -26,16 +26,12 @@ use super::gpu_memory::GPUMemory;
 use super::vk_extensions::VkExtensions;
 
 pub struct Gpu {
-    name: String,
-    device_type: vk::PhysicalDeviceType,
+    properties: vk::PhysicalDeviceProperties,
+    subgroup_properties: vk::PhysicalDeviceSubgroupProperties,
+    push_descriptor_properties: vk::PhysicalDevicePushDescriptorPropertiesKHR,
+
     has_compute: bool,
-    max_workgroup_count: [u32; 3],
-    max_workgroup_size: [u32; 3],
-    max_workgroup_invocations: u32,
-    max_shared_memory_size: u32,
     max_compute_queue_count: u32,
-    max_push_descriptors: u32,
-    subgroup_size: u32,                   // eg: 32 for NVIDIA/Intel, 64 for AMD
     host_visible_device_local_bytes: u64, // bytes available on the device that satisfy DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT
 
     physical_device: vk::PhysicalDevice,
@@ -137,7 +133,6 @@ impl Gpu {
 
             instance.get_physical_device_properties2(physical_device, &mut props2);
             let properties = props2.properties;
-            let subgroup_size = subgroup_properties.subgroup_size;
 
             // Memory properties, memory_budget if extension is available
             let mut budget_props = vk::PhysicalDeviceMemoryBudgetPropertiesEXT {
@@ -162,7 +157,7 @@ impl Gpu {
 
             // Compute how many bytes are available in memory types that are
             // DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT.
-            let mut hv_dl_heap_indices = std::collections::HashSet::new();
+            let mut hv_dl_heap_indices = HashSet::new();
             for i in 0..memory_properties.memory_type_count {
                 let mem_type = memory_properties.memory_types[i as usize];
                 if mem_type
@@ -214,16 +209,6 @@ impl Gpu {
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
 
-            let name = String::from_utf8_lossy(
-                &properties
-                    .device_name
-                    .iter()
-                    .take_while(|&&c| c != 0)
-                    .map(|&c| c as u8)
-                    .collect::<Vec<u8>>(),
-            )
-            .to_string();
-
             // Check compute capability
             let (has_compute, max_compute_queue_count) = queue_families
                 .iter()
@@ -256,16 +241,12 @@ impl Gpu {
             };
 
             Ok(Self {
-                name,
-                device_type: properties.device_type,
+                properties,
+                subgroup_properties,
+                push_descriptor_properties: push_props,
+
                 has_compute,
-                max_workgroup_count: properties.limits.max_compute_work_group_count,
-                max_workgroup_size: properties.limits.max_compute_work_group_size,
-                max_workgroup_invocations: properties.limits.max_compute_work_group_invocations,
-                max_shared_memory_size: properties.limits.max_compute_shared_memory_size,
                 max_compute_queue_count,
-                max_push_descriptors: push_props.max_push_descriptors,
-                subgroup_size,
                 host_visible_device_local_bytes,
 
                 physical_device,
@@ -807,7 +788,11 @@ impl Gpu {
     }
 
     pub fn subgroup_size(&self) -> u32 {
-        self.subgroup_size
+        self.subgroup_properties.subgroup_size
+    }
+
+    pub fn subgroup_supported_operations(&self) -> vk::SubgroupFeatureFlags {
+        self.subgroup_properties.supported_operations
     }
 
     pub fn host_visible_device_local_bytes(&self) -> u64 {
@@ -834,12 +819,21 @@ impl Gpu {
         self.memory_tracker.get_current()
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> String {
+        String::from_utf8_lossy(
+            &self
+                .properties
+                .device_name
+                .iter()
+                .take_while(|&&c| c != 0)
+                .map(|&c| c as u8)
+                .collect::<Vec<u8>>(),
+        )
+        .to_string()
     }
 
     pub fn device_type(&self) -> vk::PhysicalDeviceType {
-        self.device_type
+        self.properties.device_type
     }
 
     pub fn has_compute(&self) -> bool {
@@ -847,15 +841,15 @@ impl Gpu {
     }
 
     pub fn max_workgroup_count(&self) -> [u32; 3] {
-        self.max_workgroup_count
+        self.properties.limits.max_compute_work_group_count
     }
 
     pub fn max_workgroup_size(&self) -> [u32; 3] {
-        self.max_workgroup_size
+        self.properties.limits.max_compute_work_group_size
     }
 
     pub fn max_workgroup_invocations(&self) -> u32 {
-        self.max_workgroup_invocations
+        self.properties.limits.max_compute_work_group_invocations
     }
 
     pub fn max_compute_queue_count(&self) -> u32 {
@@ -863,11 +857,11 @@ impl Gpu {
     }
 
     pub fn max_shared_memory_size(&self) -> u32 {
-        self.max_shared_memory_size
+        self.properties.limits.max_compute_shared_memory_size
     }
 
     pub fn max_push_descriptors(&self) -> u32 {
-        self.max_push_descriptors
+        self.push_descriptor_properties.max_push_descriptors
     }
 
     pub fn get_instance(&self) -> Arc<Instance> {
@@ -908,8 +902,8 @@ impl Gpu {
     /// Calculate optimal workgroup size for 1D compute operations (element-wise ops)
     pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> [u32; 3] {
         optimal_workgroup_size(
-            self.max_workgroup_size,
-            self.max_workgroup_invocations,
+            self.max_workgroup_size(),
+            self.max_workgroup_invocations(),
             [Some(total_elements), None, None],
         )
     }
@@ -921,8 +915,8 @@ impl Gpu {
     /// Standard pattern: workgroup = [tile, tile], dispatch = [m/tile, n/tile, batch]
     pub fn optimal_workgroup_size_2d(&self, rows: u64, cols: u64) -> [u32; 3] {
         optimal_workgroup_size(
-            self.max_workgroup_size,
-            self.max_workgroup_invocations,
+            self.max_workgroup_size(),
+            self.max_workgroup_invocations(),
             [Some(rows), Some(cols), None],
         )
     }
@@ -930,8 +924,8 @@ impl Gpu {
     /// Calculate optimal workgroup size for 3D spatial operations (conv3d, maxpool3d)
     pub fn optimal_workgroup_size_3d(&self, x: u64, y: u64, z: u64) -> [u32; 3] {
         optimal_workgroup_size(
-            self.max_workgroup_size,
-            self.max_workgroup_invocations,
+            self.max_workgroup_size(),
+            self.max_workgroup_invocations(),
             [Some(x), Some(y), Some(z)],
         )
     }
