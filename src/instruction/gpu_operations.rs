@@ -24,6 +24,8 @@ pub enum GPUOperation {
     Sigmoid_F32_F32,
     Softmax_F32_F32,
     Softmax_F16_F16,
+    Softmax_F32_F32_SG_32,
+    Softmax_F32_F32_SG_64,
     Conv1D_F32_F32_F32_F32,
     Conv2D_F32_F32_F32_F32,
     Conv3D_F32_F32_F32_F32,
@@ -96,6 +98,8 @@ impl GPUOperation {
             GPUOperation::Sigmoid_F32_F32 => "f32_f32_sigmoid.spv",
             GPUOperation::Softmax_F32_F32 => "f32_f32_softmax.spv",
             GPUOperation::Softmax_F16_F16 => "f16_f16_softmax.spv",
+            GPUOperation::Softmax_F32_F32_SG_32 => "f32_f32_softmax_subgroup_sg_32.spv",
+            GPUOperation::Softmax_F32_F32_SG_64 => "f32_f32_softmax_subgroup_sg_64.spv",
 
             GPUOperation::Conv1D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv1d.spv",
             GPUOperation::Conv2D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv2d.spv",

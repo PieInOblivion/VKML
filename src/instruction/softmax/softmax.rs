@@ -95,6 +95,7 @@ impl Instruction for SoftmaxInstruction {
         // Choose operation based on data type
         let src_dtype = src_tensor.desc.data_type();
         let dst_dtype = dst_tensor.desc.data_type();
+
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::Softmax_F32_F32,
             (DataType::Float16, DataType::Float16) => GPUOperation::Softmax_F16_F16,
@@ -106,26 +107,57 @@ impl Instruction for SoftmaxInstruction {
             }
         };
 
-        // Choose an optimal local workgroup for per-batch parallelism
-        // We want one workgroup per batch; pick local_size sized to GPU limits
-        let mut local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
+        // Subgroup-optimized variant for F32 softmax
+        if gpu_op == GPUOperation::Softmax_F32_F32
+            && gpu
+                .subgroup_supported_operations()
+                .contains(vk::SubgroupFeatureFlags::ARITHMETIC)
+        {
+            let subgroup_size = gpu.subgroup_size();
 
-        // Clamp the X component to shader max local size x (256)
+            // Size workgroup as multiple of subgroup_size
+            let mut local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
+            local_size[0] = (local_size[0] / subgroup_size) * subgroup_size;
+            local_size[0] = local_size[0].max(subgroup_size).min(gpu.max_workgroup_invocations());
+
+            let binding_count = 2;
+
+            // Select shader based on subgroup size
+            let subgroup_op = match subgroup_size {
+                32 => GPUOperation::Softmax_F32_F32_SG_32,
+                64 => GPUOperation::Softmax_F32_F32_SG_64,
+                _ => {
+                    // Unsupported subgroup size, fall through to standard path
+                    gpu_op
+                }
+            };
+
+            if subgroup_op != gpu_op {
+                gpu.bind_compute_pipeline(command_buffer, subgroup_op, local_size, binding_count);
+                gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
+                gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
+
+                // work_size = total threads needed (batch_size workgroups * local_size[0] threads each)
+                gpu.dispatch(command_buffer, local_size, [batch_size as u64 * local_size[0] as u64, 1, 1]);
+
+                return Ok(());
+            }
+        }
+
+        // Standard path: choose workgroup size and clamp to shader max (256)
+        let mut local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
         if local_size[0] > 256 {
             local_size[0] = 256;
         }
 
-        let binding_count = 2; // src, dst
+        let binding_count = 2;
 
-        // Bind pipeline and descriptors (src=0, dst=1)
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
-
-        // Push constants
         gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
-        // Calculate dispatch size based on batch size (one workgroup per batch)
-        gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
+        // work_size = total threads needed (batch_size workgroups * local_size[0] threads each)
+        gpu.dispatch(command_buffer, local_size, [batch_size as u64 * local_size[0] as u64, 1, 1]);
 
         Ok(())
     }

@@ -1,0 +1,99 @@
+#version 450
+
+#extension GL_KHR_shader_subgroup_arithmetic: enable
+#extension GL_KHR_shader_subgroup_basic: enable
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(std430, binding = 0) buffer InBuffer { float a[]; };
+layout(std430, binding = 1) buffer OutBuffer { float b[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint batch_size;
+    uint feature_size;
+} constants;
+
+// Dynamically size shared memory based on workgroup size
+// gl_WorkGroupSize.x is a specialization constant, so this is compile-time
+shared float subgroup_maxes[gl_WorkGroupSize.x / 64];
+shared float subgroup_sums[gl_WorkGroupSize.x / 64];
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint batch_idx = gl_WorkGroupID.x;
+    uint subgroup_id = gl_SubgroupID;
+    uint num_subgroups = gl_NumSubgroups;
+
+    if (batch_idx >= constants.batch_size) {
+        return;
+    }
+
+    uint base_idx = batch_idx * constants.feature_size;
+
+    // Phase 1: Find maximum using subgroup reduction
+    float local_max = -3.402823466e+38; // -FLT_MAX
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        local_max = max(local_max, a[base_idx + i]);
+    }
+
+    // Reduce within subgroup
+    float subgroup_max_val = subgroupMax(local_max);
+
+    // First invocation in each subgroup writes to shared memory
+    if (gl_SubgroupInvocationID == 0) {
+        subgroup_maxes[subgroup_id] = subgroup_max_val;
+    }
+
+    barrier();
+
+    // First invocation does final reduction across subgroups
+    float max_val;
+    if (local_id == 0) {
+        max_val = subgroup_maxes[0];
+        for (uint i = 1; i < num_subgroups; i++) {
+            max_val = max(max_val, subgroup_maxes[i]);
+        }
+        subgroup_maxes[0] = max_val; // Store final result
+    }
+
+    barrier();
+    max_val = subgroup_maxes[0]; // All threads read final max
+
+    // Phase 2: Compute exp and sum using subgroup reduction
+    float local_sum = 0.0;
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        uint idx = base_idx + i;
+        float exp_val = exp(a[idx] - max_val);
+        b[idx] = exp_val; // Store temporarily
+        local_sum += exp_val;
+    }
+
+    // Reduce sum within subgroup
+    float subgroup_sum_val = subgroupAdd(local_sum);
+
+    // First invocation in each subgroup writes to shared memory
+    if (gl_SubgroupInvocationID == 0) {
+        subgroup_sums[subgroup_id] = subgroup_sum_val;
+    }
+
+    barrier();
+
+    // First invocation does final reduction across subgroups
+    float sum;
+    if (local_id == 0) {
+        sum = subgroup_sums[0];
+        for (uint i = 1; i < num_subgroups; i++) {
+            sum += subgroup_sums[i];
+        }
+        subgroup_sums[0] = sum; // Store final result
+    }
+
+    barrier();
+    sum = subgroup_sums[0]; // All threads read final sum
+
+    // Phase 3: Normalize
+    for (uint i = local_id; i < constants.feature_size; i += gl_WorkGroupSize.x) {
+        uint idx = base_idx + i;
+        b[idx] /= sum;
+    }
+}
