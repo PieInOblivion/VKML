@@ -268,7 +268,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             }
             DeviceId::Cpu => false,
         };
-        chunk.needs_host_wait_fence = needs_wait.then(|| OnceLock::new());
+        chunk.needs_host_wait_fence = needs_wait.then(OnceLock::new);
     }
 
     Ok(ExecutionPlan {

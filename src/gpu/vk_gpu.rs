@@ -6,8 +6,10 @@ use std::{
 };
 use vulkanalia::{
     Device, Instance,
-    vk::{self, DeviceV1_0, DeviceV1_3, Handle, InstanceV1_0, InstanceV1_1,
-        KhrPushDescriptorExtensionDeviceCommands},
+    vk::{
+        self, DeviceV1_0, DeviceV1_3, Handle, InstanceV1_0, InstanceV1_1,
+        KhrPushDescriptorExtensionDeviceCommands,
+    },
 };
 
 use crate::{
@@ -947,26 +949,20 @@ impl Gpu {
     }
 
     /// Insert a memory barrier ensuring previous compute writes are visible to subsequent compute dispatches.
-    pub fn barrier_compute_shader_access(&self, command_buffer: vk::CommandBuffer) {
+    pub fn barrier_compute_shader_access(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        buffer_barriers: &[vk::BufferMemoryBarrier2],
+    ) {
         unsafe {
-            let memory_barrier = vk::MemoryBarrier2 {
-                s_type: vk::StructureType::MEMORY_BARRIER_2,
-                next: ptr::null(),
-                src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                src_access_mask: vk::AccessFlags2::SHADER_WRITE,
-                dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                dst_access_mask: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-            };
-
-            let barriers = [memory_barrier];
             let dependency_info = vk::DependencyInfo {
                 s_type: vk::StructureType::DEPENDENCY_INFO,
                 next: ptr::null(),
                 dependency_flags: vk::DependencyFlags::empty(),
-                memory_barrier_count: barriers.len() as u32,
-                memory_barriers: barriers.as_ptr(),
-                buffer_memory_barrier_count: 0,
-                buffer_memory_barriers: ptr::null(),
+                memory_barrier_count: 0,
+                memory_barriers: ptr::null(),
+                buffer_memory_barrier_count: buffer_barriers.len() as u32,
+                buffer_memory_barriers: buffer_barriers.as_ptr(),
                 image_memory_barrier_count: 0,
                 image_memory_barriers: ptr::null(),
             };

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{
     Arc, Weak,
     atomic::{AtomicUsize, Ordering},
@@ -8,7 +9,7 @@ use vulkanalia::vk::DeviceV1_0;
 use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::tensor::DeviceId;
-use crate::tensor_graph::OperationId;
+use crate::tensor_graph::{OperationId, TensorId};
 use crate::utils::error::VKMLError;
 use crate::{compute::compute_manager::ComputeManager, scheduler::execution_plan::ChunkId};
 
@@ -199,6 +200,27 @@ fn create_gpu_chunk_command_buffer(
 ) -> Result<vk::CommandBuffer, VKMLError> {
     let gpu = compute_manager.gpu_ref(gpu_idx);
 
+    let mut layer_reads = Vec::with_capacity(operation_layers.len());
+    let mut layer_writes = Vec::with_capacity(operation_layers.len());
+
+    for layer in operation_layers {
+        let mut reads = HashSet::new();
+        let mut writes = HashSet::new();
+        for &op_id in layer {
+            let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
+            for tid in instruction.get_input_tensor_ids() {
+                reads.insert(tid);
+            }
+            for tid in instruction.get_output_tensor_ids() {
+                writes.insert(tid);
+            }
+        }
+        layer_reads.push(reads);
+        layer_writes.push(writes);
+    }
+
+    let mut pending_writes: HashSet<TensorId> = HashSet::new();
+
     unsafe {
         let alloc_info = vk::CommandBufferAllocateInfo {
             s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
@@ -247,9 +269,61 @@ fn create_gpu_chunk_command_buffer(
                     })?;
             }
 
+            pending_writes.extend(layer_writes[layer_idx].iter().copied());
+
             // Insert barrier between layers (but not after the last layer)
             if layer_idx < operation_layers.len() - 1 {
-                gpu.barrier_compute_shader_access(command_buffer);
+                let mut buffer_barriers = Vec::new();
+                let mut hazard_ids = Vec::new();
+
+                for &tensor_id in &pending_writes {
+                    let mut dst_access = vk::AccessFlags2::empty();
+                    if layer_reads[layer_idx + 1].contains(&tensor_id) {
+                        dst_access |= vk::AccessFlags2::SHADER_READ;
+                    }
+                    if layer_writes[layer_idx + 1].contains(&tensor_id) {
+                        dst_access |= vk::AccessFlags2::SHADER_WRITE;
+                    }
+
+                    if dst_access.is_empty() {
+                        continue;
+                    }
+
+                    let tensor = compute_manager.tensor_read(tensor_id);
+                    match tensor.device {
+                        DeviceId::Gpu(owner_idx) if owner_idx == gpu_idx => {
+                            let memory = tensor.get_gpu_memory_or_panic();
+                            buffer_barriers.push(vk::BufferMemoryBarrier2 {
+                                s_type: vk::StructureType::BUFFER_MEMORY_BARRIER_2,
+                                next: std::ptr::null(),
+                                src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                                dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                dst_access_mask: dst_access,
+                                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                buffer: memory.buffer,
+                                offset: 0,
+                                size: memory.size,
+                            });
+                            hazard_ids.push(tensor_id);
+                        }
+                        _ => {
+                            panic!(
+                                "Tensor {} referenced while recording GPU chunk for device {} is not backed by that GPU",
+                                tensor_id, gpu_idx
+                            );
+                        }
+                    }
+                }
+
+                if !buffer_barriers.is_empty() {
+                    gpu.barrier_compute_shader_access(command_buffer, &buffer_barriers);
+
+                    for tensor_id in hazard_ids {
+                        pending_writes.remove(&tensor_id);
+                    }
+                }
             }
         }
 
