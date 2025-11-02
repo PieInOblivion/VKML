@@ -57,6 +57,10 @@ pub enum GPUOperation {
     ReduceMean_F16_F16,
     Gemm_F32_F32_F32_F32,
     Gemm_F16_F16_F16_F16,
+    Gemm_F32_F32_F32_F32_Tiled_4x4,
+    Gemm_F32_F32_F32_F32_Tiled_8x8,
+    Gemm_F32_F32_F32_F32_Tiled_16x16,
+    Gemm_F32_F32_F32_F32_Tiled_32x32,
     __Count,
 }
 
@@ -146,6 +150,18 @@ impl GPUOperation {
             GPUOperation::ReduceMean_F16_F16 => "f16_f16_reducemean.spv",
             GPUOperation::Gemm_F32_F32_F32_F32 => "f32_f32_f32_f32_gemm.spv",
             GPUOperation::Gemm_F16_F16_F16_F16 => "f16_f16_f16_f16_gemm.spv",
+            GPUOperation::Gemm_F32_F32_F32_F32_Tiled_4x4 => {
+                "f32_f32_f32_f32_gemm_tiled_4x4.spv"
+            }
+            GPUOperation::Gemm_F32_F32_F32_F32_Tiled_8x8 => {
+                "f32_f32_f32_f32_gemm_tiled_8x8.spv"
+            }
+            GPUOperation::Gemm_F32_F32_F32_F32_Tiled_16x16 => {
+                "f32_f32_f32_f32_gemm_tiled_16x16.spv"
+            }
+            GPUOperation::Gemm_F32_F32_F32_F32_Tiled_32x32 => {
+                "f32_f32_f32_f32_gemm_tiled_32x32.spv"
+            }
             GPUOperation::__Count => unreachable!("__Count is not a valid shader operation"),
         }
     }

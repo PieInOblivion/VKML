@@ -145,6 +145,78 @@ impl Instruction for GemmInstruction {
             }
         };
 
+        // Optimized tiled shader for F32 GEMM
+        if gpu_op == GPUOperation::Gemm_F32_F32_F32_F32 {
+            let m_u64 = m as u64;
+            let n_u64 = n as u64;
+            let max_shmem = gpu.max_shared_memory_size();
+
+            // Tile size selection: [tile_size, threads, shmem_required_bytes, operation]
+            let variants = [
+                (
+                    32,
+                    [32, 32, 1],
+                    8192,
+                    GPUOperation::Gemm_F32_F32_F32_F32_Tiled_32x32,
+                ),
+                (
+                    16,
+                    [16, 16, 1],
+                    2048,
+                    GPUOperation::Gemm_F32_F32_F32_F32_Tiled_16x16,
+                ),
+                (
+                    8,
+                    [8, 8, 1],
+                    512,
+                    GPUOperation::Gemm_F32_F32_F32_F32_Tiled_8x8,
+                ),
+                (
+                    4,
+                    [4, 4, 1],
+                    128,
+                    GPUOperation::Gemm_F32_F32_F32_F32_Tiled_4x4,
+                ),
+            ];
+            
+            // Select best tile size based on shared memory AND matrix dimensions
+            let min_dim = m_u64.min(n_u64);
+            let max_dim = m_u64.max(n_u64);
+
+            for (tile_size, tiled_local_size, shmem_req, op) in variants {
+                if max_shmem >= shmem_req {
+                    // Heuristic: check BOTH min and max dimensions
+                    // Note: Even with small M (e.g., M=1), tiled shaders can be faster
+                    // due to shared memory caching, despite thread waste
+                    let (min_threshold, max_threshold) = match tile_size {
+                        32 => (16, 256),
+                        16 => (1, 32),
+                        8 => (1, 8),
+                        4 => (0, 0),
+                        _ => (u64::MAX, u64::MAX),
+                    };
+
+                    if min_dim >= min_threshold && max_dim >= max_threshold {
+                        let binding_count = 4;
+
+                        gpu.bind_compute_pipeline(command_buffer, op, tiled_local_size, binding_count);
+                        gpu.bind_storage_buffers_optional(
+                            command_buffer,
+                            &[Some(a_gpu_mem), Some(b_gpu_mem), c_gpu_mem, Some(y_gpu_mem)],
+                        );
+                        gpu.bind_push_constants(command_buffer, binding_count, as_bytes(&pc));
+
+                        // Dispatch with work_size in terms of work items (threads), not workgroups
+                        gpu.dispatch(command_buffer, tiled_local_size, [n as u64, m as u64, 1]);
+
+                        return Ok(());
+                    }
+                }
+            }
+            // else: Fall through to standard pipeline if insufficient shared memory for even 4x4
+        }
+
+        // Standard pipeline path
         let binding_count = 4; // a, b, c (optional), y
 
         gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);

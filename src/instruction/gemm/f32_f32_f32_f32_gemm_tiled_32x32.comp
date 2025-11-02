@@ -1,0 +1,99 @@
+#version 450
+
+// 32x32 workgroup (1024 threads), 32x32 tile, 8192 bytes shared memory
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer InBufferA { float a[]; };
+layout(std430, binding = 1) buffer InBufferB { float b[]; };
+layout(std430, binding = 2) buffer InBufferC { float c[]; };
+layout(std430, binding = 3) buffer OutBuffer { float y[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint m;
+    uint k;
+    uint n;
+    uint stride_a0;
+    uint stride_a1;
+    uint stride_b0;
+    uint stride_b1;
+    uint stride_y0;
+    uint stride_y1;
+    uint trans_a;
+    uint trans_b;
+    float alpha;
+    float beta;
+    uint has_c;
+} params;
+
+shared float tileA[1024];
+shared float tileB[1024];
+
+void main() {
+    uint tile_row = gl_WorkGroupID.y;
+    uint tile_col = gl_WorkGroupID.x;
+
+    uint thread_row = gl_LocalInvocationID.y;
+    uint thread_col = gl_LocalInvocationID.x;
+
+    uint out_row = tile_row * 32 + thread_row;
+    uint out_col = tile_col * 32 + thread_col;
+
+    float acc = 0.0;
+
+    // Precompute transpose-dependent strides
+    uint stride_a_k = (params.trans_a != 0) ? params.stride_a0 : params.stride_a1;
+    uint stride_a_m = (params.trans_a != 0) ? params.stride_a1 : params.stride_a0;
+    uint stride_b_k = (params.trans_b != 0) ? params.stride_b1 : params.stride_b0;
+    uint stride_b_n = (params.trans_b != 0) ? params.stride_b0 : params.stride_b1;
+
+    uint num_k_tiles = (params.k + 31) / 32;
+
+    for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
+        uint k_offset = k_tile * 32;
+        if (k_offset >= params.k) break;
+
+        // Load tiles using flat indexing
+        uint idx = thread_row * 32 + thread_col;
+
+        uint i = idx / 32;
+        uint j = idx % 32;
+
+        uint row_a = tile_row * 32 + i;
+        uint col_a = k_offset + j;
+
+        tileA[idx] = (row_a < params.m && col_a < params.k)
+                   ? a[row_a * stride_a_m + col_a * stride_a_k]
+                   : 0.0;
+
+        uint row_b = k_offset + i;
+        uint col_b = tile_col * 32 + j;
+
+        tileB[idx] = (row_b < params.k && col_b < params.n)
+                   ? b[row_b * stride_b_k + col_b * stride_b_n]
+                   : 0.0;
+
+        barrier();
+
+        // Unrolled inner loop for better performance
+        #pragma unroll 32
+        for (uint ki = 0; ki < 32; ki++) {
+            acc += tileA[thread_row * 32 + ki] * tileB[ki * 32 + thread_col];
+        }
+
+        barrier();
+    }
+
+    if (out_row < params.m && out_col < params.n) {
+        // Compute Y[row, col] = alpha * acc + beta * C[row, col]
+        float result = params.alpha * acc;
+
+        if (params.has_c != 0) {
+            uint c_idx = out_row * params.n + out_col;
+            result += params.beta * c[c_idx];
+        }
+
+        uint y_idx = out_row * params.stride_y0 + out_col * params.stride_y1;
+        y[y_idx] = result;
+    }
+}
