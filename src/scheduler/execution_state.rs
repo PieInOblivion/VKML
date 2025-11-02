@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
 };
 
 use vulkanalia::vk;
@@ -17,8 +17,6 @@ use super::execution_plan::ExecutionPlan;
 struct ExecutionState {
     plan: Arc<ExecutionPlan>,
     compute_manager: *const ComputeManager,
-    device_semaphore_offsets: Vec<u64>,
-    device_chunk_counters: Vec<AtomicU64>,
     chunk_dependencies_remaining: Vec<AtomicUsize>,
     outputs_remaining: AtomicUsize,
     main_thread: std::thread::Thread,
@@ -27,27 +25,6 @@ struct ExecutionState {
 
 impl ExecutionState {
     fn new(plan: Arc<ExecutionPlan>, manager: &ComputeManager) -> Result<Arc<Self>, VKMLError> {
-        let gpu_count = manager.gpu_count();
-
-        let mut device_counts = vec![0u64; gpu_count];
-        for chunk in &plan.chunks {
-            if let DeviceId::Gpu(idx) = chunk.device {
-                device_counts[idx] += 1;
-            }
-        }
-
-        let mut device_semaphore_offsets = vec![0u64; gpu_count];
-        for gpu_idx in 0..gpu_count {
-            if device_counts[gpu_idx] > 0 {
-                device_semaphore_offsets[gpu_idx] = manager
-                    .gpu_ref(gpu_idx)
-                    .allocate_semaphore_values(device_counts[gpu_idx]);
-            }
-        }
-
-        let device_chunk_counters: Vec<AtomicU64> =
-            (0..gpu_count).map(|_| AtomicU64::new(0)).collect();
-
         let chunk_dependencies_remaining: Vec<AtomicUsize> = plan
             .chunks
             .iter()
@@ -70,8 +47,6 @@ impl ExecutionState {
             ExecutionState {
                 plan: Arc::clone(&plan_for_state),
                 compute_manager: manager_ptr,
-                device_semaphore_offsets,
-                device_chunk_counters,
                 chunk_dependencies_remaining,
                 outputs_remaining: AtomicUsize::new(outputs_remaining_init),
                 main_thread: std::thread::current(),
@@ -129,9 +104,6 @@ impl ExecutionState {
     ) -> Result<(), VKMLError> {
         let gpu = compute_manager.gpu_ref(gpu_idx);
 
-        let local_index = self.device_chunk_counters[gpu_idx].fetch_add(1, Ordering::Relaxed);
-        let signal_value = self.device_semaphore_offsets[gpu_idx] + local_index;
-
         let chunk = &self.plan.chunks[chunk_id];
 
         let command_buffer = chunk.command_buffer.get_or_init(|| {
@@ -140,12 +112,18 @@ impl ExecutionState {
         });
 
         let command_buffers = std::slice::from_ref(command_buffer);
-        let wait_slice: &[(vk::Semaphore, u64)] = &[];
-        gpu.submit_with_timeline_semaphore(command_buffers, wait_slice, signal_value)?;
+        let fence = chunk.needs_host_wait_fence.as_ref().map(|lock| {
+            *lock.get_or_init(|| {
+                gpu.create_fence()
+                    .expect("Failed to create fence for GPU chunk")
+            })
+        });
 
-        if chunk.needs_host_wait {
+        gpu.submit_with_fence(command_buffers, fence)?;
+
+        if let Some(fence_handle) = fence {
             // Block this worker until the GPU signals completion so dependents see consistent state.
-            gpu.wait_for_timeline_value(signal_value)?;
+            gpu.wait_and_reset_fence(fence_handle)?;
         }
 
         Ok(())

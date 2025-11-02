@@ -2,15 +2,12 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{CString, c_void},
     ptr,
-    sync::{
-        Arc, Mutex, OnceLock, RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 use vulkanalia::{
     Device, Instance,
     vk::{
-        self, DeviceV1_0, DeviceV1_2, Handle, InstanceV1_0, InstanceV1_1,
+        self, DeviceV1_0, Handle, InstanceV1_0, InstanceV1_1,
         KhrPushDescriptorExtensionDeviceCommands,
     },
 };
@@ -43,8 +40,6 @@ pub struct Gpu {
     staging_buffer: OnceLock<Mutex<GPUMemory>>,
 
     // Drop order matters: fields drop top-to-bottom
-    timeline_semaphore: OnceLock<vk::Semaphore>,
-    next_semaphore_value: AtomicU64,
     pipelines: RwLock<HashMap<(GPUOperation, [u32; 3], usize), vk::Pipeline>>,
     descriptor_set_layouts: Box<[OnceLock<vk::DescriptorSetLayout>]>,
     pipeline_layouts: Box<[OnceLock<vk::PipelineLayout>]>,
@@ -256,8 +251,6 @@ impl Gpu {
 
                 staging_buffer: OnceLock::new(),
 
-                timeline_semaphore: OnceLock::new(),
-                next_semaphore_value: AtomicU64::new(1),
                 pipelines: RwLock::new(HashMap::new()),
                 descriptor_set_layouts,
                 pipeline_layouts,
@@ -872,33 +865,6 @@ impl Gpu {
         self.physical_device
     }
 
-    pub fn get_or_create_timeline_semaphore(&self) -> vk::Semaphore {
-        *self.timeline_semaphore.get_or_init(|| unsafe {
-            let mut timeline_info = vk::SemaphoreTypeCreateInfo {
-                s_type: vk::StructureType::SEMAPHORE_TYPE_CREATE_INFO,
-                next: ptr::null(),
-                semaphore_type: vk::SemaphoreType::TIMELINE,
-                initial_value: 0,
-            };
-
-            let semaphore_info = vk::SemaphoreCreateInfo {
-                s_type: vk::StructureType::SEMAPHORE_CREATE_INFO,
-                next: &mut timeline_info as *mut _ as *const c_void,
-                flags: vk::SemaphoreCreateFlags::empty(),
-            };
-
-            self.device
-                .create_semaphore(&semaphore_info, None)
-                .expect("Failed to create timeline semaphore")
-        })
-    }
-
-    /// Allocate the next N semaphore values and return the starting value
-    pub fn allocate_semaphore_values(&self, count: u64) -> u64 {
-        self.next_semaphore_value
-            .fetch_add(count, Ordering::Relaxed)
-    }
-
     /// Calculate optimal workgroup size for 1D compute operations (element-wise ops)
     pub fn optimal_workgroup_size_1d(&self, total_elements: u64) -> [u32; 3] {
         optimal_workgroup_size(
@@ -1116,81 +1082,50 @@ impl Gpu {
         Ok(())
     }
 
-    pub fn submit_with_timeline_semaphore(
+    pub fn submit_with_fence(
         &self,
         command_buffers: &[vk::CommandBuffer],
-        wait_semaphores: &[(vk::Semaphore, u64)],
-        signal_value: u64,
+        fence: Option<vk::Fence>,
     ) -> Result<(), VKMLError> {
         unsafe {
-            let timeline_sem = self.get_or_create_timeline_semaphore();
-
-            let wait_sems: Vec<vk::Semaphore> = wait_semaphores.iter().map(|(s, _)| *s).collect();
-            let wait_values: Vec<u64> = wait_semaphores.iter().map(|(_, v)| *v).collect();
-            let signal_sems = [timeline_sem];
-            let signal_values = [signal_value];
-
-            let mut timeline_info = vk::TimelineSemaphoreSubmitInfo {
-                s_type: vk::StructureType::TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                next: ptr::null(),
-                wait_semaphore_value_count: wait_values.len() as u32,
-                wait_semaphore_values: if wait_values.is_empty() {
-                    ptr::null()
-                } else {
-                    wait_values.as_ptr()
-                },
-                signal_semaphore_value_count: signal_values.len() as u32,
-                signal_semaphore_values: signal_values.as_ptr(),
-            };
-
-            let wait_stages: Vec<vk::PipelineStageFlags> =
-                vec![vk::PipelineStageFlags::COMPUTE_SHADER; wait_sems.len()];
-
             let submit_info = vk::SubmitInfo {
                 s_type: vk::StructureType::SUBMIT_INFO,
-                next: &mut timeline_info as *mut _ as *const c_void,
-                wait_semaphore_count: wait_sems.len() as u32,
-                wait_semaphores: if wait_sems.is_empty() {
-                    ptr::null()
-                } else {
-                    wait_sems.as_ptr()
-                },
-                wait_dst_stage_mask: if wait_stages.is_empty() {
-                    ptr::null()
-                } else {
-                    wait_stages.as_ptr()
-                },
+                next: ptr::null(),
+                wait_semaphore_count: 0,
+                wait_semaphores: ptr::null(),
+                wait_dst_stage_mask: ptr::null(),
                 command_buffer_count: command_buffers.len() as u32,
                 command_buffers: command_buffers.as_ptr(),
-                signal_semaphore_count: signal_sems.len() as u32,
-                signal_semaphores: signal_sems.as_ptr(),
+                signal_semaphore_count: 0,
+                signal_semaphores: ptr::null(),
             };
 
-            self.device
-                .queue_submit(self.compute_queue, &[submit_info], vk::Fence::null())?;
-
-            Ok(())
+            self.device.queue_submit(
+                self.compute_queue,
+                &[submit_info],
+                fence.unwrap_or(vk::Fence::null()),
+            )?;
         }
+
+        Ok(())
     }
 
-    pub fn wait_for_timeline_value(&self, value: u64) -> Result<(), VKMLError> {
+    pub fn wait_and_reset_fence(&self, fence: vk::Fence) -> Result<(), VKMLError> {
         unsafe {
-            let timeline_sem = self.get_or_create_timeline_semaphore();
-            let sems = [timeline_sem];
-            let values = [value];
-
-            let wait_info = vk::SemaphoreWaitInfo {
-                s_type: vk::StructureType::SEMAPHORE_WAIT_INFO,
-                next: ptr::null(),
-                flags: vk::SemaphoreWaitFlags::empty(),
-                semaphore_count: 1,
-                semaphores: sems.as_ptr(),
-                values: values.as_ptr(),
-            };
-
-            self.device.wait_semaphores(&wait_info, u64::MAX)?;
-
-            Ok(())
+            self.device.wait_for_fences(&[fence], true, u64::MAX)?;
+            self.device.reset_fences(&[fence])?;
         }
+
+        Ok(())
+    }
+
+    pub fn create_fence(&self) -> Result<vk::Fence, VKMLError> {
+        let fence_info = vk::FenceCreateInfo {
+            s_type: vk::StructureType::FENCE_CREATE_INFO,
+            next: ptr::null(),
+            flags: vk::FenceCreateFlags::empty(),
+        };
+
+        unsafe { Ok(self.device.create_fence(&fence_info, None)?) }
     }
 }

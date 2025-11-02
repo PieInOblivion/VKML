@@ -45,8 +45,10 @@ pub fn print_tensor_flow(cm: &ComputeManager) {
             chunk_idx, device_str, total_ops, layer_count, chunk.predecessors, chunk.dependents
         );
         println!(
-            "  initial_dep_count={} is_output={} needs_host_wait={}",
-            chunk.initial_dep_count, chunk.is_output, chunk.needs_host_wait
+            "  initial_dep_count={} is_output={} needs_host_wait_fence={}",
+            chunk.initial_dep_count,
+            chunk.is_output,
+            chunk.needs_host_wait_fence.is_some()
         );
         println!("{:-<100}", "");
 

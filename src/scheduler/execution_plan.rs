@@ -16,7 +16,7 @@ pub struct ExecutionChunk {
     pub dependents: Vec<ChunkId>,
     pub initial_dep_count: usize,
     pub is_output: bool,
-    pub needs_host_wait: bool,
+    pub needs_host_wait_fence: Option<OnceLock<vk::Fence>>,
     pub command_buffer: OnceLock<vk::CommandBuffer>,
 }
 
@@ -161,7 +161,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 dependents: Vec::new(),
                 initial_dep_count: 0,
                 is_output: false,
-                needs_host_wait: false,
+                needs_host_wait_fence: None,
                 command_buffer: OnceLock::new(),
             }
         })
@@ -268,7 +268,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             }
             DeviceId::Cpu => false,
         };
-        chunk.needs_host_wait = needs_wait;
+        chunk.needs_host_wait_fence = needs_wait.then(|| OnceLock::new());
     }
 
     Ok(ExecutionPlan {
