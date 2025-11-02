@@ -499,7 +499,30 @@ impl ComputeManager {
             }
         }
 
-        // Now actually allocate the tensors, passing the host-visibility map.
+        // Determine if any GPU can keep all tensors in host-visible device-local memory.
+        if !self.gpus.gpus().is_empty() {
+            let mut planned_gpu_usage = vec![0u64; self.gpus.gpus().len()];
+
+            for (tensor_id, location) in tensor_locations.iter().enumerate() {
+                if let Some(DeviceId::Gpu(idx)) = location {
+                    let bytes = self.tensor_graph.tensor_descs[tensor_id].size_in_bytes() as u64;
+                    planned_gpu_usage[*idx] = planned_gpu_usage[*idx].saturating_add(bytes);
+                }
+            }
+
+            for (idx, &bytes) in planned_gpu_usage.iter().enumerate() {
+                let hv_budget = self.gpus.get_gpu(idx).host_visible_device_local_bytes();
+                if bytes > 0 && hv_budget > 0 && bytes <= hv_budget {
+                    for (tensor_id, location) in tensor_locations.iter().enumerate() {
+                        if matches!(location, Some(DeviceId::Gpu(gpu_idx)) if *gpu_idx == idx) {
+                            requires_host_visability[tensor_id] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now actually allocate the tensors using the final host-visibility map.
         self.allocate_tensors(tensor_locations, initialisers, &requires_host_visability)?;
 
         // Cache the dependency graph (recompute after we've modified operations)
@@ -513,7 +536,7 @@ impl ComputeManager {
         &mut self,
         tensor_locations: Vec<Option<DeviceId>>,
         mut initialisers: Vec<Initialiser>,
-        requires_host_visability: &Vec<bool>,
+        requires_host_visability: &[bool],
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
 

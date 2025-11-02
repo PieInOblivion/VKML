@@ -506,8 +506,7 @@ impl Gpu {
     /// to 5% of the tracked maximum memory.
     pub fn get_or_create_staging_buffer(&self) -> &Mutex<GPUMemory> {
         self.staging_buffer.get_or_init(|| unsafe {
-            // size: 5% of total memory
-            let staging_size = (self.memory_total() / 20) as usize;
+            let (staging_size, device_local_staging) = self.staging_plan();
 
             // Account for the staging buffer in the memory tracker
             self.memory_tracker.allocate(staging_size as vk::DeviceSize);
@@ -541,14 +540,13 @@ impl Gpu {
             // a second magic number minimum or something though. This would allow us to use the typical 255mb limit of
             // non-rebar gpus, but need to account for gpus where 255mb > 5% total, or where the limit could be 5mb and
             // we should use cpu.
-            let requested_properties =
-                if self.host_visible_device_local_bytes >= staging_size as u64 {
-                    vk::MemoryPropertyFlags::HOST_VISIBLE
-                        | vk::MemoryPropertyFlags::HOST_COHERENT
-                        | vk::MemoryPropertyFlags::DEVICE_LOCAL
-                } else {
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-                };
+            let requested_properties = if device_local_staging {
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::DEVICE_LOCAL
+            } else {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            };
 
             let memory_type =
                 self.find_memory_type(mem_requirements.memory_type_bits, requested_properties);
@@ -577,6 +575,28 @@ impl Gpu {
 
             Mutex::new(staging)
         })
+    }
+
+    /// Compute the desired staging buffer size (bytes) and whether it should use device-local memory.
+    fn staging_plan(&self) -> (usize, bool) {
+        let total_memory = self.memory_total().max(1);
+        let mut size_bytes = (total_memory / 20).max(1); // target: 5% of total memory
+        let mut device_local = false;
+
+        let host_visible_budget = self.host_visible_device_local_bytes();
+        if host_visible_budget > 0 {
+            let visibility_threshold = (total_memory / 100).max(1); // require ~1% before preferring device-local
+            if host_visible_budget >= visibility_threshold {
+                size_bytes = host_visible_budget.min(size_bytes);
+                device_local = true;
+            }
+        }
+
+        if size_bytes == 0 {
+            size_bytes = 1;
+        }
+
+        (size_bytes as usize, device_local)
     }
 
     pub fn find_memory_type(&self, type_filter: u32, properties: vk::MemoryPropertyFlags) -> u32 {
