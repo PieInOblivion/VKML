@@ -1,6 +1,6 @@
 #version 450
 
-// 16x16 workgroup (256 threads), 16x16 tile, 2KB shared memory
+// 16x16 workgroup (256 threads), 16x16 tile, 4 KB ping-pong shared memory
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -20,8 +20,8 @@ layout(push_constant) uniform PushConstants {
     uint stride_c1;
 } dims;
 
-shared float tileA[256];
-shared float tileB[256];
+shared float tileA[512];
+shared float tileB[512];
 
 void main() {
     uint tile_row = gl_WorkGroupID.y;
@@ -37,38 +37,58 @@ void main() {
 
     uint num_k_tiles = (dims.k + 15) / 16;
 
+    if (num_k_tiles == 0) {
+        if (out_row < dims.m && out_col < dims.n) {
+            c[out_row * dims.stride_c0 + out_col * dims.stride_c1] = 0.0;
+        }
+        return;
+    }
+
+    uint idx = thread_row * 16 + thread_col;
+    uint global_row_a = tile_row * 16 + thread_row;
+    uint global_col_b = tile_col * 16 + thread_col;
+
+    // Preload first tile into buffer 0
+    tileA[idx] = (global_row_a < dims.m && thread_col < dims.k)
+        ? a[global_row_a * dims.stride_a0 + thread_col * dims.stride_a1]
+        : 0.0;
+
+    tileB[idx] = (thread_row < dims.k && global_col_b < dims.n)
+        ? b[thread_row * dims.stride_b0 + global_col_b * dims.stride_b1]
+        : 0.0;
+
+    barrier();
+
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
-        uint k_offset = k_tile * 16;
-        if (k_offset >= dims.k) break;
+        uint read_offset = (k_tile & 1u) * 256u;
 
-        // Load tiles using flat indexing (like F16 shader)
-        uint idx = thread_row * 16 + thread_col;
+        uint a_index = read_offset + thread_row * 16u;
+        uint b_index = read_offset + thread_col;
 
-        uint i = idx / 16;
-        uint j = idx % 16;
-
-        uint row_a = tile_row * 16 + i;
-        uint col_a = k_offset + j;
-        uint row_b = k_offset + i;
-        uint col_b = tile_col * 16 + j;
-
-        tileA[idx] = (row_a < dims.m && col_a < dims.k)
-                   ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
-                   : 0.0;
-
-        tileB[idx] = (row_b < dims.k && col_b < dims.n)
-                   ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
-                   : 0.0;
-
-        barrier();
-
-        // Unrolled inner loop for better performance
         #pragma unroll 16
         for (uint ki = 0; ki < 16; ki++) {
-            acc += tileA[thread_row * 16 + ki] * tileB[ki * 16 + thread_col];
+            acc = fma(tileA[a_index], tileB[b_index], acc);
+            a_index += 1u;
+            b_index += 16u;
         }
 
-        barrier();
+        if (k_tile + 1u < num_k_tiles) {
+            uint write_offset = ((k_tile + 1u) & 1u) * 256u;
+            uint next_k_offset = (k_tile + 1u) * 16u;
+
+            uint col_a = next_k_offset + thread_col;
+            uint row_b = next_k_offset + thread_row;
+
+            tileA[write_offset + idx] = (global_row_a < dims.m && col_a < dims.k)
+                ? a[global_row_a * dims.stride_a0 + col_a * dims.stride_a1]
+                : 0.0;
+
+            tileB[write_offset + idx] = (row_b < dims.k && global_col_b < dims.n)
+                ? b[row_b * dims.stride_b0 + global_col_b * dims.stride_b1]
+                : 0.0;
+
+            barrier();
+        }
     }
 
     if (out_row < dims.m && out_col < dims.n) {
