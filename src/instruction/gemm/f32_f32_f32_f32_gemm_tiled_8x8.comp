@@ -1,6 +1,6 @@
 #version 450
 
-// 8x8 workgroup (64 threads), 8x8 tile, 512 bytes shared memory
+// 8x8 workgroup (64 threads), 8x8 tile, 1 KB ping-pong shared memory
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -26,8 +26,8 @@ layout(push_constant) uniform PushConstants {
     uint has_c;
 } params;
 
-shared float tileA[64];
-shared float tileB[64];
+shared float tileA[128];
+shared float tileB[128];
 
 void main() {
     uint tile_row = gl_WorkGroupID.y;
@@ -49,58 +49,70 @@ void main() {
 
     uint num_k_tiles = (params.k + 7) / 8;
 
+    if (num_k_tiles == 0) {
+        if (out_row < params.m && out_col < params.n) {
+            float result = params.alpha * 0.0;
+            if (params.has_c != 0) {
+                uint c_idx = out_row * params.n + out_col;
+                result += params.beta * c[c_idx];
+            }
+            uint y_idx = out_row * params.stride_y0 + out_col * params.stride_y1;
+            y[y_idx] = result;
+        }
+        return;
+    }
+
+    uint tile_index = thread_row * 8 + thread_col;
+    uint row_a = tile_row * 8 + thread_row;
+    uint col_a_base = thread_col;
+    uint row_b_base = thread_row;
+    uint col_b = tile_col * 8 + thread_col;
+
+    tileA[tile_index] = (row_a < params.m && col_a_base < params.k)
+        ? a[row_a * stride_a_m + col_a_base * stride_a_k]
+        : 0.0;
+    tileB[tile_index] = (row_b_base < params.k && col_b < params.n)
+        ? b[row_b_base * stride_b_k + col_b * stride_b_n]
+        : 0.0;
+
+    barrier();
+
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
-        uint k_offset = k_tile * 8;
-        if (k_offset >= params.k) break;
+        uint read_offset = (k_tile & 1u) * 64u;
+        uint a_row_index = read_offset + thread_row * 8u;
+        uint b_col_index = read_offset + thread_col;
 
-        // Load tiles using flat indexing
-        uint idx = thread_row * 8 + thread_col;
-
-        uint i = idx / 8;
-        uint j = idx % 8;
-
-        // Load tile from A: considering transpose
-        // A is (M, K) or (K, M) if trans_a
-        // We want row_a from output rows [tile_row*8, tile_row*8+7]
-        // We want col_a from K dimension [k_offset, k_offset+7]
-        uint row_a = tile_row * 8 + i;
-        uint col_a = k_offset + j;
-
-        tileA[idx] = (row_a < params.m && col_a < params.k)
-                   ? a[row_a * stride_a_m + col_a * stride_a_k]
-                   : 0.0;
-
-        // Load tile from B: considering transpose
-        // B is (K, N) or (N, K) if trans_b
-        // We want row_b from K dimension [k_offset, k_offset+7]
-        // We want col_b from output cols [tile_col*8, tile_col*8+7]
-        uint row_b = k_offset + i;
-        uint col_b = tile_col * 8 + j;
-
-        tileB[idx] = (row_b < params.k && col_b < params.n)
-                   ? b[row_b * stride_b_k + col_b * stride_b_n]
-                   : 0.0;
-
-        barrier();
-
-        // Unrolled inner loop for better performance
         #pragma unroll 8
         for (uint ki = 0; ki < 8; ki++) {
-            acc += tileA[thread_row * 8 + ki] * tileB[ki * 8 + thread_col];
+            float a_val = tileA[a_row_index + ki];
+            float b_val = tileB[b_col_index + ki * 8u];
+            acc = fma(a_val, b_val, acc);
         }
 
-        barrier();
+        if (k_tile + 1u < num_k_tiles) {
+            uint write_offset = ((k_tile + 1u) & 1u) * 64u;
+            uint next_k_offset = (k_tile + 1u) * 8u;
+
+            uint col_a = next_k_offset + col_a_base;
+            uint row_b = next_k_offset + row_b_base;
+
+            tileA[write_offset + tile_index] = (row_a < params.m && col_a < params.k)
+                ? a[row_a * stride_a_m + col_a * stride_a_k]
+                : 0.0;
+            tileB[write_offset + tile_index] = (row_b < params.k && col_b < params.n)
+                ? b[row_b * stride_b_k + col_b * stride_b_n]
+                : 0.0;
+
+            barrier();
+        }
     }
 
     if (out_row < params.m && out_col < params.n) {
-        // Compute Y[row, col] = alpha * acc + beta * C[row, col]
         float result = params.alpha * acc;
-
         if (params.has_c != 0) {
             uint c_idx = out_row * params.n + out_col;
             result += params.beta * c[c_idx];
         }
-
         uint y_idx = out_row * params.stride_y0 + out_col * params.stride_y1;
         y[y_idx] = result;
     }

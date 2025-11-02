@@ -156,25 +156,25 @@ impl Instruction for GemmInstruction {
                 (
                     32,
                     [32, 32, 1],
-                    8192,
+                    16384,
                     GPUOperation::Gemm_F32_F32_F32_F32_Tiled_32x32,
                 ),
                 (
                     16,
                     [16, 16, 1],
-                    2048,
+                    4096,
                     GPUOperation::Gemm_F32_F32_F32_F32_Tiled_16x16,
                 ),
                 (
                     8,
                     [8, 8, 1],
-                    512,
+                    1024,
                     GPUOperation::Gemm_F32_F32_F32_F32_Tiled_8x8,
                 ),
                 (
                     4,
                     [4, 4, 1],
-                    128,
+                    256,
                     GPUOperation::Gemm_F32_F32_F32_F32_Tiled_4x4,
                 ),
             ];
