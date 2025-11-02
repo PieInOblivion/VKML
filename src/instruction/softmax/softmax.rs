@@ -118,7 +118,9 @@ impl Instruction for SoftmaxInstruction {
             // Size workgroup as multiple of subgroup_size
             let mut local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
             local_size[0] = (local_size[0] / subgroup_size) * subgroup_size;
-            local_size[0] = local_size[0].max(subgroup_size).min(gpu.max_workgroup_invocations());
+            local_size[0] = local_size[0]
+                .max(subgroup_size)
+                .min(gpu.max_workgroup_invocations());
 
             let binding_count = 2;
 
@@ -138,7 +140,11 @@ impl Instruction for SoftmaxInstruction {
                 gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
                 // work_size = total threads needed (batch_size workgroups * local_size[0] threads each)
-                gpu.dispatch(command_buffer, local_size, [batch_size as u64 * local_size[0] as u64, 1, 1]);
+                gpu.dispatch(
+                    command_buffer,
+                    local_size,
+                    [batch_size as u64 * local_size[0] as u64, 1, 1],
+                );
 
                 return Ok(());
             }
@@ -157,7 +163,11 @@ impl Instruction for SoftmaxInstruction {
         gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
         // work_size = total threads needed (batch_size workgroups * local_size[0] threads each)
-        gpu.dispatch(command_buffer, local_size, [batch_size as u64 * local_size[0] as u64, 1, 1]);
+        gpu.dispatch(
+            command_buffer,
+            local_size,
+            [batch_size as u64 * local_size[0] as u64, 1, 1],
+        );
 
         Ok(())
     }

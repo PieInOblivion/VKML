@@ -178,7 +178,7 @@ impl Instruction for GemmInstruction {
                     GPUOperation::Gemm_F32_F32_F32_F32_Tiled_4x4,
                 ),
             ];
-            
+
             // Select best tile size based on shared memory AND matrix dimensions
             let min_dim = m_u64.min(n_u64);
             let max_dim = m_u64.max(n_u64);
@@ -199,7 +199,12 @@ impl Instruction for GemmInstruction {
                     if min_dim >= min_threshold && max_dim >= max_threshold {
                         let binding_count = 4;
 
-                        gpu.bind_compute_pipeline(command_buffer, op, tiled_local_size, binding_count);
+                        gpu.bind_compute_pipeline(
+                            command_buffer,
+                            op,
+                            tiled_local_size,
+                            binding_count,
+                        );
                         gpu.bind_storage_buffers_optional(
                             command_buffer,
                             &[Some(a_gpu_mem), Some(b_gpu_mem), c_gpu_mem, Some(y_gpu_mem)],
