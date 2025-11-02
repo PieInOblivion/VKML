@@ -6,10 +6,8 @@ use std::{
 };
 use vulkanalia::{
     Device, Instance,
-    vk::{
-        self, DeviceV1_0, Handle, InstanceV1_0, InstanceV1_1,
-        KhrPushDescriptorExtensionDeviceCommands,
-    },
+    vk::{self, DeviceV1_0, DeviceV1_3, Handle, InstanceV1_0, InstanceV1_1,
+        KhrPushDescriptorExtensionDeviceCommands},
 };
 
 use crate::{
@@ -951,25 +949,30 @@ impl Gpu {
     /// Insert a memory barrier ensuring previous compute writes are visible to subsequent compute dispatches.
     pub fn barrier_compute_shader_access(&self, command_buffer: vk::CommandBuffer) {
         unsafe {
-            let memory_barrier = vk::MemoryBarrier {
-                s_type: vk::StructureType::MEMORY_BARRIER,
+            let memory_barrier = vk::MemoryBarrier2 {
+                s_type: vk::StructureType::MEMORY_BARRIER_2,
                 next: ptr::null(),
-                src_access_mask: vk::AccessFlags::SHADER_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+                src_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                src_access_mask: vk::AccessFlags2::SHADER_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                dst_access_mask: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
             };
 
-            let buffer_barriers: [vk::BufferMemoryBarrier; 0] = [];
-            let image_barriers: [vk::ImageMemoryBarrier; 0] = [];
+            let barriers = [memory_barrier];
+            let dependency_info = vk::DependencyInfo {
+                s_type: vk::StructureType::DEPENDENCY_INFO,
+                next: ptr::null(),
+                dependency_flags: vk::DependencyFlags::empty(),
+                memory_barrier_count: barriers.len() as u32,
+                memory_barriers: barriers.as_ptr(),
+                buffer_memory_barrier_count: 0,
+                buffer_memory_barriers: ptr::null(),
+                image_memory_barrier_count: 0,
+                image_memory_barriers: ptr::null(),
+            };
 
-            self.get_device().cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::DependencyFlags::empty(),
-                &[memory_barrier],
-                &buffer_barriers,
-                &image_barriers,
-            );
+            self.get_device()
+                .cmd_pipeline_barrier2(command_buffer, &dependency_info);
         }
     }
 
