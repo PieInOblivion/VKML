@@ -1,6 +1,8 @@
 use onnx_extractor::Bytes;
 
+#[derive(Default)]
 pub enum Initialiser {
+    #[default]
     None,
     Bytes(Bytes),
     BytesVec(Vec<Bytes>),
@@ -49,11 +51,5 @@ impl Initialiser {
             Initialiser::Uniform(_, _) => unimplemented!("Uniform"),
             Initialiser::He => unimplemented!("He"),
         }
-    }
-}
-
-impl Default for Initialiser {
-    fn default() -> Self {
-        Initialiser::None
     }
 }
