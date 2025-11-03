@@ -187,9 +187,7 @@ fn convert_onnx_operation_to_instruction(
         }
         "Reshape" => {
             let shape_id = input_ids[1];
-            let raw = initialisers[shape_id]
-                .as_slice()
-                .expect("Reshape parameter tensor missing");
+            let raw = initialisers[shape_id].as_slice();
 
             if !raw.len().is_multiple_of(8) {
                 return Err(VKMLError::OnnxImporter(format!(
@@ -215,9 +213,7 @@ fn convert_onnx_operation_to_instruction(
         }
         "Expand" => {
             let shape_id = input_ids[1];
-            let raw = initialisers[shape_id]
-                .as_slice()
-                .expect("Expand shape tensor missing");
+            let raw = initialisers[shape_id].as_slice();
 
             if !raw.len().is_multiple_of(8) {
                 return Err(VKMLError::OnnxImporter(format!(
@@ -306,22 +302,19 @@ fn convert_onnx_operation_to_instruction(
             // axes may be provided as second input (initializer). If present and has bytes, parse i64s
             let axes = if input_ids.len() >= 2 {
                 let axes_id = input_ids[1];
-                if let Some(raw) = initialisers[axes_id].as_slice() {
-                    if raw.len().is_multiple_of(8) {
-                        let mut v = Vec::new();
-                        for chunk in raw.chunks_exact(8) {
-                            let mut a = [0u8; 8];
-                            a.copy_from_slice(chunk);
-                            v.push(i64::from_le_bytes(a));
-                        }
-                        Some(v)
-                    } else {
-                        return Err(VKMLError::OnnxImporter(
-                            "ReduceMean: axes initializer has invalid length".to_string(),
-                        ));
+                let raw = initialisers[axes_id].as_slice();
+                if raw.len().is_multiple_of(8) {
+                    let mut v = Vec::new();
+                    for chunk in raw.chunks_exact(8) {
+                        let mut a = [0u8; 8];
+                        a.copy_from_slice(chunk);
+                        v.push(i64::from_le_bytes(a));
                     }
+                    Some(v)
                 } else {
-                    None
+                    return Err(VKMLError::OnnxImporter(
+                        "ReduceMean: axes initializer has invalid length".to_string(),
+                    ));
                 }
             } else {
                 None

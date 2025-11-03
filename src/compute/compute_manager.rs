@@ -186,7 +186,7 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
     //      - 'initialisers' would likely be an enum of Vec<Option<InitType>>, where init type is an instruction or Box<[u8]>
-    fn allocate_tensor_graph(&mut self, mut initialisers: Vec<Initialiser>) -> Result<(), VKMLError> {
+    fn allocate_tensor_graph(&mut self, initialisers: Vec<Initialiser>) -> Result<(), VKMLError> {
         let dep_graph = self.tensor_graph.dependency_graph();
         let flattened_ops = &dep_graph.topological_order;
 
@@ -406,12 +406,13 @@ impl ComputeManager {
         }
 
         // 1. Create all new tensor descriptors for transfers (allocation happens later)
-        // Also extend initialisers vec to match the new tensor count
+        // Note: We don't update memory_requirements here because transfer tensors are
+        // implementation overhead from device placement, not part of the original model.
+        // The model's memory_requirements reflects the original model size.
         for (tensor_desc, device_location, layer_id) in new_tensors {
             self.tensor_graph.tensor_descs.push(tensor_desc);
             self.tensor_graph.tensor_to_layer.push(layer_id);
             tensor_locations.push(Some(device_location));
-            initialisers.push(Initialiser::None);  // new transfer tensors have no initializer data
         }
 
         // If any original model output tensors were remapped to device-local copies during planning,
@@ -535,6 +536,7 @@ impl ComputeManager {
             .map(|i| SingleAllocParams {
                 index: i,
                 initialisers_ptr: initialisers.as_mut_ptr(),
+                initialisers_len: initialisers.len(),
                 manager_ptr: self as *const ComputeManager,
                 out_ptrs: out_ptr,
                 tensor_locations_ptr: tensor_locations.as_ptr(),
@@ -588,7 +590,9 @@ impl ComputeManager {
                         gpu.allocate_uninitialised_gpu_memory(expected_size, host_visible)?;
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
-                } else if let Some(slice) = initialiser.as_slice() {
+                } else {
+                    let slice = initialiser.as_slice();
+
                     if slice.len() != expected_size {
                         return Err(VKMLError::ComputeManager(format!(
                             "Initialiser size mismatch: expected {} got {}",
@@ -604,10 +608,6 @@ impl ComputeManager {
                     };
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
-                } else {
-                    Err(VKMLError::ComputeManager(
-                        "Unsupported initialiser type for GPU".to_string(),
-                    ))
                 }
             }
         }
@@ -767,6 +767,7 @@ impl ComputeManager {
 struct SingleAllocParams {
     index: usize,
     initialisers_ptr: *mut Initialiser,
+    initialisers_len: usize,
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,
@@ -774,13 +775,6 @@ struct SingleAllocParams {
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
-    let initialiser = unsafe {
-        mem::replace(
-            &mut *params.initialisers_ptr.add(params.index),
-            Initialiser::None,
-        )
-    };
-
     let manager: &ComputeManager = unsafe { &*params.manager_ptr };
 
     let desc: &TensorDesc = &manager.tensor_graph.tensor_descs[params.index];
@@ -793,6 +787,18 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
 
     // Read host-visible decision for this tensor from the shared array
     let host_visible = unsafe { *params.host_visible_plan_ptr.add(params.index) };
+
+    // Take ownership of initialiser if within bounds, otherwise use None
+    let initialiser = if params.index < params.initialisers_len {
+        unsafe {
+            mem::replace(
+                &mut *params.initialisers_ptr.add(params.index),
+                Initialiser::None,
+            )
+        }
+    } else {
+        Initialiser::None
+    };
 
     let tensor = manager
         .allocate_tensor(desc, &target, initialiser, host_visible)
