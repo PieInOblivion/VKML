@@ -1,3 +1,4 @@
+pub mod allocator;
 pub mod gpu_memory;
 pub mod pool;
 pub mod vk_extensions;

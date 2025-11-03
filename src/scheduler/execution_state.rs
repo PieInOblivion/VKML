@@ -260,7 +260,7 @@ fn create_gpu_chunk_command_buffer(
                 let instruction = compute_manager.tensor_graph.get_instruction_or_panic(op_id);
 
                 instruction
-                    .record_into_command_buffer(gpu, command_buffer, compute_manager)
+                    .record_into_command_buffer(&gpu, command_buffer, compute_manager)
                     .map_err(|err| {
                         VKMLError::Vulkan(format!(
                             "Failed to record commands for op {}: {}",

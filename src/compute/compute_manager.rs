@@ -2,7 +2,10 @@ use std::sync::Arc;
 use std::{mem, ptr};
 
 use crate::compute::{print_model_stats, print_tensorgraph_stats};
-use crate::gpu::{pool::GpuPool, vk_gpu::Gpu};
+use crate::gpu::{
+    pool::GpuPool,
+    vk_gpu::{Gpu, HostAccessMode},
+};
 use crate::instruction;
 use crate::onnx_parser::parse_onnx_model;
 use crate::scheduler::{ExecutionPlan, create_execution_plan, execute_plan};
@@ -205,9 +208,6 @@ impl ComputeManager {
 
         // Transfer operations to insert: (insert_before_op, transfer_instr)
         let mut transfer_operations: Vec<(OperationId, Box<dyn Instruction>)> = Vec::new();
-        // Also track the tensor id pairs (src, dst) for any scheduled transfers so we can
-        // mark them as host-visible later when building the requires_host_visability map.
-        let mut transfer_tensor_pairs: Vec<(usize, usize)> = Vec::new();
 
         // Track available memory per device in the desired order (GPUs then CPU)
         let mut available_memory: Vec<(DeviceId, u64)> = Vec::new();
@@ -343,8 +343,6 @@ impl ComputeManager {
                                 current_device.clone(),
                             );
                             transfer_operations.push((op_id, transfer_instr));
-                            // record src and dst tensor ids for host-visibility marking later
-                            transfer_tensor_pairs.push((tid, new_tensor_id));
 
                             tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
                             new_inputs.push(new_tensor_id);
@@ -475,55 +473,43 @@ impl ComputeManager {
 
         // Now that planning is complete, determine which tensors need to be host-visible.
         // Inputs and outputs should remain host-visible so callers can read/write them.
-        let mut requires_host_visability = vec![false; self.tensor_graph.tensor_descs.len()];
-        for &id in self.tensor_graph.get_input_tensor_ids().iter() {
-            if id < requires_host_visability.len() {
-                requires_host_visability[id] = true;
-            }
-        }
-        for &id in self.tensor_graph.get_output_tensor_ids().iter() {
-            if id < requires_host_visability.len() {
-                requires_host_visability[id] = true;
-            }
-        }
-
-        // Any tensors involved in explicit transfer operations must be host-visible
-        // so we can map/read their contents during the transfer. Mark both source
-        // and destination tensor ids as requiring host visibility.
-        for (src, dst) in transfer_tensor_pairs.iter() {
-            if *src < requires_host_visability.len() {
-                requires_host_visability[*src] = true;
-            }
-            if *dst < requires_host_visability.len() {
-                requires_host_visability[*dst] = true;
-            }
-        }
-
-        // Determine if any GPU can keep all tensors in host-visible device-local memory.
-        if !self.gpus.gpus().is_empty() {
-            let mut planned_gpu_usage = vec![0u64; self.gpus.gpus().len()];
+        let mut host_visible_plan = vec![false; self.tensor_graph.tensor_descs.len()];
+        let gpus = self.gpus.gpus();
+        let gpu_count = gpus.len();
+        if gpu_count > 0 {
+            let mut tensors_by_gpu = vec![Vec::<usize>::new(); gpu_count];
+            let mut total_gpu_bytes = vec![0u64; gpu_count];
 
             for (tensor_id, location) in tensor_locations.iter().enumerate() {
                 if let Some(DeviceId::Gpu(idx)) = location {
                     let bytes = self.tensor_graph.tensor_descs[tensor_id].size_in_bytes() as u64;
-                    planned_gpu_usage[*idx] = planned_gpu_usage[*idx].saturating_add(bytes);
+                    tensors_by_gpu[*idx].push(tensor_id);
+                    total_gpu_bytes[*idx] = total_gpu_bytes[*idx].saturating_add(bytes);
                 }
             }
 
-            for (idx, &bytes) in planned_gpu_usage.iter().enumerate() {
-                let hv_budget = self.gpus.get_gpu(idx).host_visible_device_local_bytes();
-                if bytes > 0 && hv_budget > 0 && bytes <= hv_budget {
-                    for (tensor_id, location) in tensor_locations.iter().enumerate() {
-                        if matches!(location, Some(DeviceId::Gpu(gpu_idx)) if *gpu_idx == idx) {
-                            requires_host_visability[tensor_id] = true;
-                        }
+            let mut reserved_host_visible = vec![0u64; gpu_count];
+
+            for (idx, gpu) in gpus.iter().enumerate() {
+                let total_bytes = total_gpu_bytes[idx];
+                if total_bytes > 0 && gpu.host_visible_device_local_bytes() >= total_bytes {
+                    for &tensor_id in &tensors_by_gpu[idx] {
+                        host_visible_plan[tensor_id] = true;
                     }
+                    reserved_host_visible[idx] = total_bytes;
+                    gpu.set_host_access_mode(HostAccessMode::DirectAllHostVisible);
+                } else {
+                    gpu.set_host_access_mode(HostAccessMode::DeviceLocalWithStaging);
                 }
+            }
+
+            for (idx, gpu) in gpus.iter().enumerate() {
+                gpu.set_host_visible_reserved(reserved_host_visible[idx]);
             }
         }
 
         // Now actually allocate the tensors using the final host-visibility map.
-        self.allocate_tensors(tensor_locations, initialisers, &requires_host_visability)?;
+        self.allocate_tensors(tensor_locations, initialisers, &host_visible_plan)?;
 
         // Cache the dependency graph (recompute after we've modified operations)
         let new_dep_graph = self.tensor_graph.dependency_graph();
@@ -536,7 +522,7 @@ impl ComputeManager {
         &mut self,
         tensor_locations: Vec<Option<DeviceId>>,
         mut initialisers: Vec<Initialiser>,
-        requires_host_visability: &[bool],
+        host_visible_plan: &[bool],
     ) -> Result<(), VKMLError> {
         let count = self.tensor_graph.tensor_descs.len();
 
@@ -550,7 +536,7 @@ impl ComputeManager {
                 manager_ptr: self as *const ComputeManager,
                 out_ptrs: out_ptr,
                 tensor_locations_ptr: tensor_locations.as_ptr(),
-                requires_host_vis_ptr: requires_host_visability.as_ptr(),
+                host_visible_plan_ptr: host_visible_plan.as_ptr(),
             })
             .collect();
 
@@ -568,7 +554,7 @@ impl ComputeManager {
         desc: &TensorDesc,
         target_device: &DeviceId,
         initialiser: Initialiser,
-        requires_host_vis: bool,
+        host_visible: bool,
     ) -> Result<Tensor, VKMLError> {
         let expected_size = desc.size_in_bytes();
 
@@ -597,7 +583,7 @@ impl ComputeManager {
 
                 if matches!(initialiser, Initialiser::None) {
                     let gpu_mem =
-                        gpu.allocate_uninitialised_gpu_memory(expected_size, requires_host_vis)?;
+                        gpu.allocate_uninitialised_gpu_memory(expected_size, host_visible)?;
 
                     Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                 } else if let Some(slice) = initialiser.as_slice() {
@@ -609,7 +595,7 @@ impl ComputeManager {
                         )));
                     }
 
-                    let gpu_mem = if requires_host_vis {
+                    let gpu_mem = if host_visible {
                         gpu.move_to_gpu_host_visible(slice)?
                     } else {
                         gpu.move_to_gpu_host_not_visible(slice)?
@@ -715,7 +701,7 @@ impl ComputeManager {
         self.gpus.gpus().len()
     }
 
-    pub(crate) fn gpu_ref(&self, idx: usize) -> &Gpu {
+    pub(crate) fn gpu_ref(&self, idx: usize) -> Arc<Gpu> {
         self.gpus.get_gpu(idx)
     }
 
@@ -782,7 +768,7 @@ struct SingleAllocParams {
     manager_ptr: *const ComputeManager,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,
-    requires_host_vis_ptr: *const bool,
+    host_visible_plan_ptr: *const bool,
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
@@ -803,11 +789,11 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
             .unwrap_or(DeviceId::Cpu)
     };
 
-    // Read requires_host_vis flag for this tensor from the shared array
-    let requires_host_vis = unsafe { *params.requires_host_vis_ptr.add(params.index) };
+    // Read host-visible decision for this tensor from the shared array
+    let host_visible = unsafe { *params.host_visible_plan_ptr.add(params.index) };
 
     let tensor = manager
-        .allocate_tensor(desc, &target, initialiser, requires_host_vis)
+        .allocate_tensor(desc, &target, initialiser, host_visible)
         .unwrap();
 
     unsafe {

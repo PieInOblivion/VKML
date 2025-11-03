@@ -10,7 +10,7 @@ use zero_pool::{global_pool, zp_define_task_fn};
 use crate::{error::VKMLError, gpu::vk_gpu::Gpu, utils::expect_msg::ExpectMsg};
 
 pub struct GpuPool {
-    gpus: Vec<Gpu>,
+    gpus: Vec<Arc<Gpu>>,
     _entry: Entry,
 }
 
@@ -133,12 +133,15 @@ impl GpuPool {
         }
     }
 
-    pub fn gpus(&self) -> &Vec<Gpu> {
+    pub fn gpus(&self) -> &Vec<Arc<Gpu>> {
         &self.gpus
     }
 
-    pub fn get_gpu(&self, idx: usize) -> &Gpu {
-        self.gpus().get(idx).unwrap()
+    pub fn get_gpu(&self, idx: usize) -> Arc<Gpu> {
+        self.gpus()
+            .get(idx)
+            .cloned()
+            .unwrap_or_else(|| panic!("Requested GPU index {idx} out of range"))
     }
 }
 
@@ -148,8 +151,15 @@ impl std::fmt::Debug for GpuPool {
             .gpus
             .iter()
             .map(|g| {
+                let staging_desc = match g.staging_buffer_info() {
+                    Some((size, props)) => format!(
+                        "Some {{ size_bytes: {}, properties: {:?} }}",
+                        size, props
+                    ),
+                    None => "None".to_string(),
+                };
                 format!(
-                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, memory_in_use: {}, memory_in_use_as_percent: {:.2}%, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, subgroup_size: {}, host_visible_device_local_bytes: {}, coop_matrix: {:?} }}",
+                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, memory_in_use: {}, memory_in_use_as_percent: {:.2}%, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, subgroup_size: {}, host_visible_device_local_bytes: {}, host_access_mode: {:?}, staging_buffer: {}, coop_matrix: {:?} }}",
                     g.name(),
                     g.device_type(),
                     g.has_compute(),
@@ -168,6 +178,8 @@ impl std::fmt::Debug for GpuPool {
                     g.max_push_descriptors(),
                     g.subgroup_size(),
                     g.host_visible_device_local_bytes(),
+                    g.host_access_mode(),
+                    staging_desc,
                     g.extensions().coop_matrix_shapes(),
                 )
             })
@@ -183,12 +195,14 @@ struct GpuInitParams {
     instance: Arc<Instance>,
     physical_device: vk::PhysicalDevice,
     index: usize,
-    out_ptr: *mut Gpu,
+    out_ptr: *mut Arc<Gpu>,
 }
 
 zp_define_task_fn!(gpu_init_task, GpuInitParams, |params| {
-    let gpu = Gpu::new_shared(params.instance.clone(), params.physical_device)
-        .expect_msg("Failed to initialize GPU");
+    let gpu = Arc::new(
+        Gpu::new_shared(params.instance.clone(), params.physical_device)
+            .expect_msg("Failed to initialize GPU"),
+    );
 
     unsafe {
         let slot = params.out_ptr.add(params.index);

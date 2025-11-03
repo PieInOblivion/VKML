@@ -1,14 +1,17 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use vulkanalia::{Device, vk, vk::DeviceV1_0};
+use vulkanalia::{vk, vk::DeviceV1_0};
 
 use crate::error::VKMLError;
+
+use super::vk_gpu::Gpu;
 
 pub struct GPUMemory {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
     pub size: vk::DeviceSize,
-    pub device: Arc<Device>,
+    pub properties: vk::MemoryPropertyFlags,
+    gpu: Weak<Gpu>,
 }
 
 impl GPUMemory {
@@ -16,17 +19,25 @@ impl GPUMemory {
         buffer: vk::Buffer,
         memory: vk::DeviceMemory,
         size: vk::DeviceSize,
-        device: Arc<Device>,
+        properties: vk::MemoryPropertyFlags,
+        gpu: &Arc<Gpu>,
     ) -> Self {
         Self {
             buffer,
             memory,
             size,
-            device,
+            properties,
+            gpu: Arc::downgrade(gpu),
         }
     }
 
-    /// Copy raw bytes into GPU memory.
+    fn upgrade_gpu(&self) -> Result<Arc<Gpu>, VKMLError> {
+        self.gpu.upgrade().ok_or_else(|| {
+            VKMLError::Vulkan("GPU allocation reference dropped before use".to_string())
+        })
+    }
+
+    /// Copy raw bytes into GPU memory. Falls back to staging when not host-visible.
     pub fn copy_into(&self, data: &[u8]) -> Result<(), VKMLError> {
         let data_size = data.len() as vk::DeviceSize;
 
@@ -37,35 +48,64 @@ impl GPUMemory {
             )));
         }
 
-        unsafe {
-            let data_ptr =
-                self.device
-                    .map_memory(self.memory, 0, data_size, vk::MemoryMapFlags::empty())?
-                    as *mut u8;
+        if self
+            .properties
+            .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+        {
+            let gpu = self.upgrade_gpu()?;
+            unsafe {
+                let data_ptr = gpu.get_device().map_memory(
+                    self.memory,
+                    0,
+                    data_size,
+                    vk::MemoryMapFlags::empty(),
+                )? as *mut u8;
 
-            std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
+                std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
 
-            self.device.unmap_memory(self.memory);
+                gpu.get_device().unmap_memory(self.memory);
+            }
+            Ok(())
+        } else {
+            let gpu = self.upgrade_gpu()?;
+            gpu.write_through_staging(self, data)
         }
-
-        Ok(())
     }
 
-    /// Read raw bytes from GPU memory.
+    /// Read raw bytes from GPU memory. Falls back to staging when not host-visible.
     pub fn read_memory(&self) -> Result<Vec<u8>, VKMLError> {
-        let mut output_data = vec![0u8; self.size as usize];
+        if self
+            .properties
+            .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+        {
+            let gpu = self.upgrade_gpu()?;
+            let mut output_data = vec![0u8; self.size as usize];
 
-        unsafe {
-            let data_ptr =
-                self.device
-                    .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())?
-                    as *const u8;
+            unsafe {
+                let data_ptr = gpu.get_device().map_memory(
+                    self.memory,
+                    0,
+                    self.size,
+                    vk::MemoryMapFlags::empty(),
+                )? as *const u8;
 
-            std::ptr::copy_nonoverlapping(data_ptr, output_data.as_mut_ptr(), output_data.len());
+                std::ptr::copy_nonoverlapping(
+                    data_ptr,
+                    output_data.as_mut_ptr(),
+                    output_data.len(),
+                );
 
-            self.device.unmap_memory(self.memory);
+                gpu.get_device().unmap_memory(self.memory);
+            }
+
+            Ok(output_data)
+        } else {
+            let gpu = self.upgrade_gpu()?;
+            gpu.read_through_staging(self)
         }
+    }
 
-        Ok(output_data)
+    pub fn gpu(&self) -> Result<Arc<Gpu>, VKMLError> {
+        self.upgrade_gpu()
     }
 }
