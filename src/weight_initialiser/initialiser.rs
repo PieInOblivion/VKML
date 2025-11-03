@@ -51,3 +51,9 @@ impl Initialiser {
         }
     }
 }
+
+impl Default for Initialiser {
+    fn default() -> Self {
+        Initialiser::None
+    }
+}

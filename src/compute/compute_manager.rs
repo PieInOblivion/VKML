@@ -790,12 +790,7 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
 
     // Take ownership of initialiser if within bounds, otherwise use None
     let initialiser = if params.index < params.initialisers_len {
-        unsafe {
-            mem::replace(
-                &mut *params.initialisers_ptr.add(params.index),
-                Initialiser::None,
-            )
-        }
+        unsafe { mem::take(&mut *params.initialisers_ptr.add(params.index)) }
     } else {
         Initialiser::None
     };
