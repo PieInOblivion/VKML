@@ -564,11 +564,11 @@ impl Gpu {
         self.memory_tracker.get_available()
     }
 
-    pub fn memory_usage(&self) -> u64 {
+    pub fn memory_current(&self) -> u64 {
         self.memory_tracker.get_current()
     }
 
-    pub fn allocate_tracked(&self, size: vk::DeviceSize) {
+    pub fn memory_allocate_usage(&self, size: vk::DeviceSize) {
         self.memory_tracker.allocate(size);
     }
 

@@ -164,11 +164,11 @@ impl std::fmt::Debug for GpuPool {
                     g.device_type(),
                     g.has_compute(),
                     g.memory_available(),
-                    g.memory_usage(),
+                    g.memory_current(),
                     if g.memory_total() == 0 {
                         0.0
                     } else {
-                        (g.memory_usage() as f64 / g.memory_total() as f64) * 100.0
+                        (g.memory_current() as f64 / g.memory_total() as f64) * 100.0
                     },
                     g.max_workgroup_count(),
                     g.max_workgroup_size(),

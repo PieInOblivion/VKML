@@ -103,7 +103,7 @@ impl GpuAllocator {
             unsafe {
                 let (staging_size, device_local_staging) = self.plan_current(gpu.as_ref());
 
-                gpu.allocate_tracked(staging_size as vk::DeviceSize);
+                gpu.memory_allocate_usage(staging_size as vk::DeviceSize);
 
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
@@ -171,7 +171,7 @@ impl GpuAllocator {
         }
 
         let size_in_bytes = bytes.len() as vk::DeviceSize;
-        gpu.allocate_tracked(size_in_bytes);
+        gpu.memory_allocate_usage(size_in_bytes);
 
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
@@ -236,7 +236,7 @@ impl GpuAllocator {
         bytes: &[u8],
     ) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes.len() as vk::DeviceSize;
-        gpu.allocate_tracked(size_in_bytes);
+        gpu.memory_allocate_usage(size_in_bytes);
 
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
@@ -284,7 +284,7 @@ impl GpuAllocator {
         host_visible: bool,
     ) -> Result<GPUMemory, VKMLError> {
         let size_in_bytes = bytes as vk::DeviceSize;
-        gpu.allocate_tracked(size_in_bytes);
+        gpu.memory_allocate_usage(size_in_bytes);
 
         unsafe {
             let buffer_info = vk::BufferCreateInfo {
