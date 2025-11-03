@@ -186,7 +186,7 @@ impl ComputeManager {
     //      - Graph models that have split paths of multiple layers would likely benefit from being executed on seperate gpus?
     //      - Graphs with very large layers might benefit from backpropogation being split between devices?
     //      - 'initialisers' would likely be an enum of Vec<Option<InitType>>, where init type is an instruction or Box<[u8]>
-    fn allocate_tensor_graph(&mut self, initialisers: Vec<Initialiser>) -> Result<(), VKMLError> {
+    fn allocate_tensor_graph(&mut self, mut initialisers: Vec<Initialiser>) -> Result<(), VKMLError> {
         let dep_graph = self.tensor_graph.dependency_graph();
         let flattened_ops = &dep_graph.topological_order;
 
@@ -406,10 +406,12 @@ impl ComputeManager {
         }
 
         // 1. Create all new tensor descriptors for transfers (allocation happens later)
+        // Also extend initialisers vec to match the new tensor count
         for (tensor_desc, device_location, layer_id) in new_tensors {
             self.tensor_graph.tensor_descs.push(tensor_desc);
             self.tensor_graph.tensor_to_layer.push(layer_id);
             tensor_locations.push(Some(device_location));
+            initialisers.push(Initialiser::None);  // new transfer tensors have no initializer data
         }
 
         // If any original model output tensors were remapped to device-local copies during planning,

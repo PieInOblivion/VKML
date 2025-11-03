@@ -103,8 +103,6 @@ impl GpuAllocator {
             unsafe {
                 let (staging_size, device_local_staging) = self.plan_current(gpu.as_ref());
 
-                gpu.memory_allocate_usage(staging_size as vk::DeviceSize);
-
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
                     next: std::ptr::null(),
