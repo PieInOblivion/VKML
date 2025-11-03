@@ -1,6 +1,6 @@
 use std::cmp;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use vulkanalia::vk::{self, DeviceV1_0};
 
@@ -10,17 +10,28 @@ use crate::utils::expect_msg::ExpectMsg;
 use super::gpu_memory::GPUMemory;
 use super::vk_gpu::Gpu;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug)]
+#[repr(u8)]
 pub enum HostAccessMode {
-    /// All tensors are host visible; staging is unnecessary.
-    DirectAllHostVisible,
     /// Tensors remain device local and host access occurs through staging.
     DeviceLocalWithStaging,
+    /// All tensors are host visible; staging is unnecessary.
+    DirectAllHostVisible,
+}
+
+impl HostAccessMode {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => HostAccessMode::DeviceLocalWithStaging,
+            1 => HostAccessMode::DirectAllHostVisible,
+            _ => unreachable!("HostAccessMode incorrect u8"),
+        }
+    }
 }
 
 pub struct GpuAllocator {
     host_visible_reserved: AtomicU64,
-    host_access_mode: RwLock<HostAccessMode>,
+    host_access_mode: AtomicU8,
     staging_buffer: OnceLock<Mutex<GPUMemory>>,
 }
 
@@ -28,17 +39,18 @@ impl GpuAllocator {
     pub fn new() -> Self {
         Self {
             host_visible_reserved: AtomicU64::new(0),
-            host_access_mode: RwLock::new(HostAccessMode::DeviceLocalWithStaging),
+            host_access_mode: AtomicU8::new(HostAccessMode::DeviceLocalWithStaging as u8),
             staging_buffer: OnceLock::new(),
         }
     }
 
     pub fn host_access_mode(&self) -> HostAccessMode {
-        *self.host_access_mode.read().unwrap()
+        let v = self.host_access_mode.load(Ordering::Acquire);
+        HostAccessMode::from_u8(v)
     }
 
     pub fn set_host_access_mode(&self, mode: HostAccessMode) {
-        *self.host_access_mode.write().unwrap() = mode;
+        self.host_access_mode.store(mode as u8, Ordering::Release);
     }
 
     pub fn direct_host_mode(&self) -> bool {
