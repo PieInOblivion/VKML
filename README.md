@@ -22,17 +22,11 @@ The proof of concept goal for this project will be met when we are able to bench
 ## Current Implementation Details (Assumptions, Descisions and Todo's)
 
 ### Overall Todo's
-* Automatic workgroup decision making
-* JIT like Descriptor Set Layout, Descriptor Sets, Pipeline Layout, Descriptor Pool optimisation implementation
-  * The current implementation is still from early basic gpu testing
-  * More likely move fully to VkShaderEXT
-* Vulkan Compute Queue investigations
-  * Syncing multiple compute queues on same device vs use one queue, pros, cons, vendor driver implementation differences etc
+* Graph optimisaion pass
 * Interface for manual instruction and tensor modification into model and/or tensor graphs
 * Backwards Pass
-* Multiple data formats
-* Investigate lock free execution scheduling. Should be faster than precomputed parrallel stages
-* Dynamic graph support
+* Dynamic graph support (Conditionals, Loops, etc)
+* Implementing more instructions/operations for more datatypes
 
 ### Image Loading
 * Current proof of concept implementation stores all file names in memory
@@ -52,11 +46,14 @@ The proof of concept goal for this project will be met when we are able to bench
   * Could benefit from periodic queue flushing instead of sequential generate -> push -> work pattern
 
 ### GPU Management
-* Currently assumes all GPU memory is free
-  * Will implement VK_EXT_memory_budget in future (commonly implemented extension)
-  * Final implementation will track self usage and initial usage from other processes
-    * Will include configurable threshold (e.g, 95% of free memory)
-* GPU filtering currently checks compute capability
+* Memory tracking implemented using VK_EXT_memory_budget when available
+  * Tracks both self usage and initial usage from other processes
+  * Configurable threshold (default 95% of available memory)
+  * Atomic tracking for thread-safe parallel allocation
+* Automatic model placement across available devices (GPUs and CPU)
+  * Automatically creates transfer operations when model is split across devices
+  * Handles host-visible vs device-local memory requirements
+* GPU filtering checks compute capability
   * Future investigation needed for non-compute flag GPUs
 * GPU-to-GPU movement currently routes through CPU
   * Need to investigate Vulkan device pools
@@ -65,18 +62,20 @@ The proof of concept goal for this project will be met when we are able to bench
 ### Architecture Decisions
 * Model, Layer, Tensor etc. act as descriptors/blueprints only
   * Allows the compute manager to handle all data and memory
-  * Large seperation between blueprint layers and final tensor DAG
+  * Large separation between blueprint layers and final tensor DAG
 * ImageBatch to f32 function assumes little endian storage
-* Current GPU memory calculations:
-  * Doesn't account for allocation overhead (acceptable with safe memory threshold)
-  * Doesn't track CPU memory usage past initial capacity checks
+* Memory tracking:
+  * GPU memory tracked atomically with VK_EXT_memory_budget integration
+  * CPU memory tracked with atomic counters
+  * Pre-allocation checks ensure model fits before attempting allocation
+* Zero-copy optimisations:
+  * CPU allocations use zero-copy transfer when possible
+  * GPU allocations use reference-based zero-copy transfer when possible
 * Model storage is sequential in memory
-  * Prevents small layers being stored out of order on multi-device compute configurations
   * Avoids unnecessary CPU transfers
 * Current compute implementation:
-  * All parallelisable work is done so, but no stage fusion exists yet
-  * Sends and waits for GPU per parallel execution stage
-  * Future improvement: Chain of multiple dependant commands sent to gpu using threadpool or native Vulkan solution
+  * All parallelisable work is done so, relying on gpu hardware scheduler
+  * Parallel tensor allocation using thread pool
 
 ### Vulkan Usage
 * Vendor specific extensions become standard extensions depending on adoption. As of 2025, ARM appears to be focusing on adding ML specific extension to Vulkan
