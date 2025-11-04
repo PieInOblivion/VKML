@@ -27,34 +27,22 @@ The proof of concept goal for this project will be met when we are able to bench
 * Backwards Pass
 * Dynamic graph support (Conditionals, Loops, etc)
 * Implementing more instructions/operations for more datatypes
-
-### Image Loading
-* Current proof of concept implementation stores all file names in memory
-  * Raw filesystems typically don't store file counts and aren't sorted, so we provide users options for replicatability
-  * Directly reading filesystems into batches means last seen files can never be in the first batches. Which is why currently it requires a preread and store of the directory
-  * Future support planned for CSV and other formats
-    * This will stop the need for prereading directory
-  * All images must be of the same colour format. There are no tools to convert or transform images yet in this library
-  * Raw binary support planned
+* Multi-threading for CPU operation/instructions; matmul, gemm, etc. Currently they serve only as references and proof of concept implementations
 
 ### Thread Pool Implementation
-* Typical usage is one pool shared between required functions. Allows creation of multiple pools to be used for different tasks
-* Currently always required by some functions. If single-threaded is needed, this leads to creating a pool with one worker
-  * This requires more memory than running without a worker pool
-* Thread pool will be implemented as an option in future
-* Current batch processing generates entire batch before submitting work
-  * Could benefit from periodic queue flushing instead of sequential generate -> push -> work pattern
+* One global thread pool is used throughout the entire process, zero-pool
+* This means that in most cases, bar some older dgpu specifications that require staged allocation logic, the entire process is multi-threaded where possible and lock free.
 
 ### GPU Management
 * Memory tracking implemented using VK_EXT_memory_budget when available
   * Tracks both self usage and initial usage from other processes
   * Configurable threshold (default 95% of available memory)
-  * Atomic tracking for thread-safe parallel allocation
+  * Multi-threaded allocation
 * Automatic model placement across available devices (GPUs and CPU)
   * Automatically creates transfer operations when model is split across devices
   * Handles host-visible vs device-local memory requirements
-* GPU filtering checks compute capability
-  * Future investigation needed for non-compute flag GPUs
+* GPU features are taken into account, and performance features are toggled as supported on a per device level
+  * No vendor specific extensions used (for now)
 * GPU-to-GPU movement currently routes through CPU
   * Need to investigate Vulkan device pools
   * Research needed on VK shared memory pool extensions
@@ -63,12 +51,12 @@ The proof of concept goal for this project will be met when we are able to bench
 * Model, Layer, Tensor etc. act as descriptors/blueprints only
   * Allows the compute manager to handle all data and memory
   * Large separation between blueprint layers and final tensor DAG
-* ImageBatch to f32 function assumes little endian storage
 * Memory tracking:
   * GPU memory tracked atomically with VK_EXT_memory_budget integration
   * CPU memory tracked with atomic counters
   * Pre-allocation checks ensure model fits before attempting allocation
 * Zero-copy optimisations:
+  * Model loading is full zero-copy
   * CPU allocations use zero-copy transfer when possible
   * GPU allocations use reference-based zero-copy transfer when possible
 * Model storage is sequential in memory
