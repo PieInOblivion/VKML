@@ -1,9 +1,8 @@
 #version 450
 
-// 32x32 tile computed by 16x16 workgroup (256 threads) with 2x2 output blocks per thread
-// Uses ping-pong shared memory buffering (16 KB total)
+// 32x32 workgroup (1024 threads), 32x32 tile, 16 KB ping-pong shared memory
 
-layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 layout(std430, binding = 0) buffer InBufferA { float a[]; };
 layout(std430, binding = 1) buffer InBufferB { float b[]; };
@@ -30,179 +29,72 @@ void main() {
 
     uint thread_row = gl_LocalInvocationID.y;
     uint thread_col = gl_LocalInvocationID.x;
+    
+    uint out_row = tile_row * 32 + thread_row;
+    uint out_col = tile_col * 32 + thread_col;
 
-    uint row0_local = thread_row * 2;
-    uint row1_local = row0_local + 1;
-    uint col0_local = thread_col * 2;
-    uint col1_local = col0_local + 1;
-
-    uint out_row0 = tile_row * 32 + row0_local;
-    uint out_row1 = out_row0 + 1;
-    uint out_col0 = tile_col * 32 + col0_local;
-    uint out_col1 = out_col0 + 1;
-
-    float acc00 = 0.0;
-    float acc01 = 0.0;
-    float acc10 = 0.0;
-    float acc11 = 0.0;
+    float acc = 0.0;
 
     uint num_k_tiles = (dims.k + 31) / 32;
 
     if (num_k_tiles == 0) {
-        if (out_row0 < dims.m) {
-            if (out_col0 < dims.n) {
-                c[out_row0 * dims.stride_c0 + out_col0 * dims.stride_c1] = 0.0;
-            }
-            if (out_col1 < dims.n) {
-                c[out_row0 * dims.stride_c0 + out_col1 * dims.stride_c1] = 0.0;
-            }
-        }
-        if (out_row1 < dims.m) {
-            if (out_col0 < dims.n) {
-                c[out_row1 * dims.stride_c0 + out_col0 * dims.stride_c1] = 0.0;
-            }
-            if (out_col1 < dims.n) {
-                c[out_row1 * dims.stride_c0 + out_col1 * dims.stride_c1] = 0.0;
-            }
+        if (out_row < dims.m && out_col < dims.n) {
+            c[out_row * dims.stride_c0 + out_col * dims.stride_c1] = 0.0;
         }
         return;
     }
 
-    uint linear_id = thread_row * 16 + thread_col;
-    uint base_idx = linear_id * 4;
+    uint idx = thread_row * 32 + thread_col;
+    uint global_row_base = tile_row * 32;
+    uint global_col_base = tile_col * 32;
 
-    uint idx0 = base_idx + 0u;
-    uint idx1 = base_idx + 1u;
-    uint idx2 = base_idx + 2u;
-    uint idx3 = base_idx + 3u;
+    uint row_a = global_row_base + thread_row;
+    uint col_a0 = thread_col;
+    uint row_b0 = thread_row;
+    uint col_b = global_col_base + thread_col;
 
-    uint local_row0 = idx0 / 32u;
-    uint local_col0 = idx0 % 32u;
-    uint local_row1 = idx1 / 32u;
-    uint local_col1 = idx1 % 32u;
-    uint local_row2 = idx2 / 32u;
-    uint local_col2 = idx2 % 32u;
-    uint local_row3 = idx3 / 32u;
-    uint local_col3 = idx3 % 32u;
-
-    uint global_row_base = tile_row * 32u;
-    uint global_col_base = tile_col * 32u;
-
-    // Preload first tile (k_tile = 0) into buffer 0
-    uint row_a0 = global_row_base + local_row0;
-    uint row_a1 = global_row_base + local_row1;
-    uint row_a2 = global_row_base + local_row2;
-    uint row_a3 = global_row_base + local_row3;
-
-    tileA[idx0] = (row_a0 < dims.m && local_col0 < dims.k)
-        ? a[row_a0 * dims.stride_a0 + local_col0 * dims.stride_a1]
-        : 0.0;
-    tileA[idx1] = (row_a1 < dims.m && local_col1 < dims.k)
-        ? a[row_a1 * dims.stride_a0 + local_col1 * dims.stride_a1]
-        : 0.0;
-    tileA[idx2] = (row_a2 < dims.m && local_col2 < dims.k)
-        ? a[row_a2 * dims.stride_a0 + local_col2 * dims.stride_a1]
-        : 0.0;
-    tileA[idx3] = (row_a3 < dims.m && local_col3 < dims.k)
-        ? a[row_a3 * dims.stride_a0 + local_col3 * dims.stride_a1]
+    // Preload first tile into buffer 0
+    tileA[idx] = (row_a < dims.m && col_a0 < dims.k)
+        ? a[row_a * dims.stride_a0 + col_a0 * dims.stride_a1]
         : 0.0;
 
-    tileB[idx0] = (local_row0 < dims.k && (global_col_base + local_col0) < dims.n)
-        ? b[local_row0 * dims.stride_b0 + (global_col_base + local_col0) * dims.stride_b1]
-        : 0.0;
-    tileB[idx1] = (local_row1 < dims.k && (global_col_base + local_col1) < dims.n)
-        ? b[local_row1 * dims.stride_b0 + (global_col_base + local_col1) * dims.stride_b1]
-        : 0.0;
-    tileB[idx2] = (local_row2 < dims.k && (global_col_base + local_col2) < dims.n)
-        ? b[local_row2 * dims.stride_b0 + (global_col_base + local_col2) * dims.stride_b1]
-        : 0.0;
-    tileB[idx3] = (local_row3 < dims.k && (global_col_base + local_col3) < dims.n)
-        ? b[local_row3 * dims.stride_b0 + (global_col_base + local_col3) * dims.stride_b1]
+    tileB[idx] = (row_b0 < dims.k && col_b < dims.n)
+        ? b[row_b0 * dims.stride_b0 + col_b * dims.stride_b1]
         : 0.0;
 
     barrier();
 
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
         uint read_offset = (k_tile & 1u) * 1024u;
-
-        uint a_row0_index = read_offset + row0_local * 32u;
-        uint a_row1_index = read_offset + row1_local * 32u;
-        uint b_col0_index = read_offset + col0_local;
-        uint b_col1_index = read_offset + col1_local;
+        uint a_index = read_offset + thread_row * 32u;
+        uint b_index = read_offset + thread_col;
 
         #pragma unroll 32
         for (uint ki = 0; ki < 32; ki++) {
-            float a0 = tileA[a_row0_index + ki];
-            float a1 = tileA[a_row1_index + ki];
-            uint b_row_index = read_offset + ki * 32u;
-            float b0 = tileB[b_row_index + col0_local];
-            float b1 = tileB[b_row_index + col1_local];
-
-            acc00 = fma(a0, b0, acc00);
-            acc01 = fma(a0, b1, acc01);
-            acc10 = fma(a1, b0, acc10);
-            acc11 = fma(a1, b1, acc11);
+            float a_val = tileA[a_index + ki];
+            float b_val = tileB[b_index + ki * 32u];
+            acc = fma(a_val, b_val, acc);
         }
 
         if (k_tile + 1u < num_k_tiles) {
             uint write_offset = ((k_tile + 1u) & 1u) * 1024u;
             uint next_k_offset = (k_tile + 1u) * 32u;
 
-            uint col_a0 = next_k_offset + local_col0;
-            uint col_a1 = next_k_offset + local_col1;
-            uint col_a2 = next_k_offset + local_col2;
-            uint col_a3 = next_k_offset + local_col3;
+            uint col_a = next_k_offset + col_a0;
+            uint row_b = next_k_offset + row_b0;
 
-            uint row_b0 = next_k_offset + local_row0;
-            uint row_b1 = next_k_offset + local_row1;
-            uint row_b2 = next_k_offset + local_row2;
-            uint row_b3 = next_k_offset + local_row3;
-
-            tileA[write_offset + idx0] = (row_a0 < dims.m && col_a0 < dims.k)
-                ? a[row_a0 * dims.stride_a0 + col_a0 * dims.stride_a1]
+            tileA[write_offset + idx] = (row_a < dims.m && col_a < dims.k)
+                ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
                 : 0.0;
-            tileA[write_offset + idx1] = (row_a1 < dims.m && col_a1 < dims.k)
-                ? a[row_a1 * dims.stride_a0 + col_a1 * dims.stride_a1]
-                : 0.0;
-            tileA[write_offset + idx2] = (row_a2 < dims.m && col_a2 < dims.k)
-                ? a[row_a2 * dims.stride_a0 + col_a2 * dims.stride_a1]
-                : 0.0;
-            tileA[write_offset + idx3] = (row_a3 < dims.m && col_a3 < dims.k)
-                ? a[row_a3 * dims.stride_a0 + col_a3 * dims.stride_a1]
-                : 0.0;
-
-            tileB[write_offset + idx0] = (row_b0 < dims.k && (global_col_base + local_col0) < dims.n)
-                ? b[row_b0 * dims.stride_b0 + (global_col_base + local_col0) * dims.stride_b1]
-                : 0.0;
-            tileB[write_offset + idx1] = (row_b1 < dims.k && (global_col_base + local_col1) < dims.n)
-                ? b[row_b1 * dims.stride_b0 + (global_col_base + local_col1) * dims.stride_b1]
-                : 0.0;
-            tileB[write_offset + idx2] = (row_b2 < dims.k && (global_col_base + local_col2) < dims.n)
-                ? b[row_b2 * dims.stride_b0 + (global_col_base + local_col2) * dims.stride_b1]
-                : 0.0;
-            tileB[write_offset + idx3] = (row_b3 < dims.k && (global_col_base + local_col3) < dims.n)
-                ? b[row_b3 * dims.stride_b0 + (global_col_base + local_col3) * dims.stride_b1]
+            tileB[write_offset + idx] = (row_b < dims.k && col_b < dims.n)
+                ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
                 : 0.0;
 
             barrier();
         }
     }
 
-    if (out_row0 < dims.m) {
-        if (out_col0 < dims.n) {
-            c[out_row0 * dims.stride_c0 + out_col0 * dims.stride_c1] = acc00;
-        }
-        if (out_col1 < dims.n) {
-            c[out_row0 * dims.stride_c0 + out_col1 * dims.stride_c1] = acc01;
-        }
-    }
-
-    if (out_row1 < dims.m) {
-        if (out_col0 < dims.n) {
-            c[out_row1 * dims.stride_c0 + out_col0 * dims.stride_c1] = acc10;
-        }
-        if (out_col1 < dims.n) {
-            c[out_row1 * dims.stride_c0 + out_col1 * dims.stride_c1] = acc11;
-        }
+    if (out_row < dims.m && out_col < dims.n) {
+        c[out_row * dims.stride_c0 + out_col * dims.stride_c1] = acc;
     }
 }
