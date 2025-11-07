@@ -22,7 +22,8 @@ The proof of concept goal for this project will be met when we are able to bench
 ## Current Implementation Details (Assumptions, Descisions and Todo's)
 
 ### Overall Todo's
-* Graph optimisaion pass
+* Graph optimisaion pass; fusion etc
+* VK_NV_cooperative_matrix2
 * Interface for manual instruction and tensor modification into model and/or tensor graphs
 * Backwards Pass
 * Dynamic graph support (Conditionals, Loops, etc)
