@@ -14,7 +14,7 @@ categories = ["science", "graphics", "hardware-support"]
 lto = true
 
 [dependencies]
-vulkanalia = { version = "0.32", features = ["libloading"] }
+vulkanalia = { version = "0.33", features = ["libloading"] }
 rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
