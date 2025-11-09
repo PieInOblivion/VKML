@@ -5,7 +5,7 @@ use crate::{
 use std::collections::HashSet;
 
 pub fn print_tensor_flow(cm: &ComputeManager) {
-    println!("\n=== TENSOR GRAPH VISUALIZATION ===\n");
+    println!("\n=== TENSOR GRAPH VISUALISATION ===\n");
 
     let plan = match create_execution_plan(cm) {
         Ok(p) => p,
