@@ -1,6 +1,6 @@
 #version 450
 
-// 16x16 workgroup (256 threads), 16x16 tile, 4 KB ping-pong shared memory
+// 16x16 workgroup (256 threads), 16x16 tile, 2 KB shared memory
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -20,8 +20,8 @@ layout(push_constant) uniform PushConstants {
     uint stride_c1;
 } dims;
 
-shared float tileA[512];
-shared float tileB[512];
+shared float tileA[256];
+shared float tileB[256];
 
 void main() {
     uint tile_row = gl_WorkGroupID.y;
@@ -48,47 +48,29 @@ void main() {
     uint global_row_a = tile_row * 16 + thread_row;
     uint global_col_b = tile_col * 16 + thread_col;
 
-    // Preload first tile into buffer 0
-    tileA[idx] = (global_row_a < dims.m && thread_col < dims.k)
-        ? a[global_row_a * dims.stride_a0 + thread_col * dims.stride_a1]
-        : 0.0;
-
-    tileB[idx] = (thread_row < dims.k && global_col_b < dims.n)
-        ? b[thread_row * dims.stride_b0 + global_col_b * dims.stride_b1]
-        : 0.0;
-
-    barrier();
-
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
-        uint read_offset = (k_tile & 1u) * 256u;
+        uint k_offset = k_tile * 16u;
+        uint col_a = k_offset + thread_col;
+        uint row_b = k_offset + thread_row;
 
-        uint a_index = read_offset + thread_row * 16u;
-        uint b_index = read_offset + thread_col;
+        tileA[idx] = (global_row_a < dims.m && col_a < dims.k)
+            ? a[global_row_a * dims.stride_a0 + col_a * dims.stride_a1]
+            : 0.0;
+
+        tileB[idx] = (row_b < dims.k && global_col_b < dims.n)
+            ? b[row_b * dims.stride_b0 + global_col_b * dims.stride_b1]
+            : 0.0;
+
+        barrier();
 
         #pragma unroll 16
         for (uint ki = 0; ki < 16; ki++) {
-            acc = fma(tileA[a_index], tileB[b_index], acc);
-            a_index += 1u;
-            b_index += 16u;
+            float a_val = tileA[thread_row * 16u + ki];
+            float b_val = tileB[ki * 16u + thread_col];
+            acc = fma(a_val, b_val, acc);
         }
 
-        if (k_tile + 1u < num_k_tiles) {
-            uint write_offset = ((k_tile + 1u) & 1u) * 256u;
-            uint next_k_offset = (k_tile + 1u) * 16u;
-
-            uint col_a = next_k_offset + thread_col;
-            uint row_b = next_k_offset + thread_row;
-
-            tileA[write_offset + idx] = (global_row_a < dims.m && col_a < dims.k)
-                ? a[global_row_a * dims.stride_a0 + col_a * dims.stride_a1]
-                : 0.0;
-
-            tileB[write_offset + idx] = (row_b < dims.k && global_col_b < dims.n)
-                ? b[row_b * dims.stride_b0 + global_col_b * dims.stride_b1]
-                : 0.0;
-
-            barrier();
-        }
+        barrier();
     }
 
     if (out_row < dims.m && out_col < dims.n) {

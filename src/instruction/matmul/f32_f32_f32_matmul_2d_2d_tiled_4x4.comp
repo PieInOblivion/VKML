@@ -1,6 +1,6 @@
 #version 450
 
-// 4x4 workgroup (16 threads), 4x4 tile, 256 bytes ping-pong shared memory
+// 4x4 workgroup (16 threads), 4x4 tile, 128 B shared memory
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
 
@@ -20,8 +20,8 @@ layout(push_constant) uniform PushConstants {
     uint stride_c1;
 } dims;
 
-shared float tileA[32];
-shared float tileB[32];
+shared float tileA[16];
+shared float tileB[16];
 
 void main() {
     uint tile_row = gl_WorkGroupID.y;
@@ -49,48 +49,30 @@ void main() {
     uint global_col_base = tile_col * 4;
 
     uint row_a = global_row_base + thread_row;
-    uint col_a0 = thread_col;
-    uint row_b0 = thread_row;
     uint col_b = global_col_base + thread_col;
 
-    tileA[tile_index] = (row_a < dims.m && col_a0 < dims.k)
-        ? a[row_a * dims.stride_a0 + col_a0 * dims.stride_a1]
-        : 0.0;
-    tileB[tile_index] = (row_b0 < dims.k && col_b < dims.n)
-        ? b[row_b0 * dims.stride_b0 + col_b * dims.stride_b1]
-        : 0.0;
-
-    barrier();
-
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
-        uint read_offset = (k_tile & 1u) * 16u;
+        uint k_offset = k_tile * 4u;
+        uint col_a = k_offset + thread_col;
+        uint row_b = k_offset + thread_row;
 
-        uint a_index = read_offset + thread_row * 4u;
-        uint b_index = read_offset + thread_col;
+        tileA[tile_index] = (row_a < dims.m && col_a < dims.k)
+            ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
+            : 0.0;
+        tileB[tile_index] = (row_b < dims.k && col_b < dims.n)
+            ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
+            : 0.0;
+
+        barrier();
 
         #pragma unroll 4
         for (uint ki = 0; ki < 4; ki++) {
-            float a_val = tileA[a_index + ki];
-            float b_val = tileB[b_index + ki * 4u];
+            float a_val = tileA[thread_row * 4u + ki];
+            float b_val = tileB[ki * 4u + thread_col];
             acc = fma(a_val, b_val, acc);
         }
 
-        if (k_tile + 1u < num_k_tiles) {
-            uint write_offset = ((k_tile + 1u) & 1u) * 16u;
-            uint next_k_offset = (k_tile + 1u) * 4u;
-
-            uint col_a = next_k_offset + thread_col;
-            uint row_b = next_k_offset + thread_row;
-
-            tileA[write_offset + tile_index] = (row_a < dims.m && col_a < dims.k)
-                ? a[row_a * dims.stride_a0 + col_a * dims.stride_a1]
-                : 0.0;
-            tileB[write_offset + tile_index] = (row_b < dims.k && col_b < dims.n)
-                ? b[row_b * dims.stride_b0 + col_b * dims.stride_b1]
-                : 0.0;
-
-            barrier();
-        }
+        barrier();
     }
 
     if (out_row < dims.m && out_col < dims.n) {

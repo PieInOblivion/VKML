@@ -469,25 +469,25 @@ fn execute_gpu_matmul(
             (
                 32,
                 [32, 32, 1],
-                16384,
+                8192,
                 GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32,
             ),
             (
                 16,
                 [16, 16, 1],
-                4096,
+                2048,
                 GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_16x16,
             ),
             (
                 8,
                 [8, 8, 1],
-                1024,
+                512,
                 GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_8x8,
             ),
             (
                 4,
                 [4, 4, 1],
-                256,
+                128,
                 GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4,
             ),
         ];

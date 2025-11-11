@@ -1,6 +1,6 @@
 #version 450
 
-// 32x32 workgroup (1024 threads), 32x32 tile, 16 KB ping-pong shared memory
+// 32x32 workgroup (1024 threads), 32x32 tile, 8 KB shared memory
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
@@ -26,8 +26,8 @@ layout(push_constant) uniform PushConstants {
     uint has_c;
 } params;
 
-shared float tileA[2048];
-shared float tileB[2048];
+shared float tileA[1024];
+shared float tileB[1024];
 
 void main() {
     uint tile_row = gl_WorkGroupID.y;
@@ -63,47 +63,30 @@ void main() {
 
     uint tile_index = thread_row * 32 + thread_col;
     uint row_a = tile_row * 32 + thread_row;
-    uint col_a_base = thread_col;
-    uint row_b_base = thread_row;
     uint col_b = tile_col * 32 + thread_col;
 
-    tileA[tile_index] = (row_a < params.m && col_a_base < params.k)
-        ? a[row_a * stride_a_m + col_a_base * stride_a_k]
-        : 0.0;
-    tileB[tile_index] = (row_b_base < params.k && col_b < params.n)
-        ? b[row_b_base * stride_b_k + col_b * stride_b_n]
-        : 0.0;
-
-    barrier();
-
     for (uint k_tile = 0; k_tile < num_k_tiles; k_tile++) {
-        uint read_offset = (k_tile & 1u) * 1024u;
-        uint a_row_index = read_offset + thread_row * 32u;
-        uint b_col_index = read_offset + thread_col;
+        uint k_offset = k_tile * 32u;
+        uint col_a = k_offset + thread_col;
+        uint row_b = k_offset + thread_row;
+
+        tileA[tile_index] = (row_a < params.m && col_a < params.k)
+            ? a[row_a * stride_a_m + col_a * stride_a_k]
+            : 0.0;
+        tileB[tile_index] = (row_b < params.k && col_b < params.n)
+            ? b[row_b * stride_b_k + col_b * stride_b_n]
+            : 0.0;
+
+        barrier();
 
         #pragma unroll 32
         for (uint ki = 0; ki < 32; ki++) {
-            float a_val = tileA[a_row_index + ki];
-            float b_val = tileB[b_col_index + ki * 32u];
+            float a_val = tileA[thread_row * 32u + ki];
+            float b_val = tileB[ki * 32u + thread_col];
             acc = fma(a_val, b_val, acc);
         }
 
-        if (k_tile + 1u < num_k_tiles) {
-            uint write_offset = ((k_tile + 1u) & 1u) * 1024u;
-            uint next_k_offset = (k_tile + 1u) * 32u;
-
-            uint col_a = next_k_offset + col_a_base;
-            uint row_b = next_k_offset + row_b_base;
-
-            tileA[write_offset + tile_index] = (row_a < params.m && col_a < params.k)
-                ? a[row_a * stride_a_m + col_a * stride_a_k]
-                : 0.0;
-            tileB[write_offset + tile_index] = (row_b < params.k && col_b < params.n)
-                ? b[row_b * stride_b_k + col_b * stride_b_n]
-                : 0.0;
-
-            barrier();
-        }
+        barrier();
     }
 
     if (out_row < params.m && out_col < params.n) {
