@@ -6,10 +6,7 @@ use std::{
 };
 use vulkanalia::{
     Device, Instance,
-    vk::{
-        self, DeviceV1_0, DeviceV1_3, Handle, InstanceV1_0, InstanceV1_1,
-        KhrPushDescriptorExtensionDeviceCommands,
-    },
+    vk::{self, DeviceV1_0, DeviceV1_3, DeviceV1_4, Handle, InstanceV1_0, InstanceV1_1},
 };
 
 use crate::{
@@ -28,7 +25,7 @@ pub use super::allocator::HostAccessMode;
 pub struct Gpu {
     properties: vk::PhysicalDeviceProperties,
     subgroup_properties: vk::PhysicalDeviceSubgroupProperties,
-    push_descriptor_properties: vk::PhysicalDevicePushDescriptorPropertiesKHR,
+    push_descriptor_properties: vk::PhysicalDevicePushDescriptorProperties,
 
     has_compute: bool,
     max_compute_queue_count: u32,
@@ -116,7 +113,7 @@ impl Gpu {
 
             // Query device properties
             let mut subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
-            let mut push_props = vk::PhysicalDevicePushDescriptorPropertiesKHR {
+            let mut push_props = vk::PhysicalDevicePushDescriptorProperties {
                 s_type: vk::StructureType::PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES,
                 next: &mut subgroup_properties as *mut _ as *mut c_void,
                 max_push_descriptors: 0,
@@ -698,7 +695,7 @@ impl Gpu {
                 })
                 .collect();
 
-            self.get_device().cmd_push_descriptor_set_khr(
+            self.get_device().cmd_push_descriptor_set(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
                 self.get_pipeline_layout(buffers.len()),
@@ -776,7 +773,7 @@ impl Gpu {
                 })
                 .collect();
 
-            self.get_device().cmd_push_descriptor_set_khr(
+            self.get_device().cmd_push_descriptor_set(
                 command_buffer,
                 vk::PipelineBindPoint::COMPUTE,
                 self.get_pipeline_layout(buffers.len()),

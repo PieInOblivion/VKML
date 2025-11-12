@@ -55,7 +55,6 @@ pub struct CoopMatrixShape {
 pub struct VkExtensions {
     cooperative_matrix: Option<Vec<CoopMatrixShape>>,
     memory_budget: bool,
-    push_descriptor: bool,
     shader_float_16_int8: bool,
     storage_16bit: bool,
 }
@@ -64,7 +63,6 @@ impl VkExtensions {
     // extension names we care about
     pub const VK_KHR_COOPERATIVE_MATRIX: &'static str = "VK_KHR_cooperative_matrix";
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
-    pub const VK_KHR_PUSH_DESCRIPTOR: &'static str = "VK_KHR_push_descriptor";
     pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
     pub const VK_KHR_16BIT_STORAGE: &'static str = "VK_KHR_16bit_storage";
 
@@ -86,7 +84,6 @@ impl VkExtensions {
                         VkExtensions::query_cooperative_matrix_limits(instance, physical_device);
                 }
                 Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
-                Self::VK_KHR_PUSH_DESCRIPTOR => res.push_descriptor = true,
                 Self::VK_KHR_SHADER_FLOAT16_INT8 => {
                     res.shader_float_16_int8 = true;
                 }
@@ -148,9 +145,6 @@ impl VkExtensions {
         }
         if self.memory_budget {
             v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
-        }
-        if self.push_descriptor {
-            v.push(CString::new(Self::VK_KHR_PUSH_DESCRIPTOR).unwrap());
         }
 
         v
