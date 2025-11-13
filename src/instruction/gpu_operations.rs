@@ -48,10 +48,6 @@ pub enum GPUOperation {
     MatMul2D2D_F32_F32_F32_Tiled_8x8,
     MatMul2D2D_F32_F32_F32_Tiled_16x16,
     MatMul2D2D_F32_F32_F32_Tiled_32x32,
-    InitXavier_F32,
-    InitHe_F32,
-    InitUniform_F32,
-    InitConstant,
     Shape_Write_I64,
     ReduceMean_F32_F32,
     ReduceMean_F16_F16,
@@ -73,16 +69,6 @@ impl GPUOperation {
             std::fs::read(&path)
                 .unwrap_or_else(|e| panic!("Failed to load shader file '{}': {}", path, e))
         })
-    }
-
-    pub fn is_init(&self) -> bool {
-        matches!(
-            self,
-            GPUOperation::InitXavier_F32
-                | GPUOperation::InitHe_F32
-                | GPUOperation::InitUniform_F32
-                | GPUOperation::InitConstant
-        )
     }
 
     fn shader_filename(&self) -> &'static str {
@@ -139,11 +125,6 @@ impl GPUOperation {
             GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_32x32 => {
                 "f32_f32_f32_matmul_2d_2d_tiled_32x32.spv"
             }
-
-            GPUOperation::InitXavier_F32 => "f32_init_xavier.spv",
-            GPUOperation::InitHe_F32 => "f32_init_he.spv",
-            GPUOperation::InitUniform_F32 => "f32_init_uniform.spv",
-            GPUOperation::InitConstant => "init_constant.spv",
 
             GPUOperation::Shape_Write_I64 => "i64_shape.spv",
             GPUOperation::ReduceMean_F32_F32 => "f32_f32_reducemean.spv",
