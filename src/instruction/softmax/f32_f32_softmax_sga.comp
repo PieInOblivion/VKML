@@ -13,16 +13,15 @@ layout(push_constant) uniform PushConstants {
     uint feature_size;
 } constants;
 
-// Dynamically size shared memory based on workgroup size
-// gl_WorkGroupSize.x is a specialization constant, so this is compile-time
-shared float subgroup_maxes[gl_WorkGroupSize.x / 32];
-shared float subgroup_sums[gl_WorkGroupSize.x / 32];
+// Allocate worst-case: Works for subgroup sizes 16 and up, safe bet.
+shared float subgroup_maxes[gl_WorkGroupSize.x / 16];
+shared float subgroup_sums[gl_WorkGroupSize.x / 16];
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;
+    uint num_subgroups = (gl_WorkGroupSize.x + gl_SubgroupSize - 1) / gl_SubgroupSize;
+
     uint batch_idx = gl_WorkGroupID.x;
-    uint subgroup_id = gl_SubgroupID;
-    uint num_subgroups = gl_NumSubgroups;
 
     if (batch_idx >= constants.batch_size) {
         return;
@@ -41,7 +40,7 @@ void main() {
 
     // First invocation in each subgroup writes to shared memory
     if (gl_SubgroupInvocationID == 0) {
-        subgroup_maxes[subgroup_id] = subgroup_max_val;
+        subgroup_maxes[gl_SubgroupID] = subgroup_max_val;
     }
 
     barrier();
@@ -73,7 +72,7 @@ void main() {
 
     // First invocation in each subgroup writes to shared memory
     if (gl_SubgroupInvocationID == 0) {
-        subgroup_sums[subgroup_id] = subgroup_sum_val;
+        subgroup_sums[gl_SubgroupID] = subgroup_sum_val;
     }
 
     barrier();

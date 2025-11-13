@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 static SHADERS: [OnceLock<Vec<u8>>; GPUOperation::__Count as usize] =
     [const { OnceLock::new() }; GPUOperation::__Count as usize];
 
+// SGA = Sub Group Arithmetic
 #[allow(non_camel_case_types)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUOperation {
@@ -24,8 +25,7 @@ pub enum GPUOperation {
     Sigmoid_F32_F32,
     Softmax_F32_F32,
     Softmax_F16_F16,
-    Softmax_F32_F32_SG_32,
-    Softmax_F32_F32_SG_64,
+    Softmax_F32_F32_SGA,
     Conv1D_F32_F32_F32_F32,
     Conv2D_F32_F32_F32_F32,
     Conv3D_F32_F32_F32_F32,
@@ -43,7 +43,7 @@ pub enum GPUOperation {
     MatMul3D1D_F32_F32_F32,
     MatMul1D3D_F32_F32_F32,
     MatMul2D2D_F16_F16_F16,
-    MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
+    MatMul2D2D_F16_F16_F16_Coop_16_16_16,
     MatMul2D2D_F32_F32_F32_Tiled_4x4,
     MatMul2D2D_F32_F32_F32_Tiled_8x8,
     MatMul2D2D_F32_F32_F32_Tiled_16x16,
@@ -88,8 +88,7 @@ impl GPUOperation {
             GPUOperation::Sigmoid_F32_F32 => "f32_f32_sigmoid.spv",
             GPUOperation::Softmax_F32_F32 => "f32_f32_softmax.spv",
             GPUOperation::Softmax_F16_F16 => "f16_f16_softmax.spv",
-            GPUOperation::Softmax_F32_F32_SG_32 => "f32_f32_softmax_subgroup_sg_32.spv",
-            GPUOperation::Softmax_F32_F32_SG_64 => "f32_f32_softmax_subgroup_sg_64.spv",
+            GPUOperation::Softmax_F32_F32_SGA => "f32_f32_softmax_sga.spv",
 
             GPUOperation::Conv1D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv1d.spv",
             GPUOperation::Conv2D_F32_F32_F32_F32 => "f32_f32_f32_f32_conv2d.spv",
@@ -110,8 +109,8 @@ impl GPUOperation {
             GPUOperation::MatMul3D1D_F32_F32_F32 => "f32_f32_f32_matmul_3d_1d.spv",
             GPUOperation::MatMul1D3D_F32_F32_F32 => "f32_f32_f32_matmul_1d_3d.spv",
             GPUOperation::MatMul2D2D_F16_F16_F16 => "f16_f16_f16_matmul_2d_2d.spv",
-            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32 => {
-                "f16_f16_f16_matmul_2d_2d_coop_16_16_16_sg_32.spv"
+            GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16 => {
+                "f16_f16_f16_matmul_2d_2d_coop_16_16_16.spv"
             }
             GPUOperation::MatMul2D2D_F32_F32_F32_Tiled_4x4 => {
                 "f32_f32_f32_matmul_2d_2d_tiled_4x4.spv"

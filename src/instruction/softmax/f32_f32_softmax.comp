@@ -11,8 +11,8 @@ layout(push_constant) uniform PushConstants {
     uint feature_size;
 } constants;
 
-shared float max_vals[256]; // For finding max in each batch
-shared float sum_vals[256]; // For summing exp values
+shared float max_vals[gl_WorkGroupSize.x];
+shared float sum_vals[gl_WorkGroupSize.x];
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;

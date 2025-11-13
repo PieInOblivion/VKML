@@ -414,7 +414,9 @@ fn execute_gpu_matmul(
 
     // Cooperative matrix optimization for F16 2D×2D MatMul
     if operation == GPUOperation::MatMul2D2D_F16_F16_F16
-        && gpu.subgroup_size() == 32
+        && gpu
+            .subgroup_supported_operations()
+            .contains(vk::SubgroupFeatureFlags::BASIC)
         && let Some(coop_shapes) = gpu.extensions().get_coop_matrix_sizes(
             DataType::Float16,
             DataType::Float16,
@@ -432,15 +434,15 @@ fn execute_gpu_matmul(
             let m = src1_dims[0];
             let n = src2_dims[1];
 
-            // For cooperative matrices, workgroup size is hardcoded in shader
-            let coop_local_size = [32, 1, 1];
+            // For cooperative matrices, workgroup size must equal subgroup size
+            let coop_local_size = [gpu.subgroup_size(), 1, 1];
             let num_tiles_x = (n as usize).div_ceil(16); // ceil(n / 16)
             let num_tiles_y = (m as usize).div_ceil(16); // ceil(m / 16)
             let binding_count = 3; // src1, src2, dst
 
             gpu.bind_compute_pipeline(
                 command_buffer,
-                GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16_SG_32,
+                GPUOperation::MatMul2D2D_F16_F16_F16_Coop_16_16_16,
                 coop_local_size,
                 binding_count,
             );

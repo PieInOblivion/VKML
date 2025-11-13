@@ -7,8 +7,7 @@
 #extension GL_KHR_shader_subgroup_basic : require
 
 // Workgroup size must equal subgroup size for cooperative matrices
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
-layout(constant_id = 0) const uint WORKGROUP_SIZE = 32;
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
 
 layout(std430, binding = 0) buffer InBufferA { float16_t a[]; }; // Matrix [m,k]
 layout(std430, binding = 1) buffer InBufferB { float16_t b[]; }; // Matrix [k,n]
@@ -58,7 +57,7 @@ void main() {
         }
 
         // Load tiles from global memory (with arbitrary strides) into shared memory
-        for (uint idx = gl_LocalInvocationIndex; idx < 256; idx += WORKGROUP_SIZE) {
+        for (uint idx = gl_LocalInvocationIndex; idx < 256; idx += gl_WorkGroupSize.x) {
             uint i = idx / 16;
             uint j = idx % 16;
 

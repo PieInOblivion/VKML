@@ -17,8 +17,8 @@ layout(push_constant) uniform PushConstants {
 } constants;
 
 // Use f32 temporaries for reductions and exp for stability
-shared float max_vals[256];
-shared float sum_vals[256];
+shared float max_vals[gl_WorkGroupSize.x];
+shared float sum_vals[gl_WorkGroupSize.x];
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;
