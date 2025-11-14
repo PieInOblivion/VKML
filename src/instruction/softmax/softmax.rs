@@ -108,10 +108,13 @@ impl Instruction for SoftmaxInstruction {
         };
 
         // Subgroup-optimized variant for F32 softmax
+        // SGA variant: The staticly sized shared memory in shaders
+        // requires subgroup size of at least 16
         if gpu_op == GPUOperation::Softmax_F32_F32
             && gpu
                 .subgroup_supported_operations()
                 .contains(vk::SubgroupFeatureFlags::ARITHMETIC)
+            && gpu.subgroup_size() >= 16
         {
             let local_size = gpu.optimal_workgroup_size_1d(feature_size as u64);
             let binding_count = 2;
@@ -125,8 +128,11 @@ impl Instruction for SoftmaxInstruction {
             gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
             gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
-            // Dispatch one workgroup per batch element
-            gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
+            gpu.dispatch(
+                command_buffer,
+                local_size,
+                [batch_size as u64 * local_size[0] as u64, 1, 1],
+            );
 
             return Ok(());
         }
@@ -139,8 +145,15 @@ impl Instruction for SoftmaxInstruction {
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
         gpu.bind_push_constants(command_buffer, binding_count, pc_bytes);
 
-        // Dispatch one workgroup per batch element
-        gpu.dispatch(command_buffer, local_size, [batch_size as u64, 1, 1]);
+        // Dispatch one workgroup per batch element — dispatch() expects the
+        // global work size (number of work items / threads) rather than
+        // the number of workgroups. To get one workgroup per batch we must
+        // pass batch_size * local_size.x as the global work size.
+        gpu.dispatch(
+            command_buffer,
+            local_size,
+            [batch_size as u64 * local_size[0] as u64, 1, 1],
+        );
 
         Ok(())
     }
