@@ -159,7 +159,7 @@ impl std::fmt::Debug for GpuPool {
                     None => "None".to_string(),
                 };
                 format!(
-                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, memory_in_use: {}, memory_in_use_as_percent: {:.2}%, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, subgroup_size: {}, host_visible_device_local_bytes: {}, host_access_mode: {:?}, staging_buffer: {}, coop_matrix: {:?} }}",
+                    "{{ name: `{}`, device_type: {:?}, has_compute: {}, memory_budget: {}, memory_in_use: {}, memory_in_use_as_percent: {:.2}%, max_workgroup_count: {:?}, max_workgroup_size: {:?}, max_workgroup_invocations: {}, max_compute_queue_count: {}, max_shared_memory_size: {}, max_push_descriptors: {}, subgroup_size: {}, host_visible_device_local_bytes: {}, host_access_mode: {:?}, staging_buffer: {}, extensions: {:?} }}",
                     g.name(),
                     g.device_type(),
                     g.has_compute(),
@@ -180,7 +180,7 @@ impl std::fmt::Debug for GpuPool {
                     g.host_visible_device_local_bytes(),
                     g.host_access_mode(),
                     staging_desc,
-                    g.extensions().coop_matrix_shapes(),
+                    g.extensions(),
                 )
             })
             .collect();

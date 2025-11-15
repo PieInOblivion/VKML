@@ -53,10 +53,11 @@ pub struct CoopMatrixShape {
 
 #[derive(Debug, Default)]
 pub struct VkExtensions {
-    cooperative_matrix: Option<Vec<CoopMatrixShape>>,
     memory_budget: bool,
     shader_float_16_int8: bool,
     storage_16bit: bool,
+    shader_bfloat16: bool,
+    cooperative_matrix: Option<Vec<CoopMatrixShape>>,
 }
 
 impl VkExtensions {
@@ -65,6 +66,7 @@ impl VkExtensions {
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
     pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
     pub const VK_KHR_16BIT_STORAGE: &'static str = "VK_KHR_16bit_storage";
+    pub const VK_KHR_SHADER_BFLOAT16: &'static str = "VK_KHR_shader_bfloat16";
 
     pub fn from_extension_properties(
         instance: &Instance,
@@ -89,6 +91,9 @@ impl VkExtensions {
                 }
                 Self::VK_KHR_16BIT_STORAGE => {
                     res.storage_16bit = true;
+                }
+                Self::VK_KHR_SHADER_BFLOAT16 => {
+                    res.shader_bfloat16 = true;
                 }
                 _ => {}
             }
@@ -146,6 +151,9 @@ impl VkExtensions {
         if self.memory_budget {
             v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
         }
+        if self.shader_bfloat16 {
+            v.push(CString::new(Self::VK_KHR_SHADER_BFLOAT16).unwrap());
+        }
 
         v
     }
@@ -199,6 +207,19 @@ impl VkExtensions {
             holders.push(feat);
         }
 
+        if self.shader_bfloat16 {
+            let mut feat = Box::new(vk::PhysicalDeviceShaderBfloat16FeaturesKHR {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR,
+                next: ptr::null_mut(),
+                shader_b_float16_type: vk::TRUE,
+                shader_b_float_16dot_product: vk::FALSE,
+                shader_b_float16_cooperative_matrix: vk::TRUE,
+            });
+            feat.next = head as *mut _;
+            head = (&*feat) as *const _ as *mut c_void;
+            holders.push(feat);
+        }
+
         DeviceCreateExtras {
             names,
             name_ptrs,
@@ -215,6 +236,10 @@ impl VkExtensions {
 
     pub fn supports_fp16(&self) -> bool {
         self.shader_float_16_int8 && self.storage_16bit
+    }
+
+    pub fn supports_bf16(&self) -> bool {
+        self.shader_bfloat16 && self.shader_float_16_int8
     }
 
     pub fn has_memory_budget(&self) -> bool {
