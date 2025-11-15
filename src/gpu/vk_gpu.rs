@@ -16,9 +16,9 @@ use crate::{
     utils::{error::VKMLError, expect_msg::ExpectMsg},
 };
 
+use super::VkExtensions;
 use super::allocator::GpuAllocator;
 use super::gpu_memory::GPUMemory;
-use super::vk_extensions::VkExtensions;
 
 pub use super::allocator::HostAccessMode;
 

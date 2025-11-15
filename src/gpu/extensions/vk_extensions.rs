@@ -1,10 +1,10 @@
+use super::nv_coop_matrix2::CoopMatrixNV2Capabilities;
+use super::nv_coop_matrix2::query_cooperative_matrix_nv2_limits;
 use crate::utils::error::VKMLError;
-use crate::utils::vk_to_onnx_dtype::vk_to_onnx_dtype;
+use crate::utils::vk_to_onnx_dtype::{bool_to_vk_bool32, vk_to_onnx_dtype};
 use onnx_extractor::DataType;
 use std::any::Any;
-use std::ffi::CStr;
-use std::ffi::CString;
-use std::ffi::c_void;
+use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::ptr;
 use vulkanalia::vk::InstanceV1_0;
@@ -58,11 +58,13 @@ pub struct VkExtensions {
     storage_16bit: bool,
     shader_bfloat16: bool,
     cooperative_matrix: Option<Vec<CoopMatrixShape>>,
+    cooperative_matrix_nv2: Option<CoopMatrixNV2Capabilities>,
 }
 
 impl VkExtensions {
     // extension names we care about
     pub const VK_KHR_COOPERATIVE_MATRIX: &'static str = "VK_KHR_cooperative_matrix";
+    pub const VK_NV_COOPERATIVE_MATRIX2: &'static str = "VK_NV_cooperative_matrix2";
     pub const VK_EXT_MEMORY_BUDGET: &'static str = "VK_EXT_memory_budget";
     pub const VK_KHR_SHADER_FLOAT16_INT8: &'static str = "VK_KHR_shader_float16_int8";
     pub const VK_KHR_16BIT_STORAGE: &'static str = "VK_KHR_16bit_storage";
@@ -73,7 +75,7 @@ impl VkExtensions {
         physical_device: vk::PhysicalDevice,
         props: &[vk::ExtensionProperties],
     ) -> Result<Self, VKMLError> {
-        let mut res = VkExtensions::default();
+        let mut res = Self::default();
 
         for p in props {
             // convert fixed-size name array to string
@@ -83,7 +85,11 @@ impl VkExtensions {
             match name.as_ref() {
                 Self::VK_KHR_COOPERATIVE_MATRIX => {
                     res.cooperative_matrix =
-                        VkExtensions::query_cooperative_matrix_limits(instance, physical_device);
+                        Self::query_cooperative_matrix_limits(instance, physical_device);
+                }
+                Self::VK_NV_COOPERATIVE_MATRIX2 => {
+                    res.cooperative_matrix_nv2 =
+                        query_cooperative_matrix_nv2_limits(instance, physical_device);
                 }
                 Self::VK_EXT_MEMORY_BUDGET => res.memory_budget = true,
                 Self::VK_KHR_SHADER_FLOAT16_INT8 => {
@@ -148,6 +154,9 @@ impl VkExtensions {
         if self.cooperative_matrix.is_some() {
             v.push(CString::new(Self::VK_KHR_COOPERATIVE_MATRIX).unwrap());
         }
+        if self.cooperative_matrix_nv2.is_some() {
+            v.push(CString::new(Self::VK_NV_COOPERATIVE_MATRIX2).unwrap());
+        }
         if self.memory_budget {
             v.push(CString::new(Self::VK_EXT_MEMORY_BUDGET).unwrap());
         }
@@ -169,12 +178,34 @@ impl VkExtensions {
         let mut head: *mut c_void = ptr::null_mut();
 
         if self.cooperative_matrix.is_some() {
-            // enable the cooperative matrix feature flag in the p_next chain
             let mut feat = Box::new(vk::PhysicalDeviceCooperativeMatrixFeaturesKHR {
                 s_type: vk::StructureType::PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
                 next: ptr::null_mut(),
                 cooperative_matrix: vk::TRUE,
                 ..Default::default()
+            });
+            feat.next = head as *mut _;
+            head = (&*feat) as *const _ as *mut c_void;
+            holders.push(feat);
+        }
+
+        if let Some(nv2) = &self.cooperative_matrix_nv2 {
+            let mut feat = Box::new(vk::PhysicalDeviceCooperativeMatrix2FeaturesNV {
+                s_type: vk::StructureType::PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+                next: ptr::null_mut(),
+                cooperative_matrix_workgroup_scope: bool_to_vk_bool32(nv2.features.workgroup_scope),
+                cooperative_matrix_flexible_dimensions: bool_to_vk_bool32(
+                    nv2.features.flexible_dimensions,
+                ),
+                cooperative_matrix_reductions: bool_to_vk_bool32(nv2.features.reductions),
+                cooperative_matrix_conversions: bool_to_vk_bool32(nv2.features.conversions),
+                cooperative_matrix_per_element_operations: bool_to_vk_bool32(
+                    nv2.features.per_element_operations,
+                ),
+                cooperative_matrix_tensor_addressing: bool_to_vk_bool32(
+                    nv2.features.tensor_addressing,
+                ),
+                cooperative_matrix_block_loads: bool_to_vk_bool32(nv2.features.block_loads),
             });
             feat.next = head as *mut _;
             head = (&*feat) as *const _ as *mut c_void;
@@ -232,6 +263,10 @@ impl VkExtensions {
 
     pub fn coop_matrix_shapes(&self) -> Option<Vec<CoopMatrixShape>> {
         self.cooperative_matrix.clone()
+    }
+
+    pub fn coop_matrix_nv2_capabilities(&self) -> Option<CoopMatrixNV2Capabilities> {
+        self.cooperative_matrix_nv2.clone()
     }
 
     pub fn supports_fp16(&self) -> bool {

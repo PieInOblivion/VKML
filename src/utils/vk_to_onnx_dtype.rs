@@ -22,3 +22,11 @@ pub fn vk_to_onnx_dtype(t: vk::ComponentTypeKHR) -> Option<DataType> {
         _ => None,
     }
 }
+
+pub fn vk_bool32_to_bool(value: vk::Bool32) -> bool {
+    value == vk::TRUE
+}
+
+pub fn bool_to_vk_bool32(value: bool) -> vk::Bool32 {
+    if value { vk::TRUE } else { vk::FALSE }
+}
