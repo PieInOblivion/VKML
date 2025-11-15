@@ -40,7 +40,7 @@ pub struct DevicePNext {
     _holders: Vec<Box<dyn Any>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CoopMatrixShape {
     pub m: u32,
     pub n: u32,
