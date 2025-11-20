@@ -453,7 +453,11 @@ fn execute_gpu_matmul(
             gpu.dispatch(
                 command_buffer,
                 coop_local_size,
-                [num_tiles_x as u64, num_tiles_y as u64, 1],
+                [
+                    num_tiles_x as u64 * coop_local_size[0] as u64,
+                    num_tiles_y as u64 * coop_local_size[1] as u64,
+                    1,
+                ],
             );
 
             return Ok(());
