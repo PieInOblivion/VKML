@@ -29,10 +29,16 @@ impl HostAccessMode {
     }
 }
 
+pub struct StagingResources {
+    pub buffer: GPUMemory,
+    pub command_buffer: vk::CommandBuffer,
+    pub fence: vk::Fence,
+}
+
 pub struct GpuAllocator {
     host_visible_reserved: AtomicU64,
     host_access_mode: AtomicU8,
-    staging_buffer: OnceLock<Mutex<GPUMemory>>,
+    staging_resources: OnceLock<Mutex<StagingResources>>,
 }
 
 impl GpuAllocator {
@@ -40,7 +46,7 @@ impl GpuAllocator {
         Self {
             host_visible_reserved: AtomicU64::new(0),
             host_access_mode: AtomicU8::new(HostAccessMode::DeviceLocalWithStaging as u8),
-            staging_buffer: OnceLock::new(),
+            staging_resources: OnceLock::new(),
         }
     }
 
@@ -69,10 +75,10 @@ impl GpuAllocator {
     }
 
     pub fn staging_buffer_info(&self) -> Option<(vk::DeviceSize, vk::MemoryPropertyFlags)> {
-        self.staging_buffer
+        self.staging_resources
             .get()
             .and_then(|mutex| match mutex.lock() {
-                Ok(buffer) => Some((buffer.size, buffer.properties)),
+                Ok(resources) => Some((resources.buffer.size, resources.buffer.properties)),
                 Err(_) => None,
             })
     }
@@ -103,13 +109,16 @@ impl GpuAllocator {
         self.preview(gpu, self.host_visible_reserved())
     }
 
-    pub fn get_or_create_staging_buffer<'a>(&'a self, gpu: &Arc<Gpu>) -> &'a Mutex<GPUMemory> {
+    pub fn get_or_create_staging_resources<'a>(
+        &'a self,
+        gpu: &Arc<Gpu>,
+    ) -> &'a Mutex<StagingResources> {
         debug_assert!(
             !self.direct_host_mode(),
             "Staging buffer requested while GPU is in direct host access mode",
         );
 
-        self.staging_buffer.get_or_init(|| {
+        self.staging_resources.get_or_init(|| {
             let gpu = Arc::clone(gpu);
 
             unsafe {
@@ -120,7 +129,7 @@ impl GpuAllocator {
                     next: std::ptr::null(),
                     flags: vk::BufferCreateFlags::empty(),
                     size: staging_size as vk::DeviceSize,
-                    usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                    usage: vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
                     queue_family_index_count: 0,
                     queue_family_indices: std::ptr::null(),
@@ -158,7 +167,7 @@ impl GpuAllocator {
                     .bind_buffer_memory(buffer, memory, 0)
                     .expect_msg("Failed to bind staging buffer memory");
 
-                let staging = GPUMemory::new(
+                let staging_mem = GPUMemory::new(
                     buffer,
                     memory,
                     staging_size as vk::DeviceSize,
@@ -166,7 +175,36 @@ impl GpuAllocator {
                     &gpu,
                 );
 
-                Mutex::new(staging)
+                // Create command buffer and fence
+                let command_buffer_info = vk::CommandBufferAllocateInfo {
+                    s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                    next: std::ptr::null(),
+                    command_pool: gpu.get_command_pool(),
+                    level: vk::CommandBufferLevel::PRIMARY,
+                    command_buffer_count: 1,
+                };
+
+                let command_buffers = gpu
+                    .get_device()
+                    .allocate_command_buffers(&command_buffer_info)
+                    .expect_msg("Failed to allocate staging command buffer");
+                let command_buffer = command_buffers[0];
+
+                let fence_info = vk::FenceCreateInfo {
+                    s_type: vk::StructureType::FENCE_CREATE_INFO,
+                    next: std::ptr::null(),
+                    flags: vk::FenceCreateFlags::empty(),
+                };
+                let fence = gpu
+                    .get_device()
+                    .create_fence(&fence_info, None)
+                    .expect_msg("Failed to create staging fence");
+
+                Mutex::new(StagingResources {
+                    buffer: staging_mem,
+                    command_buffer,
+                    fence,
+                })
             }
         })
     }
@@ -302,7 +340,9 @@ impl GpuAllocator {
                 next: std::ptr::null(),
                 flags: vk::BufferCreateFlags::empty(),
                 size: size_in_bytes,
-                usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_SRC
+                    | vk::BufferUsageFlags::TRANSFER_DST,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 queue_family_index_count: 0,
                 queue_family_indices: std::ptr::null(),
@@ -362,9 +402,9 @@ impl GpuAllocator {
             )));
         }
 
-        let staging_mutex = self.get_or_create_staging_buffer(gpu);
+        let staging_mutex = self.get_or_create_staging_resources(gpu);
         let staging_guard = staging_mutex.lock().unwrap();
-        let staging_size = staging_guard.size as usize;
+        let staging_size = staging_guard.buffer.size as usize;
 
         if staging_size == 0 {
             return Err(VKMLError::Vulkan(
@@ -372,75 +412,48 @@ impl GpuAllocator {
             ));
         }
 
-        let command_buffer_info = vk::CommandBufferAllocateInfo {
-            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-            next: std::ptr::null(),
-            command_pool: gpu.get_command_pool(),
-            level: vk::CommandBufferLevel::PRIMARY,
-            command_buffer_count: 1,
-        };
-
-        let fence_info = vk::FenceCreateInfo {
-            s_type: vk::StructureType::FENCE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::FenceCreateFlags::empty(),
-        };
+        let command_buffer = staging_guard.command_buffer;
+        let fence = staging_guard.fence;
 
         unsafe {
-            let command_buffers = gpu
-                .get_device()
-                .allocate_command_buffers(&command_buffer_info)?;
-            let command_buffer = *command_buffers
-                .first()
-                .ok_or_else(|| VKMLError::Vulkan("Failed to allocate command buffer".into()))?;
+            let mut offset = 0usize;
+            while offset < data.len() {
+                let remaining = data.len() - offset;
+                let chunk_size = cmp::min(staging_size, remaining);
+                let chunk = &data[offset..offset + chunk_size];
 
-            let fence = gpu.get_device().create_fence(&fence_info, None)?;
+                staging_guard.buffer.copy_into(chunk)?;
 
-            let result = (|| -> Result<(), VKMLError> {
-                let mut offset = 0usize;
-                while offset < data.len() {
-                    let remaining = data.len() - offset;
-                    let chunk_size = cmp::min(staging_size, remaining);
-                    let chunk = &data[offset..offset + chunk_size];
+                gpu.begin_command_buffer(command_buffer)?;
 
-                    staging_guard.copy_into(chunk)?;
+                let copy_region = vk::BufferCopy {
+                    src_offset: 0,
+                    dst_offset: offset as vk::DeviceSize,
+                    size: chunk_size as vk::DeviceSize,
+                };
 
-                    gpu.begin_command_buffer(command_buffer)?;
+                gpu.get_device().cmd_copy_buffer(
+                    command_buffer,
+                    staging_guard.buffer.buffer,
+                    dest.buffer,
+                    &[copy_region],
+                );
 
-                    let copy_region = vk::BufferCopy {
-                        src_offset: 0,
-                        dst_offset: offset as vk::DeviceSize,
-                        size: chunk_size as vk::DeviceSize,
-                    };
+                gpu.end_command_buffer(command_buffer)?;
 
-                    gpu.get_device().cmd_copy_buffer(
-                        command_buffer,
-                        staging_guard.buffer,
-                        dest.buffer,
-                        &[copy_region],
-                    );
+                gpu.submit_with_fence(&[command_buffer], Some(fence))?;
+                gpu.wait_and_reset_fence(fence)?;
 
-                    gpu.end_command_buffer(command_buffer)?;
+                gpu.get_device().reset_command_buffer(
+                    command_buffer,
+                    vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+                )?;
 
-                    gpu.submit_with_fence(&[command_buffer], Some(fence))?;
-                    gpu.wait_and_reset_fence(fence)?;
-
-                    gpu.get_device().reset_command_buffer(
-                        command_buffer,
-                        vk::CommandBufferResetFlags::RELEASE_RESOURCES,
-                    )?;
-
-                    offset += chunk_size;
-                }
-                Ok(())
-            })();
-
-            gpu.get_device()
-                .free_command_buffers(gpu.get_command_pool(), &[command_buffer]);
-            gpu.get_device().destroy_fence(fence, None);
-
-            result
+                offset += chunk_size;
+            }
         }
+
+        Ok(())
     }
 
     pub fn read_through_staging(
@@ -456,9 +469,9 @@ impl GpuAllocator {
         let total_bytes = source.size as usize;
         let mut output = vec![0u8; total_bytes];
 
-        let staging_mutex = self.get_or_create_staging_buffer(gpu);
+        let staging_mutex = self.get_or_create_staging_resources(gpu);
         let staging_guard = staging_mutex.lock().unwrap();
-        let staging_size = staging_guard.size as usize;
+        let staging_size = staging_guard.buffer.size as usize;
 
         if staging_size == 0 {
             return Err(VKMLError::Vulkan(
@@ -466,83 +479,53 @@ impl GpuAllocator {
             ));
         }
 
-        let command_buffer_info = vk::CommandBufferAllocateInfo {
-            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-            next: std::ptr::null(),
-            command_pool: gpu.get_command_pool(),
-            level: vk::CommandBufferLevel::PRIMARY,
-            command_buffer_count: 1,
-        };
-
-        let fence_info = vk::FenceCreateInfo {
-            s_type: vk::StructureType::FENCE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::FenceCreateFlags::empty(),
-        };
+        let command_buffer = staging_guard.command_buffer;
+        let fence = staging_guard.fence;
 
         unsafe {
-            let command_buffers = gpu
-                .get_device()
-                .allocate_command_buffers(&command_buffer_info)?;
-            let command_buffer = *command_buffers
-                .first()
-                .ok_or_else(|| VKMLError::Vulkan("Failed to allocate command buffer".into()))?;
+            let mut offset = 0usize;
+            while offset < total_bytes {
+                let remaining = total_bytes - offset;
+                let chunk_size = cmp::min(staging_size, remaining);
 
-            let fence = gpu.get_device().create_fence(&fence_info, None)?;
+                gpu.begin_command_buffer(command_buffer)?;
 
-            let result = (|| -> Result<(), VKMLError> {
-                let mut offset = 0usize;
-                while offset < total_bytes {
-                    let remaining = total_bytes - offset;
-                    let chunk_size = cmp::min(staging_size, remaining);
+                let copy_region = vk::BufferCopy {
+                    src_offset: offset as vk::DeviceSize,
+                    dst_offset: 0,
+                    size: chunk_size as vk::DeviceSize,
+                };
 
-                    gpu.begin_command_buffer(command_buffer)?;
+                gpu.get_device().cmd_copy_buffer(
+                    command_buffer,
+                    source.buffer,
+                    staging_guard.buffer.buffer,
+                    &[copy_region],
+                );
 
-                    let copy_region = vk::BufferCopy {
-                        src_offset: offset as vk::DeviceSize,
-                        dst_offset: 0,
-                        size: chunk_size as vk::DeviceSize,
-                    };
+                gpu.end_command_buffer(command_buffer)?;
 
-                    gpu.get_device().cmd_copy_buffer(
-                        command_buffer,
-                        source.buffer,
-                        staging_guard.buffer,
-                        &[copy_region],
-                    );
+                gpu.submit_with_fence(&[command_buffer], Some(fence))?;
+                gpu.wait_and_reset_fence(fence)?;
 
-                    gpu.end_command_buffer(command_buffer)?;
+                let data_ptr = gpu.get_device().map_memory(
+                    staging_guard.buffer.memory,
+                    0,
+                    chunk_size as vk::DeviceSize,
+                    vk::MemoryMapFlags::empty(),
+                )? as *const u8;
 
-                    gpu.submit_with_fence(&[command_buffer], Some(fence))?;
-                    gpu.wait_and_reset_fence(fence)?;
+                let dst_slice = &mut output[offset..offset + chunk_size];
+                std::ptr::copy_nonoverlapping(data_ptr, dst_slice.as_mut_ptr(), chunk_size);
+                gpu.get_device().unmap_memory(staging_guard.buffer.memory);
 
-                    let data_ptr = gpu.get_device().map_memory(
-                        staging_guard.memory,
-                        0,
-                        chunk_size as vk::DeviceSize,
-                        vk::MemoryMapFlags::empty(),
-                    )? as *const u8;
+                gpu.get_device().reset_command_buffer(
+                    command_buffer,
+                    vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+                )?;
 
-                    let dst_slice = &mut output[offset..offset + chunk_size];
-                    std::ptr::copy_nonoverlapping(data_ptr, dst_slice.as_mut_ptr(), chunk_size);
-                    gpu.get_device().unmap_memory(staging_guard.memory);
-
-                    gpu.get_device().reset_command_buffer(
-                        command_buffer,
-                        vk::CommandBufferResetFlags::RELEASE_RESOURCES,
-                    )?;
-
-                    offset += chunk_size;
-                }
-
-                Ok(())
-            })();
-
-            gpu.get_device()
-                .free_command_buffers(gpu.get_command_pool(), &[command_buffer]);
-            gpu.get_device().destroy_fence(fence, None);
-
-            result?;
+                offset += chunk_size;
+            }
         }
 
         Ok(output)

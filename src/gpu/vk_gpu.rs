@@ -18,6 +18,7 @@ use crate::{
 
 use super::VkExtensions;
 use super::allocator::GpuAllocator;
+use super::allocator::StagingResources;
 use super::gpu_memory::GPUMemory;
 
 pub use super::allocator::HostAccessMode;
@@ -303,8 +304,8 @@ impl Gpu {
 
     /// Lazily create (and return) the staging buffer mutex. Staging buffer is host-visible and sized
     /// to 5% of the tracked maximum memory.
-    pub fn get_or_create_staging_buffer(self: &Arc<Self>) -> &Mutex<GPUMemory> {
-        self.allocator.get_or_create_staging_buffer(self)
+    pub fn get_or_create_staging_resources(self: &Arc<Self>) -> &Mutex<StagingResources> {
+        self.allocator.get_or_create_staging_resources(self)
     }
 
     pub fn write_through_staging(
