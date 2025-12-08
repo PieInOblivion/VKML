@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use vulkanalia::vk::{self, DeviceV1_0};
 
 use crate::error::VKMLError;
-use crate::utils::expect_msg::ExpectMsg;
 
 use super::gpu_memory::GPUMemory;
 use super::vk_gpu::Gpu;
@@ -138,7 +137,7 @@ impl GpuAllocator {
                 let buffer = gpu
                     .get_device()
                     .create_buffer(&buffer_info, None)
-                    .expect_msg("Failed to create staging buffer");
+                    .expect("Failed to create staging buffer");
                 let mem_requirements = gpu.get_device().get_buffer_memory_requirements(buffer);
 
                 let requested_properties = if device_local_staging {
@@ -162,10 +161,10 @@ impl GpuAllocator {
                 let memory = gpu
                     .get_device()
                     .allocate_memory(&alloc_info, None)
-                    .expect_msg("Failed to allocate staging memory");
+                    .expect("Failed to allocate staging memory");
                 gpu.get_device()
                     .bind_buffer_memory(buffer, memory, 0)
-                    .expect_msg("Failed to bind staging buffer memory");
+                    .expect("Failed to bind staging buffer memory");
 
                 let staging_mem = GPUMemory::new(
                     buffer,
@@ -187,7 +186,7 @@ impl GpuAllocator {
                 let command_buffers = gpu
                     .get_device()
                     .allocate_command_buffers(&command_buffer_info)
-                    .expect_msg("Failed to allocate staging command buffer");
+                    .expect("Failed to allocate staging command buffer");
                 let command_buffer = command_buffers[0];
 
                 let fence_info = vk::FenceCreateInfo {
@@ -198,7 +197,7 @@ impl GpuAllocator {
                 let fence = gpu
                     .get_device()
                     .create_fence(&fence_info, None)
-                    .expect_msg("Failed to create staging fence");
+                    .expect("Failed to create staging fence");
 
                 Mutex::new(StagingResources {
                     buffer: staging_mem,

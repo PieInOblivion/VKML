@@ -7,7 +7,7 @@ use vulkanalia::{
 };
 use zero_pool::{global_pool, zp_define_task_fn};
 
-use crate::{error::VKMLError, gpu::vk_gpu::Gpu, utils::expect_msg::ExpectMsg};
+use crate::{error::VKMLError, gpu::vk_gpu::Gpu};
 
 pub struct GpuPool {
     gpus: Vec<Arc<Gpu>>,
@@ -17,8 +17,8 @@ pub struct GpuPool {
 impl GpuPool {
     pub fn new(selected: Option<Vec<usize>>) -> Result<Self, VKMLError> {
         unsafe {
-            let loader = LibloadingLoader::new(LIBRARY).expect_msg("Failed to load Vulkan library");
-            let entry = Entry::new(loader).expect_msg("Failed to create Vulkan entry point");
+            let loader = LibloadingLoader::new(LIBRARY).expect("Failed to load Vulkan library");
+            let entry = Entry::new(loader).expect("Failed to create Vulkan entry point");
 
             let aname = CString::new("vkml").unwrap();
 
@@ -201,7 +201,7 @@ struct GpuInitParams {
 zp_define_task_fn!(gpu_init_task, GpuInitParams, |params| {
     let gpu = Arc::new(
         Gpu::new_shared(params.instance.clone(), params.physical_device)
-            .expect_msg("Failed to initialize GPU"),
+            .expect("Failed to initialise GPU"),
     );
 
     unsafe {

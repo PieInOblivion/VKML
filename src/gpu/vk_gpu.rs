@@ -10,10 +10,8 @@ use vulkanalia::{
 };
 
 use crate::{
-    compute::memory_tracker::MemoryTracker,
-    gpu::workgroup::optimal_workgroup_size,
-    instruction::GPUOperation,
-    utils::{error::VKMLError, expect_msg::ExpectMsg},
+    compute::memory_tracker::MemoryTracker, gpu::workgroup::optimal_workgroup_size,
+    instruction::GPUOperation, utils::error::VKMLError,
 };
 
 use super::VkExtensions;
@@ -454,7 +452,7 @@ impl Gpu {
         // Slow path: create pipeline
         let pipeline = self
             .create_pipeline(op.get_shader_bytes(), local_size, binding_count)
-            .expect_msg(&format!(
+            .expect(&format!(
                 "Pipeline creation failed {:?} with workgroup {:?}",
                 op, local_size
             ));
