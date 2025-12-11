@@ -104,8 +104,4 @@ impl GPUMemory {
             gpu.read_through_staging(self)
         }
     }
-
-    pub fn gpu(&self) -> Result<Arc<Gpu>, VKMLError> {
-        self.upgrade_gpu()
-    }
 }
