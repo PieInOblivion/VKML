@@ -452,10 +452,12 @@ impl Gpu {
         // Slow path: create pipeline
         let pipeline = self
             .create_pipeline(op.get_shader_bytes(), local_size, binding_count)
-            .expect(&format!(
-                "Pipeline creation failed {:?} with workgroup {:?}",
-                op, local_size
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Pipeline creation failed {:?} with workgroup {:?}",
+                    op, local_size
+                )
+            });
 
         // Insert and return (handles race condition gracefully)
         self.pipelines
