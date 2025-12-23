@@ -445,8 +445,8 @@ impl Gpu {
         let key = (op, local_size, binding_count);
 
         // Fast path: pipeline already exists
-        if let Some(pipeline) = self.pipelines.read().unwrap().get(&key) {
-            return *pipeline;
+        if let Some(&pipeline) = self.pipelines.read().unwrap().get(&key) {
+            return pipeline;
         }
 
         // Slow path: create pipeline
