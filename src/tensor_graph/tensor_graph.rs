@@ -5,7 +5,7 @@ use crate::{
     tensor::TensorDesc,
     utils::error::VKMLError,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 // TODO:
 // This representation of tensor dag needs changing.
@@ -214,46 +214,83 @@ impl TensorGraph {
         let num_ops = self.operations.len();
         let mut predecessors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
         let mut successors: Vec<Vec<OperationId>> = vec![Vec::new(); num_ops];
+        let mut in_degree: Vec<usize> = vec![0; num_ops];
 
-        for (curr_op, op) in self.operations.iter().enumerate().take(num_ops) {
-            let mut preds = HashSet::new();
-            for &t in &op.get_input_tensor_ids() {
-                for pred_op in self.get_tensor_producers(t) {
-                    if pred_op != curr_op && preds.insert(pred_op) {
-                        predecessors[curr_op].push(pred_op);
-                        successors[pred_op].push(curr_op);
+        // build an index of tensor, producing operations once
+        let mut tensor_to_producers: Vec<Vec<OperationId>> =
+            vec![Vec::new(); self.tensor_descs.len()];
+        for (op_id, op) in self.operations.iter().enumerate() {
+            let outputs = op.get_output_tensor_ids();
+            for &t in &outputs {
+                if t >= tensor_to_producers.len() {
+                    tensor_to_producers.resize_with(t + 1, Vec::new);
+                }
+                tensor_to_producers[t].push(op_id);
+            }
+        }
+
+        // stamp based dedup. per current op, ensure each predecessor is only added once
+        let mut seen_stamp: Vec<u32> = vec![0; num_ops];
+        let mut stamp: u32 = 1;
+
+        for (curr_op, op) in self.operations.iter().enumerate() {
+            // handle wrap around, unlikely unless num_ops is huge
+            if stamp == u32::MAX {
+                seen_stamp.fill(0);
+                stamp = 1;
+            } else {
+                stamp += 1;
+            }
+
+            let inputs = op.get_input_tensor_ids();
+            for &t in &inputs {
+                if t >= tensor_to_producers.len() {
+                    continue;
+                }
+
+                for &pred_op in &tensor_to_producers[t] {
+                    if pred_op == curr_op {
+                        continue;
                     }
+                    if seen_stamp[pred_op] == stamp {
+                        continue;
+                    }
+                    seen_stamp[pred_op] = stamp;
+                    predecessors[curr_op].push(pred_op);
+                    successors[pred_op].push(curr_op);
+                    in_degree[curr_op] += 1;
                 }
             }
         }
 
         // compute topological order using kahns algorithm
-        let mut in_degree: Vec<usize> = predecessors.iter().map(|p| p.len()).collect();
-        let mut dq: VecDeque<OperationId> = VecDeque::new();
+        // use a vec as a queue with a moving head index for speed
+        let mut queue: Vec<OperationId> = Vec::with_capacity(num_ops);
         for (op, &deg) in in_degree.iter().enumerate().take(num_ops) {
             if deg == 0 {
-                dq.push_back(op);
+                queue.push(op);
             }
         }
 
         let mut ordered: Vec<OperationId> = Vec::with_capacity(num_ops);
-        let mut scheduled = 0;
-
-        while let Some(op) = dq.pop_front() {
+        let mut head = 0;
+        while head < queue.len() {
+            let op = queue[head];
+            head += 1;
             ordered.push(op);
-            scheduled += 1;
             for &succ in &successors[op] {
                 in_degree[succ] = in_degree[succ].saturating_sub(1);
                 if in_degree[succ] == 0 {
-                    dq.push_back(succ);
+                    queue.push(succ);
                 }
             }
         }
 
-        if scheduled < num_ops {
+        if ordered.len() < num_ops {
             eprintln!(
                 "Could not schedule all operations: {}/{}.",
-                scheduled, num_ops
+                ordered.len(),
+                num_ops
             );
         }
 
