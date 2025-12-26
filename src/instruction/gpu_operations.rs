@@ -12,6 +12,7 @@ static SHADERS: [OnceLock<Vec<u8>>; GPUOperation::__Count as usize] =
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum GPUOperation {
     Addition_F32_F32_F32,
+    Addition_F32_F32_F32_NoStride,
     Addition_F16_F16_F16,
     Subtract_F32_F32_F32,
     Multiply_F32_F32_F32,
@@ -74,6 +75,7 @@ impl GPUOperation {
     fn shader_filename(&self) -> &'static str {
         match self {
             GPUOperation::Addition_F32_F32_F32 => "f32_f32_f32_add.spv",
+            GPUOperation::Addition_F32_F32_F32_NoStride => "f32_f32_f32_add_nostride.spv",
             GPUOperation::Addition_F16_F16_F16 => "f16_f16_f16_add.spv",
             GPUOperation::Subtract_F32_F32_F32 => "f32_f32_f32_sub.spv",
             GPUOperation::Multiply_F32_F32_F32 => "f32_f32_f32_mul.spv",

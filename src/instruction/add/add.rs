@@ -126,13 +126,23 @@ impl Instruction for AddInstruction {
 
         let push_constant_bytes = as_bytes(&push_const_values);
 
+        let use_nostride = rank == 1
+            && strides_a_usize.len() == 1
+            && strides_b_usize.len() == 1
+            && strides_a_usize[0] == 1
+            && strides_b_usize[0] == 1;
+
         // Choose operation and element size based on tensor DataType
         let src1_dtype = src1_desc.data_type();
         let src2_dtype = src2_desc.data_type();
         let dst_dtype = dst_desc.data_type();
         let gpu_op = match (src1_dtype, src2_dtype, dst_dtype) {
             (DataType::Float, DataType::Float, DataType::Float) => {
-                GPUOperation::Addition_F32_F32_F32
+                if use_nostride {
+                    GPUOperation::Addition_F32_F32_F32_NoStride
+                } else {
+                    GPUOperation::Addition_F32_F32_F32
+                }
             }
             (DataType::Float16, DataType::Float16, DataType::Float16) => {
                 GPUOperation::Addition_F16_F16_F16
