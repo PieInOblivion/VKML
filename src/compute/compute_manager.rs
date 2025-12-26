@@ -1,3 +1,4 @@
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{mem, ptr};
 
@@ -531,13 +532,14 @@ impl ComputeManager {
 
         self.tensors.reserve(count);
         let out_ptr: *mut TensorCell = self.tensors.as_mut_ptr();
+        let manager_ptr = NonNull::from(&*self);
 
         let tasks: Vec<SingleAllocParams> = (0..count)
             .map(|i| SingleAllocParams {
                 index: i,
                 initialisers_ptr: initialisers.as_mut_ptr(),
                 initialisers_len: initialisers.len(),
-                manager_ptr: self as *const ComputeManager,
+                manager_ptr,
                 out_ptrs: out_ptr,
                 tensor_locations_ptr: tensor_locations.as_ptr(),
                 host_visible_plan_ptr: host_visible_plan.as_ptr(),
@@ -768,14 +770,14 @@ struct SingleAllocParams {
     index: usize,
     initialisers_ptr: *mut Initialiser,
     initialisers_len: usize,
-    manager_ptr: *const ComputeManager,
+    manager_ptr: NonNull<ComputeManager>,
     out_ptrs: *mut TensorCell,
     tensor_locations_ptr: *const Option<DeviceId>,
     host_visible_plan_ptr: *const bool,
 }
 
 zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
-    let manager: &ComputeManager = unsafe { &*params.manager_ptr };
+    let manager: &ComputeManager = unsafe { params.manager_ptr.as_ref() };
 
     let desc: &TensorDesc = &manager.tensor_graph.tensor_descs[params.index];
 

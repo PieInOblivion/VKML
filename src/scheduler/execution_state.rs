@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ptr::NonNull;
 use std::sync::{
     Arc, Weak,
     atomic::{AtomicUsize, Ordering},
@@ -17,7 +18,7 @@ use super::execution_plan::ExecutionPlan;
 
 struct ExecutionState {
     plan: Arc<ExecutionPlan>,
-    compute_manager: *const ComputeManager,
+    compute_manager: NonNull<ComputeManager>,
     chunk_dependencies_remaining: Vec<AtomicUsize>,
     outputs_remaining: AtomicUsize,
     main_thread: std::thread::Thread,
@@ -35,7 +36,7 @@ impl ExecutionState {
         let outputs_remaining_init = plan.output_chunks.len();
 
         let plan_for_state = Arc::clone(&plan);
-        let manager_ptr = manager as *const ComputeManager;
+        let manager_ptr = NonNull::from(manager);
 
         let state = Arc::new_cyclic(move |weak_self| {
             let chunk_task_params: Vec<ChunkTaskParams> = (0..plan_for_state.total_chunks())
@@ -70,7 +71,7 @@ impl ExecutionState {
     }
 
     fn execute_chunk(&self, chunk_id: ChunkId) -> Result<(), VKMLError> {
-        let compute_manager = unsafe { &*self.compute_manager };
+        let compute_manager = unsafe { self.compute_manager.as_ref() };
         let chunk = &self.plan.chunks[chunk_id];
 
         match &chunk.device {
