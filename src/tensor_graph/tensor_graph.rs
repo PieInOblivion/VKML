@@ -234,12 +234,11 @@ impl TensorGraph {
         let mut stamp: u32 = 1;
 
         for (curr_op, op) in self.operations.iter().enumerate() {
-            // handle wrap around, unlikely unless num_ops is huge
-            if stamp == u32::MAX {
+            // if we wrap, stamp becomes 0, clear stamps array and continue
+            stamp = stamp.wrapping_add(1);
+            if stamp == 0 {
                 seen_stamp.fill(0);
                 stamp = 1;
-            } else {
-                stamp += 1;
             }
 
             let inputs = op.get_input_tensor_ids();
