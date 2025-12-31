@@ -129,8 +129,8 @@ impl Instruction for AddInstruction {
         let use_nostride = rank == 1
             && strides_a_usize.len() == 1
             && strides_b_usize.len() == 1
-            && strides_a_usize[0] == 1
-            && strides_b_usize[0] == 1;
+            && strides_a_usize[0] == 0
+            && strides_b_usize[0] == 0;
 
         // Choose operation and element size based on tensor DataType
         let src1_dtype = src1_desc.data_type();
