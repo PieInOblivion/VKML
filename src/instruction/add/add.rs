@@ -155,6 +155,23 @@ impl Instruction for AddInstruction {
             }
         };
 
+        // Quick removable performance test branch.
+        // Is safe as long as element count < local workgroup size count
+        if gpu_op == GPUOperation::Addition_F32_F32_F32_NoStride {
+            let local_size = gpu.optimal_workgroup_size_1d(total_elements);
+            let binding_count = 3; // src1, src2, dst
+            gpu.bind_compute_pipeline(command_buffer, gpu_op, local_size, binding_count);
+            gpu.bind_storage_buffers(command_buffer, &[src1_mem, src2_mem, dst_mem]);
+
+            // Minimal check: use tensor shape as the source of truth for element count
+            let num_elements: u64 = dst_dims_usize.iter().map(|d| *d as u64).product();
+
+            // Dispatch expects (command_buffer, local_size, work_size)
+            gpu.dispatch(command_buffer, local_size, [num_elements, 1, 1]);
+
+            return Ok(());
+        }
+
         // bind storage buffers (src1=0, src2=1, dst=2)
         // Choose an optimal local workgroup size for this 1D element-wise op
         let local_size = gpu.optimal_workgroup_size_1d(total_elements);
