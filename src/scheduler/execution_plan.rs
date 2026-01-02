@@ -248,7 +248,6 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     }
 
     // snapshot devices for dependents checks to avoid mutable/immutable borrow conflicts
-    // TODO: Clean this up
     let devices_snapshot: Vec<DeviceId> = chunks.iter().map(|c| c.device.clone()).collect();
 
     for chunk in chunks.iter_mut().take(chunk_count) {
