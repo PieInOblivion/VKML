@@ -14,9 +14,9 @@ pub enum DeviceId {
 }
 
 pub struct Tensor {
-    pub desc: TensorDesc,
-    pub device: DeviceId,
-    pub buffer: Box<dyn TensorData>,
+    desc: TensorDesc,
+    device: DeviceId,
+    buffer: Box<dyn TensorData>,
 }
 
 impl Tensor {
@@ -40,12 +40,29 @@ impl Tensor {
         }
     }
 
+    pub fn desc(&self) -> &TensorDesc {
+        &self.desc
+    }
+
+    pub fn desc_mut(&mut self) -> &mut TensorDesc {
+        &mut self.desc
+    }
+
+    pub fn device(&self) -> &DeviceId {
+        &self.device
+    }
+
     pub fn is_cpu(&self) -> bool {
         matches!(self.device, DeviceId::Cpu)
     }
 
     pub fn is_gpu(&self) -> bool {
         matches!(self.device, DeviceId::Gpu(_))
+    }
+
+    /// Return length in bytes of the underlying storage.
+    pub fn len_bytes(&self) -> usize {
+        self.buffer.len_bytes()
     }
 
     pub fn read(&self) -> Box<[u8]> {

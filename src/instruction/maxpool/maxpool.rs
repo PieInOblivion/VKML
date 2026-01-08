@@ -88,7 +88,7 @@ impl Instruction for MaxPoolInstruction {
         let src_mem = src_tensor.get_gpu_memory_or_panic();
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let src_desc = &src_tensor.desc;
+        let src_desc = src_tensor.desc();
         let binding_count = 2; // src, dst
         gpu.bind_storage_buffers(command_buffer, &[src_mem, dst_mem]);
 
@@ -109,7 +109,7 @@ impl Instruction for MaxPoolInstruction {
                 } else {
                     1
                 };
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
                 let output_len = if dst_dims.len() >= 3 {
                     dst_dims[2] as u32
@@ -153,7 +153,7 @@ impl Instruction for MaxPoolInstruction {
             }
             2 => {
                 let src_dims = src_desc.dims();
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
 
                 let pc = MaxPool2DPushConstants {
@@ -202,7 +202,7 @@ impl Instruction for MaxPoolInstruction {
             }
             3 => {
                 let src_dims = src_desc.dims();
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
 
                 let pc = MaxPool3DPushConstants {
@@ -264,14 +264,14 @@ impl Instruction for MaxPoolInstruction {
     fn execute_cpu(&self, cm: &ComputeManager) {
         // Acquire read guard and dst write guard
         let src_guard = cm.tensor_read(self.src);
-        let src_desc = src_guard.desc.clone();
+        let src_desc = src_guard.desc();
         let src_bytes = src_guard.get_cpu_memory_slice_or_panic();
 
         let dst_guard = cm.tensor_write(self.dst);
-        let dst_desc = dst_guard.desc.clone();
+        let dst_desc = dst_guard.desc().clone();
         let dst_ptr = dst_guard.get_cpu_memory_mut_slice_or_panic();
 
-        let pads_begin = self.compute_pads(&src_desc);
+        let pads_begin = self.compute_pads(src_desc);
 
         let src_dtype = src_desc.data_type();
         let dst_dtype = dst_desc.data_type();

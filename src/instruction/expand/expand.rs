@@ -60,8 +60,8 @@ impl Instruction for ExpandInstruction {
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
         // Get tensor descriptions
-        let src_desc = &src_tensor.desc;
-        let dst_desc = &dst_tensor.desc;
+        let src_desc = src_tensor.desc();
+        let dst_desc = dst_tensor.desc();
 
         let src_dims_usize = src_desc.dims();
         let dst_dims_usize = dst_desc.dims();
@@ -132,8 +132,8 @@ impl Instruction for ExpandInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let src_dims = src_tensor.desc.dims();
-        let dst_dims = dst_tensor.desc.dims().to_vec();
+        let src_dims = src_tensor.desc().dims();
+        let dst_dims = dst_tensor.desc().dims().to_vec();
 
         // Verify that the expand is valid
         // According to ONNX spec, dimensions are right-aligned
@@ -163,8 +163,8 @@ impl Instruction for ExpandInstruction {
         // Calculate broadcast strides
         let strides_src = TensorDesc::broadcast_strides(src_dims, &dst_dims);
 
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();

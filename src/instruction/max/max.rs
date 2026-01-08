@@ -64,9 +64,9 @@ impl Instruction for MaxInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let src1_desc = &src1_tensor.desc;
-        let src2_desc = &src2_tensor.desc;
-        let dst_desc = &dst_tensor.desc;
+        let src1_desc = src1_tensor.desc();
+        let src2_desc = src2_tensor.desc();
+        let dst_desc = dst_tensor.desc();
 
         let src1_dims = src1_desc.dims();
         let src2_dims = src2_desc.dims();
@@ -166,9 +166,9 @@ impl Instruction for MaxInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src1_tensor.desc.dims();
-        let b = src2_tensor.desc.dims();
-        let c = dst_tensor.desc.dims().to_vec();
+        let a = src1_tensor.desc().dims();
+        let b = src2_tensor.desc().dims();
+        let c = dst_tensor.desc().dims().to_vec();
 
         let bc = TensorDesc::broadcast_shape(a, b)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, b));
@@ -177,9 +177,9 @@ impl Instruction for MaxInstruction {
         let sa = TensorDesc::broadcast_strides(a, &c);
         let sb = TensorDesc::broadcast_strides(b, &c);
 
-        let src1_dtype = src1_tensor.desc.data_type();
-        let src2_dtype = src2_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src1_dtype = src1_tensor.desc().data_type();
+        let src2_dtype = src2_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
         let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();

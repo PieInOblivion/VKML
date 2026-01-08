@@ -63,14 +63,14 @@ impl Instruction for MatMulInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_read(self.dst);
 
-        let src1_dtype = src1_tensor.desc.data_type();
-        let src2_dtype = src2_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src1_dtype = src1_tensor.desc().data_type();
+        let src2_dtype = src2_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         // Determine GPU operation based on dimensions and datatypes
         let operation = determine_operation(
-            src1_tensor.desc.dims(),
-            src2_tensor.desc.dims(),
+            src1_tensor.desc().dims(),
+            src2_tensor.desc().dims(),
             src1_dtype,
             src2_dtype,
             dst_dtype,
@@ -91,23 +91,28 @@ impl Instruction for MatMulInstruction {
         let src2_tensor = cm.tensor_read(self.src2);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let src1_dtype = src1_tensor.desc.data_type();
-        let src2_dtype = src2_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src1_dtype = src1_tensor.desc().data_type();
+        let src2_dtype = src2_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src1_dims: Vec<usize> = src1_tensor
-            .desc
+            .desc()
             .dims()
             .iter()
             .map(|&d| d as usize)
             .collect();
         let src2_dims: Vec<usize> = src2_tensor
-            .desc
+            .desc()
             .dims()
             .iter()
             .map(|&d| d as usize)
             .collect();
-        let dst_dims: Vec<usize> = dst_tensor.desc.dims().iter().map(|&d| d as usize).collect();
+        let dst_dims: Vec<usize> = dst_tensor
+            .desc()
+            .dims()
+            .iter()
+            .map(|&d| d as usize)
+            .collect();
 
         let src1_bytes = src1_tensor.get_cpu_memory_slice_or_panic();
         let src2_bytes = src2_tensor.get_cpu_memory_slice_or_panic();
@@ -190,11 +195,11 @@ fn execute_gpu_matmul(
     let src2_mem = src2_tensor.get_gpu_memory_or_panic();
     let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-    let src1_dims = src1_tensor.desc.dims();
-    let src2_dims = src2_tensor.desc.dims();
-    let src1_strides = src1_tensor.desc.strides();
-    let src2_strides = src2_tensor.desc.strides();
-    let dst_strides = dst_tensor.desc.strides();
+    let src1_dims = src1_tensor.desc().dims();
+    let src2_dims = src2_tensor.desc().dims();
+    let src1_strides = src1_tensor.desc().strides();
+    let src2_strides = src2_tensor.desc().strides();
+    let dst_strides = dst_tensor.desc().strides();
 
     // Configure based on operation type
     // Pass actual output dimensions to optimal_workgroup_size_* and dispatch

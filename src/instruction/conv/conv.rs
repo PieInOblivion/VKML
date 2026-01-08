@@ -108,9 +108,9 @@ impl Instruction for ConvInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
 
         // Basic sanity checks for group before doing GPU work
-        let src_desc_tmp = src_tensor.desc.clone();
+        let src_desc_tmp = src_tensor.desc();
         let c_val = src_desc_tmp.dims()[1];
-        let dst_desc_tmp = dst_tensor.desc.clone();
+        let dst_desc_tmp = dst_tensor.desc();
         let m_val = dst_desc_tmp.dims()[1];
         if self.group < 1 || c_val % self.group != 0 || m_val % self.group != 0 {
             panic!(
@@ -131,7 +131,7 @@ impl Instruction for ConvInstruction {
             .map(|t| t.get_gpu_memory_or_panic());
 
         // Decide which shader/pipeline to use based on spatial rank and prepare push constants
-        let src_desc = &src_tensor.desc;
+        let src_desc = src_tensor.desc();
         let spatial_rank = if src_desc.ndim() >= 2 {
             src_desc.ndim() - 2
         } else {
@@ -149,7 +149,7 @@ impl Instruction for ConvInstruction {
                 } else {
                     1
                 };
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
                 let output_len = if dst_dims.len() >= 3 {
                     dst_dims[2] as u32
@@ -179,8 +179,8 @@ impl Instruction for ConvInstruction {
                 let local_size = gpu.optimal_workgroup_size_1d(total);
 
                 let src_dtype = src_desc.data_type();
-                let weight_dtype = weights_tensor.desc.data_type();
-                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
+                let weight_dtype = weights_tensor.desc().data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc().data_type());
                 let dst_dtype = dst_desc.data_type();
                 let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
                     (DataType::Float, DataType::Float, None, DataType::Float)
@@ -217,7 +217,7 @@ impl Instruction for ConvInstruction {
             2 => {
                 // 2D shader
                 let src_dims = src_desc.dims();
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
 
                 let pc_values = Conv2DPushConstants {
@@ -250,8 +250,8 @@ impl Instruction for ConvInstruction {
                 let local_size = gpu.optimal_workgroup_size_2d(out_h, out_w);
 
                 let src_dtype = src_desc.data_type();
-                let weight_dtype = weights_tensor.desc.data_type();
-                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
+                let weight_dtype = weights_tensor.desc().data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc().data_type());
                 let dst_dtype = dst_desc.data_type();
                 let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
                     (DataType::Float, DataType::Float, None, DataType::Float)
@@ -294,7 +294,7 @@ impl Instruction for ConvInstruction {
             3 => {
                 // 3D shader
                 let src_dims = src_desc.dims();
-                let dst_desc = &dst_tensor.desc;
+                let dst_desc = dst_tensor.desc();
                 let dst_dims = dst_desc.dims();
 
                 let pc_values = Conv3DPushConstants {
@@ -344,8 +344,8 @@ impl Instruction for ConvInstruction {
                 let local_size = gpu.optimal_workgroup_size_3d(out_w, out_h, out_d);
 
                 let src_dtype = src_desc.data_type();
-                let weight_dtype = weights_tensor.desc.data_type();
-                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc.data_type());
+                let weight_dtype = weights_tensor.desc().data_type();
+                let bias_dtype_opt = bias_tensor_opt.as_ref().map(|t| t.desc().data_type());
                 let dst_dtype = dst_desc.data_type();
                 let gpu_op = match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
                     (DataType::Float, DataType::Float, None, DataType::Float)
@@ -391,9 +391,8 @@ impl Instruction for ConvInstruction {
         let weights_guard = cm.tensor_read(self.weights);
         let bias_guard_opt = self.bias.map(|bid| cm.tensor_read(bid));
 
-        // Clone descriptors (cheap) and copy input bytes (so we can release read locks)
-        let src_desc = src_guard.desc.clone();
-        let weight_desc = weights_guard.desc.clone();
+        let src_desc = src_guard.desc();
+        let weight_desc = weights_guard.desc();
         let src_bytes_vec: Vec<u8> = src_guard.get_cpu_memory_slice_or_panic().to_vec();
         let weight_bytes_vec: Vec<u8> = weights_guard.get_cpu_memory_slice_or_panic().to_vec();
         let bias_bytes_vec_opt: Option<Vec<u8>> = bias_guard_opt
@@ -402,7 +401,7 @@ impl Instruction for ConvInstruction {
 
         // Obtain dst as mutable write guard
         let dst_tensor = cm.tensor_write(self.dst);
-        let dst_desc = dst_tensor.desc.clone();
+        let dst_desc = dst_tensor.desc().clone();
 
         // Get raw bytes as slices referencing our copied vecs
         let src_bytes: &[u8] = src_bytes_vec.as_slice();
@@ -410,12 +409,12 @@ impl Instruction for ConvInstruction {
         let bias_bytes_opt: Option<&[u8]> = bias_bytes_vec_opt.as_deref();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
 
-        let pads_begin = self.compute_pads(&src_desc);
+        let pads_begin = self.compute_pads(src_desc);
 
         // Dispatch based on data type
         let src_dtype = src_desc.data_type();
         let weight_dtype = weight_desc.data_type();
-        let bias_dtype_opt = bias_guard_opt.as_ref().map(|t| t.desc.data_type());
+        let bias_dtype_opt = bias_guard_opt.as_ref().map(|t| t.desc().data_type());
         let dst_dtype = dst_desc.data_type();
         match (src_dtype, weight_dtype, bias_dtype_opt, dst_dtype) {
             (DataType::Float, DataType::Float, None, DataType::Float)

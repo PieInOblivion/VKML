@@ -58,7 +58,7 @@ impl Instruction for ReduceMeanInstruction {
         let dst_mem = dst_t.get_gpu_memory_or_panic();
 
         // Determine axes to reduce
-        let rank = src_t.desc.ndim() as i64;
+        let rank = src_t.desc().ndim() as i64;
         let axes_vec: Vec<i64> = if let Some(a) = &self.axes {
             a.clone()
         } else if self.noop_with_empty_axes != 0 {
@@ -73,15 +73,15 @@ impl Instruction for ReduceMeanInstruction {
         }
 
         // compute total elements and reduction_size and output elements
-        let _total_elements: u64 = src_t.desc.dims().iter().map(|d| *d as u64).product();
+        let _total_elements: u64 = src_t.desc().dims().iter().map(|d| *d as u64).product();
         let mut reduction_size: u64 = 1;
         for &a in &axes_vec {
-            reduction_size *= src_t.desc.dims()[a as usize] as u64;
+            reduction_size *= src_t.desc().dims()[a as usize] as u64;
         }
 
         // compute output dims and elements
         let mut out_dims: Vec<i64> = Vec::new();
-        for (i, &d) in src_t.desc.dims().iter().enumerate() {
+        for (i, &d) in src_t.desc().dims().iter().enumerate() {
             if axes_vec.contains(&(i as i64)) {
                 if self.keepdims != 0 {
                     out_dims.push(1);
@@ -101,8 +101,8 @@ impl Instruction for ReduceMeanInstruction {
         };
         let mean_pc_bytes = as_bytes(&mean_pc);
 
-        let src_dtype = src_t.desc.data_type();
-        let dst_dtype = dst_t.desc.data_type();
+        let src_dtype = src_t.desc().data_type();
+        let dst_dtype = dst_t.desc().data_type();
 
         // Select GPUOperation based on DataType trio (src,dst)
         let gpu_op = match (src_dtype, dst_dtype) {
@@ -131,7 +131,7 @@ impl Instruction for ReduceMeanInstruction {
     fn execute_cpu(&self, cm: &ComputeManager) {
         // Basic CPU implementation: compute mean over axes
         let src_t = cm.tensor_read(self.src);
-        let src_desc = src_t.desc.clone();
+        let src_desc = src_t.desc();
         let src_dims = src_desc.dims().to_vec();
         let rank = src_dims.len() as i64;
 
@@ -151,7 +151,7 @@ impl Instruction for ReduceMeanInstruction {
         if axes_vec.is_empty() && self.noop_with_empty_axes != 0 {
             let src_bytes = src_t.get_cpu_memory_slice_or_panic();
             let dst_t = cm.tensor_write(self.dst);
-            dst_t.desc = src_desc.clone();
+            *dst_t.desc_mut() = src_desc.clone();
             dst_t
                 .get_cpu_memory_mut_slice_or_panic()
                 .copy_from_slice(src_bytes);
@@ -176,7 +176,7 @@ impl Instruction for ReduceMeanInstruction {
 
         // Update dst descriptor
         let dst_t = cm.tensor_write(self.dst);
-        dst_t.desc = TensorDesc::new(out_dims.clone(), src_desc.data_type());
+        *dst_t.desc_mut() = TensorDesc::new(out_dims.clone(), src_desc.data_type());
 
         let src_bytes = src_t.get_cpu_memory_slice_or_panic();
         let out_bytes = dst_t.get_cpu_memory_mut_slice_or_panic();

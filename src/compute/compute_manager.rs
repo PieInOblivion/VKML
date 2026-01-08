@@ -629,13 +629,13 @@ impl ComputeManager {
         for (batch_idx, batch) in batches.iter().enumerate() {
             let expected_bytes = self
                 .tensor_read(input_tensor_ids[batch_idx])
-                .desc
+                .desc()
                 .size_in_bytes();
-            if batch.buffer.len_bytes() != expected_bytes {
+            if batch.len_bytes() != expected_bytes {
                 return Err(VKMLError::ComputeManager(format!(
                     "Input batch {} size mismatch: got {} bytes, expected {} bytes",
                     batch_idx,
-                    batch.buffer.len_bytes(),
+                    batch.len_bytes(),
                     expected_bytes
                 )));
             }
@@ -829,7 +829,7 @@ struct BatchCopyParams<'a> {
 zp_define_task_fn!(batch_copy_task, BatchCopyParams, |params| {
     let tensor = params.compute_manager.tensor_read(params.tensor_id);
     let output_data = tensor.read();
-    let batch = Tensor::new_cpu(tensor.desc.clone(), output_data);
+    let batch = Tensor::new_cpu(tensor.desc().clone(), output_data);
 
     unsafe {
         let slot = params.out_ptr.add(params.output_index);

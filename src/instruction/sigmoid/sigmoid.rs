@@ -57,8 +57,8 @@ impl Instruction for SigmoidInstruction {
         let num_elements = dst_mem.size / std::mem::size_of::<f32>() as u64;
 
         // Choose operation based on data type
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::Sigmoid_F32_F32,
             _ => {
@@ -90,8 +90,8 @@ impl Instruction for SigmoidInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src_tensor.desc.dims();
-        let c = dst_tensor.desc.dims().to_vec();
+        let a = src_tensor.desc().dims();
+        let c = dst_tensor.desc().dims().to_vec();
 
         let bc = TensorDesc::broadcast_shape(a, &c)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, c));
@@ -99,8 +99,8 @@ impl Instruction for SigmoidInstruction {
 
         let sa = TensorDesc::broadcast_strides(a, &c);
 
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();

@@ -78,9 +78,9 @@ impl Instruction for GemmInstruction {
         let b_gpu_mem = b_tensor.get_gpu_memory_or_panic();
         let y_gpu_mem = y_tensor.get_gpu_memory_or_panic();
 
-        let a_dims = a_tensor.desc.dims();
-        let b_dims = b_tensor.desc.dims();
-        let y_dims = y_tensor.desc.dims();
+        let a_dims = a_tensor.desc().dims();
+        let b_dims = b_tensor.desc().dims();
+        let y_dims = y_tensor.desc().dims();
 
         // Determine matrix dimensions based on transpose flags
         // A is (M, K) or (K, M) if transposed
@@ -89,9 +89,9 @@ impl Instruction for GemmInstruction {
         let (m, k, n) =
             compute_gemm_dimensions(a_dims, b_dims, y_dims, self.trans_a, self.trans_b)?;
 
-        let a_strides = a_tensor.desc.strides();
-        let b_strides = b_tensor.desc.strides();
-        let y_strides = y_tensor.desc.strides();
+        let a_strides = a_tensor.desc().strides();
+        let b_strides = b_tensor.desc().strides();
+        let y_strides = y_tensor.desc().strides();
 
         // Build push constants
         let has_c = c_tensor.is_some();
@@ -118,10 +118,10 @@ impl Instruction for GemmInstruction {
         // Choose optimal workgroup size for 2D matrix operation
         let local_size = gpu.optimal_workgroup_size_2d(n as u64, m as u64);
 
-        let a_dtype = a_tensor.desc.data_type();
-        let b_dtype = b_tensor.desc.data_type();
-        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc.data_type());
-        let y_dtype = y_tensor.desc.data_type();
+        let a_dtype = a_tensor.desc().data_type();
+        let b_dtype = b_tensor.desc().data_type();
+        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc().data_type());
+        let y_dtype = y_tensor.desc().data_type();
 
         let gpu_op = match (a_dtype, b_dtype, c_dtype_opt, y_dtype) {
             (DataType::Float, DataType::Float, None, DataType::Float)
@@ -245,18 +245,18 @@ impl Instruction for GemmInstruction {
         let c_tensor = self.c.map(|c| cm.tensor_read(c));
         let y_tensor = cm.tensor_write(self.y);
 
-        let a_dims_i64 = a_tensor.desc.dims();
-        let b_dims_i64 = b_tensor.desc.dims();
-        let y_dims_i64 = y_tensor.desc.dims();
+        let a_dims_i64 = a_tensor.desc().dims();
+        let b_dims_i64 = b_tensor.desc().dims();
+        let y_dims_i64 = y_tensor.desc().dims();
 
         let a_dims: Vec<usize> = a_dims_i64.iter().map(|&d| d as usize).collect();
         let b_dims: Vec<usize> = b_dims_i64.iter().map(|&d| d as usize).collect();
         let y_dims: Vec<usize> = y_dims_i64.iter().map(|&d| d as usize).collect();
 
-        let a_dtype = a_tensor.desc.data_type();
-        let b_dtype = b_tensor.desc.data_type();
-        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc.data_type());
-        let y_dtype = y_tensor.desc.data_type();
+        let a_dtype = a_tensor.desc().data_type();
+        let b_dtype = b_tensor.desc().data_type();
+        let c_dtype_opt = c_tensor.as_ref().map(|t| t.desc().data_type());
+        let y_dtype = y_tensor.desc().data_type();
 
         let a_bytes = a_tensor.get_cpu_memory_slice_or_panic();
         let b_bytes = b_tensor.get_cpu_memory_slice_or_panic();

@@ -81,7 +81,7 @@ impl Instruction for ReshapeInstruction {
         let allowzero_flag = self.allowzero.unwrap_or(0) != 0;
 
         if !allowzero_flag {
-            let src_desc = cm.tensor_read(self.src).desc.clone();
+            let src_desc = cm.tensor_read(self.src).desc().clone();
             let src_dims = src_desc.dims();
             for (i, val) in new_dims.iter_mut().enumerate() {
                 if *val == 0 {
@@ -96,7 +96,7 @@ impl Instruction for ReshapeInstruction {
         }
 
         // Infer -1 if present
-        let src_desc = cm.tensor_read(self.src).desc.clone();
+        let src_desc = cm.tensor_read(self.src).desc().clone();
         let src_num = src_desc.num_elements();
         let neg1_count = new_dims.iter().filter(|&&d| d == -1).count();
         if neg1_count > 1 {
@@ -134,7 +134,7 @@ impl Instruction for ReshapeInstruction {
         {
             let dst_t = cm.tensor_write(self.dst);
             dst_t
-                .desc
+                .desc_mut()
                 .reshape(new_dims)
                 .expect("Invalid reshape at runtime");
         }

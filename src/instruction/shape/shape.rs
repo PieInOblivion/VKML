@@ -53,7 +53,7 @@ impl Instruction for ShapeInstruction {
         cm: &ComputeManager,
     ) -> Result<(), VKMLError> {
         // Compute shape bytes on host, then upload to GPU via a host-visible staging buffer
-        let src_desc = cm.tensor_read(self.src).desc.clone();
+        let src_desc = cm.tensor_read(self.src).desc().clone();
         let rank = src_desc.ndim() as i64;
 
         let mut start = self.start.unwrap_or(0);
@@ -108,7 +108,7 @@ impl Instruction for ShapeInstruction {
         let dst_mem = dst_t.get_gpu_memory_or_panic();
 
         // Respect DataType: Shape always writes int64 outputs on GPU
-        let dst_dtype = dst_t.desc.data_type();
+        let dst_dtype = dst_t.desc().data_type();
         let gpu_op = match dst_dtype {
             DataType::Int64 => GPUOperation::Shape_Write_I64,
             _ => {
@@ -135,7 +135,7 @@ impl Instruction for ShapeInstruction {
 
     fn execute_cpu(&self, cm: &ComputeManager) {
         // Read input tensor descriptor
-        let src_desc = cm.tensor_read(self.src).desc.clone();
+        let src_desc = cm.tensor_read(self.src).desc().clone();
         let rank = src_desc.ndim() as i64;
 
         // Apply ONNX semantics for start/end
@@ -185,7 +185,7 @@ impl Instruction for ShapeInstruction {
         // Update destination descriptor to 1D int64 tensor with length slice_len
         {
             let dst_t = cm.tensor_write(self.dst);
-            dst_t.desc = TensorDesc::new(vec![slice_len as i64], DataType::Int64);
+            *dst_t.desc_mut() = TensorDesc::new(vec![slice_len as i64], DataType::Int64);
 
             // Write values into CPU buffer (little-endian)
             let dst_bytes = dst_t.get_cpu_memory_mut_slice_or_panic();

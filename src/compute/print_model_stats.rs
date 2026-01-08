@@ -98,7 +98,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
                             let output_tensor_id = connected_layer_outputs[output_idx];
                             if output_tensor_id < cm.tensors.len() {
                                 let tensor = cm.tensor_read(output_tensor_id);
-                                let dims = tensor.desc.dims();
+                                let dims = tensor.desc().dims();
                                 return Some(format_dimensions(dims));
                             }
                         }
@@ -110,7 +110,7 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let output_shapes_str = if output_tensor < cm.tensors.len() {
                 let tensor = cm.tensor_read(output_tensor);
-                format_dimensions(tensor.desc.dims())
+                format_dimensions(tensor.desc().dims())
             } else {
                 "Unknown".to_string()
             };
@@ -120,10 +120,10 @@ pub fn print_model_stats(cm: &ComputeManager) {
 
             let memory_bytes = layer_tensor_ids
                 .iter()
-                .map(|&id| cm.tensor_read(id).desc.size_in_bytes() as u64)
+                .map(|&id| cm.tensor_read(id).desc().size_in_bytes() as u64)
                 .sum();
 
-            let device_location = match &cm.tensor_read(output_tensor).device {
+            let device_location = match cm.tensor_read(output_tensor).device() {
                 DeviceId::Cpu => "CPU".to_string(),
                 DeviceId::Gpu(gpu_idx) => format!("GPU {}", gpu_idx),
             };
@@ -408,11 +408,11 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     for &tensor_id in &tensor_ids {
         let tensor = cm.tensor_read(tensor_id);
         let raw = tensor.read();
-        let gpu_idx = match &tensor.device {
-            DeviceId::Gpu(idx) => Some(*idx),
+        let gpu_idx = match tensor.device() {
+            DeviceId::Gpu(idx) => Some(idx),
             _ => None,
         };
-        let dtype = tensor.desc.data_type();
+        let dtype = tensor.desc().data_type();
 
         println!("\nTensor {}:", tensor_id);
         println!(
@@ -422,10 +422,10 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
                 None => "CPU".to_string(),
             }
         );
-        println!("  Shape: {:?}", tensor.desc.dims());
+        println!("  Shape: {:?}", tensor.desc().dims());
         println!(
             "  Size in memory: {}",
-            cm.format_memory_mb(tensor.desc.size_in_bytes() as u64)
+            cm.format_memory_mb(tensor.desc().size_in_bytes() as u64)
         );
 
         if let Some(values) = bytes_to_f32_vec(&raw, dtype) {
@@ -476,7 +476,7 @@ pub fn print_layer_values(cm: &ComputeManager, layer_id: LayerId) -> Result<(), 
     } else {
         for &tensor_id in &output_tensors {
             let tensor = cm.tensor_read(tensor_id);
-            println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc.dims());
+            println!("  Tensor {} Shape: {:?}", tensor_id, tensor.desc().dims());
         }
     }
 

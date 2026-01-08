@@ -70,7 +70,7 @@ impl Instruction for SoftmaxInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let dims = src_tensor.desc.dims();
+        let dims = src_tensor.desc().dims();
         let dim = self.resolve_axis(dims.len());
 
         // Currently we only support softmax on the last dimension
@@ -82,7 +82,7 @@ impl Instruction for SoftmaxInstruction {
         );
 
         let feature_size = dims[dim] as usize;
-        let batch_size = src_tensor.desc.num_elements() / feature_size;
+        let batch_size = src_tensor.desc().num_elements() / feature_size;
 
         // Create push constants struct (compute before GPU ops)
         let push_constants = SoftmaxPushConstants {
@@ -93,8 +93,8 @@ impl Instruction for SoftmaxInstruction {
         let pc_bytes = as_bytes(&push_constants);
 
         // Choose operation based on data type
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::Softmax_F32_F32,
@@ -167,7 +167,7 @@ impl Instruction for SoftmaxInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let dims = src_tensor.desc.dims();
+        let dims = src_tensor.desc().dims();
         let dim = self.resolve_axis(dims.len());
 
         assert_eq!(
@@ -176,8 +176,8 @@ impl Instruction for SoftmaxInstruction {
             "CPU Softmax currently only supports the last dimension"
         );
 
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();

@@ -53,11 +53,11 @@ impl Instruction for ReLUInstruction {
         let dst_tensor = cm.tensor_read(self.dst);
         let dst_mem = dst_tensor.get_gpu_memory_or_panic();
 
-        let num_elements = dst_tensor.desc.num_elements() as u64;
+        let num_elements = dst_tensor.desc().num_elements() as u64;
 
         // Choose operation based on DataType
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
         let gpu_op = match (src_dtype, dst_dtype) {
             (DataType::Float, DataType::Float) => GPUOperation::ReLU_F32_F32,
             (DataType::Float16, DataType::Float16) => GPUOperation::ReLU_F16_F16,
@@ -93,8 +93,8 @@ impl Instruction for ReLUInstruction {
         let src_tensor = cm.tensor_read(self.src);
         let dst_tensor = cm.tensor_write(self.dst);
 
-        let a = src_tensor.desc.dims();
-        let c = dst_tensor.desc.dims().to_vec();
+        let a = src_tensor.desc().dims();
+        let c = dst_tensor.desc().dims().to_vec();
 
         let bc = TensorDesc::broadcast_shape(a, &c)
             .unwrap_or_else(|| panic!("Can't broadcast {:?} vs {:?}", a, c));
@@ -102,8 +102,8 @@ impl Instruction for ReLUInstruction {
 
         let sa = TensorDesc::broadcast_strides(a, &c);
 
-        let src_dtype = src_tensor.desc.data_type();
-        let dst_dtype = dst_tensor.desc.data_type();
+        let src_dtype = src_tensor.desc().data_type();
+        let dst_dtype = dst_tensor.desc().data_type();
 
         let src_bytes = src_tensor.get_cpu_memory_slice_or_panic();
         let dst_ptr = dst_tensor.get_cpu_memory_mut_slice_or_panic();
