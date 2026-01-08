@@ -813,10 +813,14 @@ struct BatchLoadParams<'a> {
 }
 
 zp_define_task_fn!(batch_load_task, BatchLoadParams, |params| {
-    params
-        .compute_manager
-        .tensor_write(params.tensor_id)
-        .write(&params.batch.read());
+    let dest = params.compute_manager.tensor_write(params.tensor_id);
+
+    // if batch is CPU backed, avoid allocating via batch.read()
+    if params.batch.is_cpu() {
+        dest.write(params.batch.get_cpu_memory_slice_or_panic());
+    } else {
+        dest.write(&params.batch.read());
+    }
 });
 
 struct BatchCopyParams<'a> {
