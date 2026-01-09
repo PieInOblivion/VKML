@@ -52,14 +52,6 @@ impl Tensor {
         &self.device
     }
 
-    pub fn is_cpu(&self) -> bool {
-        matches!(self.device, DeviceId::Cpu)
-    }
-
-    pub fn is_gpu(&self) -> bool {
-        matches!(self.device, DeviceId::Gpu(_))
-    }
-
     /// Return length in bytes of the underlying storage.
     pub fn len_bytes(&self) -> usize {
         self.buffer.len_bytes()
