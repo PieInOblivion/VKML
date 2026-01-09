@@ -67,17 +67,17 @@ impl Tensor {
 
     // The not super general functions below
     pub fn get_gpu_memory_or_panic(&self) -> &GPUMemory {
-        // Try to downcast the trait object to GpuData
-        let any = self.buffer.as_ref().as_any();
+        let any = self.buffer.as_any();
         let gpu = any
             .downcast_ref::<GpuData>()
             .expect("Tensor is not backed by GPU storage");
+
         &gpu.memory
     }
 
     pub fn get_cpu_memory_slice_or_panic(&self) -> &[u8] {
-        let any_mut = self.buffer.as_any();
-        let cpu = any_mut
+        let any = self.buffer.as_any();
+        let cpu = any
             .downcast_ref::<CpuData>()
             .expect("Tensor is not backed by CPU storage");
 
