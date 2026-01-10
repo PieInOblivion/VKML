@@ -35,11 +35,10 @@ impl ExecutionState {
 
         let outputs_remaining_init = plan.output_chunks.len();
 
-        let plan_for_state = Arc::clone(&plan);
         let manager_ptr = NonNull::from(manager);
 
         let state = Arc::new_cyclic(move |weak_self| {
-            let chunk_task_params: Vec<ChunkTaskParams> = (0..plan_for_state.total_chunks())
+            let chunk_task_params: Vec<ChunkTaskParams> = (0..plan.total_chunks())
                 .map(|chunk_id| ChunkTaskParams {
                     chunk_id,
                     state: weak_self.clone(),
@@ -47,7 +46,7 @@ impl ExecutionState {
                 .collect();
 
             ExecutionState {
-                plan: Arc::clone(&plan_for_state),
+                plan,
                 compute_manager: manager_ptr,
                 chunk_dependencies_remaining,
                 outputs_remaining: AtomicUsize::new(outputs_remaining_init),
