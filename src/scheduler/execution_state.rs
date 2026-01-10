@@ -248,12 +248,13 @@ fn create_gpu_chunk_command_buffer(
             ))
         })?;
 
-        gpu.begin_command_buffer(command_buffer).map_err(|err| {
-            VKMLError::Vulkan(format!(
-                "Failed to begin command buffer for GPU {}: {}",
-                gpu_idx, err
-            ))
-        })?;
+        gpu.begin_command_buffer(command_buffer, vk::CommandBufferUsageFlags::empty())
+            .map_err(|err| {
+                VKMLError::Vulkan(format!(
+                    "Failed to begin command buffer for GPU {}: {}",
+                    gpu_idx, err
+                ))
+            })?;
 
         // Record operations layer by layer with barriers between layers
         for (layer_idx, layer) in operation_layers.iter().enumerate() {

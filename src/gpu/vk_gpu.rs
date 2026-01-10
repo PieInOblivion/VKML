@@ -654,11 +654,18 @@ impl Gpu {
         )
     }
 
-    /// Begin recording a compute command buffer
-    pub fn begin_command_buffer(&self, command_buffer: vk::CommandBuffer) -> Result<(), VKMLError> {
+    /// Begin recording a compute command buffer.
+    ///
+    /// for reusable command buffers, pass `vk::CommandBufferUsageFlags::empty()`
+    /// for staging-style record/submit/reset loops, pass `vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT`
+    pub fn begin_command_buffer(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        flags: vk::CommandBufferUsageFlags,
+    ) -> Result<(), VKMLError> {
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo {
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                flags,
                 ..Default::default()
             };
             self.get_device()

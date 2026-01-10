@@ -423,7 +423,10 @@ impl GpuAllocator {
 
                 staging_guard.buffer.copy_into(chunk)?;
 
-                gpu.begin_command_buffer(command_buffer)?;
+                gpu.begin_command_buffer(
+                    command_buffer,
+                    vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                )?;
 
                 let copy_region = vk::BufferCopy {
                     src_offset: 0,
@@ -487,7 +490,10 @@ impl GpuAllocator {
                 let remaining = total_bytes - offset;
                 let chunk_size = cmp::min(staging_size, remaining);
 
-                gpu.begin_command_buffer(command_buffer)?;
+                gpu.begin_command_buffer(
+                    command_buffer,
+                    vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                )?;
 
                 let copy_region = vk::BufferCopy {
                     src_offset: offset as vk::DeviceSize,
