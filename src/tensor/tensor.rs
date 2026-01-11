@@ -1,11 +1,4 @@
-use crate::{
-    gpu::gpu_memory::GPUMemory,
-    tensor::{
-        data::TensorData,
-        desc::TensorDesc,
-        device::{cpu::CpuData, gpu::GpuData},
-    },
-};
+use crate::{gpu::gpu_memory::GPUMemory, tensor::desc::TensorDesc};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum DeviceId {
@@ -13,30 +6,30 @@ pub enum DeviceId {
     Gpu(usize),
 }
 
+enum TensorStorage {
+    Cpu(Box<[u8]>),
+    Gpu { gpu_idx: usize, memory: GPUMemory },
+}
+
 pub struct Tensor {
     desc: TensorDesc,
-    device: DeviceId,
-    buffer: Box<dyn TensorData>,
+    storage: TensorStorage,
 }
 
 impl Tensor {
     /// Create a CPU-backed tensor from host data
     pub fn new_cpu(desc: TensorDesc, host_data: Box<[u8]>) -> Self {
-        let buf = CpuData::from_boxed_slice(host_data);
         Self {
             desc,
-            device: DeviceId::Cpu,
-            buffer: Box::new(buf),
+            storage: TensorStorage::Cpu(host_data),
         }
     }
 
     /// Create a GPU-backed tensor from an existing GPUMemory allocation
     pub fn new_gpu(desc: TensorDesc, gpu_idx: usize, memory: GPUMemory) -> Self {
-        let buf = GpuData { memory };
         Self {
             desc,
-            device: DeviceId::Gpu(gpu_idx),
-            buffer: Box::new(buf),
+            storage: TensorStorage::Gpu { gpu_idx, memory },
         }
     }
 
@@ -48,48 +41,66 @@ impl Tensor {
         &mut self.desc
     }
 
-    pub fn device(&self) -> &DeviceId {
-        &self.device
+    pub fn device(&self) -> DeviceId {
+        match &self.storage {
+            TensorStorage::Cpu(_) => DeviceId::Cpu,
+            TensorStorage::Gpu { gpu_idx, .. } => DeviceId::Gpu(*gpu_idx),
+        }
     }
 
     /// Return length in bytes of the underlying storage.
     pub fn len_bytes(&self) -> usize {
-        self.buffer.len_bytes()
+        match &self.storage {
+            TensorStorage::Cpu(data) => data.len(),
+            TensorStorage::Gpu { memory, .. } => memory.size as usize,
+        }
     }
 
     pub fn read(&self) -> Box<[u8]> {
-        self.buffer.read()
+        match &self.storage {
+            TensorStorage::Cpu(data) => data.clone(),
+            TensorStorage::Gpu { memory, .. } => memory
+                .read_memory()
+                .expect("Failed to read GPU memory")
+                .into_boxed_slice(),
+        }
     }
 
     pub fn write(&mut self, data: &[u8]) {
-        self.buffer.write(data);
+        match &mut self.storage {
+            TensorStorage::Cpu(buf) => {
+                assert_eq!(data.len(), buf.len());
+                buf.copy_from_slice(data);
+            }
+            TensorStorage::Gpu { memory, .. } => {
+                let expected = memory.size as usize;
+                assert_eq!(data.len(), expected);
+                memory
+                    .copy_into(data)
+                    .expect("Failed to copy data into GPU memory");
+            }
+        }
     }
 
     // The not super general functions below
     pub fn get_gpu_memory_or_panic(&self) -> &GPUMemory {
-        let any = self.buffer.as_any();
-        let gpu = any
-            .downcast_ref::<GpuData>()
-            .expect("Tensor is not backed by GPU storage");
-
-        &gpu.memory
+        match &self.storage {
+            TensorStorage::Gpu { memory, .. } => memory,
+            TensorStorage::Cpu(_) => panic!("Tensor is not backed by GPU storage"),
+        }
     }
 
     pub fn get_cpu_memory_slice_or_panic(&self) -> &[u8] {
-        let any = self.buffer.as_any();
-        let cpu = any
-            .downcast_ref::<CpuData>()
-            .expect("Tensor is not backed by CPU storage");
-
-        &cpu.data
+        match &self.storage {
+            TensorStorage::Cpu(data) => data,
+            TensorStorage::Gpu { .. } => panic!("Tensor is not backed by CPU storage"),
+        }
     }
 
     pub fn get_cpu_memory_mut_slice_or_panic(&mut self) -> &mut [u8] {
-        let any_mut = self.buffer.as_any_mut();
-        let cpu = any_mut
-            .downcast_mut::<CpuData>()
-            .expect("Tensor is not backed by CPU storage");
-
-        &mut cpu.data
+        match &mut self.storage {
+            TensorStorage::Cpu(data) => data,
+            TensorStorage::Gpu { .. } => panic!("Tensor is not backed by CPU storage"),
+        }
     }
 }

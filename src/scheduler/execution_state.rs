@@ -292,7 +292,7 @@ fn create_gpu_chunk_command_buffer(
 
                     let tensor = compute_manager.tensor_read(tensor_id);
                     match tensor.device() {
-                        &DeviceId::Gpu(owner_idx) if owner_idx == gpu_idx => {
+                        DeviceId::Gpu(owner_idx) if owner_idx == gpu_idx => {
                             let memory = tensor.get_gpu_memory_or_panic();
                             buffer_barriers.push(vk::BufferMemoryBarrier2 {
                                 s_type: vk::StructureType::BUFFER_MEMORY_BARRIER_2,

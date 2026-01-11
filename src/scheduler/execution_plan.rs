@@ -111,7 +111,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
                 .copied()
                 .or_else(|| op_ref.get_input_tensor_ids().first().copied())
                 .expect("Operation must reference at least one tensor");
-            compute_manager.tensor_read(tensor_id).device().clone()
+            compute_manager.tensor_read(tensor_id).device()
         };
 
         if op_ref.must_execute_on_cpu() {
