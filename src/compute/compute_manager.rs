@@ -18,7 +18,7 @@ use onnx_extractor::OnnxModel;
 use zero_pool::{global_pool, zp_define_task_fn};
 
 use crate::instruction::Instruction;
-use crate::tensor_graph::{DependencyGraph, OperationId, TensorGraph};
+use crate::tensor_graph::{DependencyGraph, OperationId, TensorGraph, TensorId};
 use crate::{
     model::{graph_model::GraphModel, layer_connection::LayerId},
     tensor::TensorDesc,
@@ -614,7 +614,7 @@ impl ComputeManager {
         }
     }
 
-    pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<Tensor>, VKMLError> {
+    pub fn forward(&mut self, batches: Vec<Tensor>) -> Result<Vec<TensorId>, VKMLError> {
         let input_tensor_ids = self.tensor_graph.get_input_tensor_ids();
 
         if batches.len() != input_tensor_ids.len() {
@@ -658,31 +658,7 @@ impl ComputeManager {
 
         self.execute()?;
 
-        // Gather output data in parallel
-        let output_tensor_ids = self.tensor_graph.get_output_tensor_ids();
-        let output_count = output_tensor_ids.len();
-
-        let mut output_batches: Vec<Tensor> = Vec::with_capacity(output_count);
-        let out_ptr: *mut Tensor = output_batches.as_mut_ptr();
-
-        let copy_params: Vec<_> = output_tensor_ids
-            .iter()
-            .enumerate()
-            .map(|(idx, &tensor_id)| BatchCopyParams {
-                tensor_id,
-                output_index: idx,
-                compute_manager: self,
-                out_ptr,
-            })
-            .collect();
-
-        global_pool()
-            .submit_batch_uniform(batch_copy_task, &copy_params)
-            .wait();
-
-        unsafe { output_batches.set_len(output_count) };
-
-        Ok(output_batches)
+        Ok(self.tensor_graph.get_output_tensor_ids().to_vec())
     }
 
     pub fn execute(&mut self) -> Result<(), VKMLError> {
@@ -756,6 +732,31 @@ impl ComputeManager {
 
     pub fn tensor_read(&self, tensor_id: usize) -> &Tensor {
         unsafe { self.tensors[tensor_id].as_ref() }
+    }
+
+    /// helper that mirrors the old forward() behavior, materialise a list of tensor IDs as CPU-backed tensors
+    pub fn tensor_read_vec(&self, tensor_ids: &[TensorId]) -> Vec<Tensor> {
+        let output_count = tensor_ids.len();
+        let mut output_batches: Vec<Tensor> = Vec::with_capacity(output_count);
+        let out_ptr: *mut Tensor = output_batches.as_mut_ptr();
+
+        let copy_params: Vec<_> = tensor_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, &tensor_id)| BatchCopyParams {
+                tensor_id,
+                output_index: idx,
+                compute_manager: self,
+                out_ptr,
+            })
+            .collect();
+
+        global_pool()
+            .submit_batch_uniform(batch_copy_task, &copy_params)
+            .wait();
+
+        unsafe { output_batches.set_len(output_count) };
+        output_batches
     }
 
     // safety: uses UnsafeCell; scheduler guarantees exclusive mutable access
