@@ -1,4 +1,5 @@
 use crate::{gpu::gpu_memory::GPUMemory, tensor::desc::TensorDesc};
+use std::borrow::Cow;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum DeviceId {
@@ -56,13 +57,16 @@ impl Tensor {
         }
     }
 
-    pub fn read(&self) -> Box<[u8]> {
+    /// Read bytes, borrowing CPU storage when possible.
+    ///
+    /// - CPU tensors return `Cow::Borrowed(&[u8])` (no allocation)
+    /// - GPU tensors return `Cow::Owned(Vec<u8>)` (requires a copy back to host)
+    pub fn read(&self) -> Cow<'_, [u8]> {
         match &self.storage {
-            TensorStorage::Cpu(data) => data.clone(),
-            TensorStorage::Gpu { memory, .. } => memory
-                .read_memory()
-                .expect("Failed to read GPU memory")
-                .into_boxed_slice(),
+            TensorStorage::Cpu(data) => Cow::Borrowed(data),
+            TensorStorage::Gpu { memory, .. } => {
+                Cow::Owned(memory.read_memory().expect("Failed to read GPU memory"))
+            }
         }
     }
 

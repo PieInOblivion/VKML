@@ -815,11 +815,8 @@ struct BatchLoadParams<'a> {
 zp_define_task_fn!(batch_load_task, BatchLoadParams, |params| {
     let dest = params.compute_manager.tensor_write(params.tensor_id);
 
-    // if batch is CPU backed, avoid allocating via batch.read()
-    match params.batch.device() {
-        DeviceId::Cpu => dest.write(params.batch.get_cpu_memory_slice_or_panic()),
-        DeviceId::Gpu(_) => dest.write(&params.batch.read()),
-    }
+    let bytes = params.batch.read();
+    dest.write(bytes.as_ref());
 });
 
 struct BatchCopyParams<'a> {
@@ -831,8 +828,7 @@ struct BatchCopyParams<'a> {
 
 zp_define_task_fn!(batch_copy_task, BatchCopyParams, |params| {
     let tensor = params.compute_manager.tensor_read(params.tensor_id);
-    let output_data = tensor.read();
-    let batch = Tensor::new_cpu(tensor.desc().clone(), output_data);
+    let batch = Tensor::new_cpu(tensor.desc().clone(), tensor.read().into());
 
     unsafe {
         let slot = params.out_ptr.add(params.output_index);
