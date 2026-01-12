@@ -77,8 +77,7 @@ impl Tensor {
                 buf.copy_from_slice(data);
             }
             TensorStorage::Gpu { memory, .. } => {
-                let expected = memory.size as usize;
-                assert_eq!(data.len(), expected);
+                assert_eq!(data.len(), memory.size as usize);
                 memory
                     .copy_into(data)
                     .expect("Failed to copy data into GPU memory");
