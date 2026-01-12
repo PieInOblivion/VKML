@@ -641,20 +641,28 @@ impl ComputeManager {
             }
         }
 
-        // Load input data in parallel
-        let load_params: Vec<_> = batches
-            .into_iter()
-            .enumerate()
-            .map(|(batch_idx, batch)| BatchLoadParams {
-                tensor_id: input_tensor_ids[batch_idx],
-                batch,
-                compute_manager: self,
-            })
-            .collect();
+        if batches.len() == 1 {
+            // single tensor to load, can do on main thread
+            let dest = self.tensor_write(input_tensor_ids[0]);
 
-        global_pool()
-            .submit_batch_uniform(batch_load_task, &load_params)
-            .wait();
+            let bytes = batches[0].read();
+            dest.write(bytes.as_ref());
+        } else {
+            // multiple tensors to load to device x, do on thread pool
+            let load_params: Vec<_> = batches
+                .into_iter()
+                .enumerate()
+                .map(|(batch_idx, batch)| BatchLoadParams {
+                    tensor_id: input_tensor_ids[batch_idx],
+                    batch,
+                    compute_manager: self,
+                })
+                .collect();
+
+            global_pool()
+                .submit_batch_uniform(batch_load_task, &load_params)
+                .wait();
+        }
 
         self.execute()?;
 
