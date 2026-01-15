@@ -15,7 +15,7 @@ use crate::tensor::{DeviceId, Tensor};
 use crate::utils::error::VKMLError;
 use crate::weight_initialiser::Initialiser;
 use onnx_extractor::OnnxModel;
-use zero_pool::{global_pool, zp_define_task_fn};
+use zero_pool::global_pool;
 
 use crate::instruction::Instruction;
 use crate::tensor_graph::{DependencyGraph, OperationId, TensorGraph, TensorId};
@@ -784,7 +784,7 @@ struct SingleAllocParams {
     host_visible_plan_ptr: *const bool,
 }
 
-zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
+fn single_allocate_task(params: &SingleAllocParams) {
     let manager: &ComputeManager = unsafe { params.manager_ptr.as_ref() };
 
     let desc: &TensorDesc = &manager.tensor_graph.tensor_descs[params.index];
@@ -813,7 +813,7 @@ zp_define_task_fn!(single_allocate_task, SingleAllocParams, |params| {
         let slot = params.out_ptrs.add(params.index);
         ptr::write(slot, TensorCell::new(tensor));
     }
-});
+}
 
 struct BatchLoadParams<'a> {
     tensor_id: usize,
@@ -821,12 +821,12 @@ struct BatchLoadParams<'a> {
     compute_manager: &'a ComputeManager,
 }
 
-zp_define_task_fn!(batch_load_task, BatchLoadParams, |params| {
+fn batch_load_task(params: &BatchLoadParams) {
     let dest = params.compute_manager.tensor_write(params.tensor_id);
 
     let bytes = params.batch.read();
     dest.write(bytes.as_ref());
-});
+}
 
 struct BatchCopyParams<'a> {
     tensor_id: usize,
@@ -835,7 +835,7 @@ struct BatchCopyParams<'a> {
     out_ptr: *mut Tensor,
 }
 
-zp_define_task_fn!(batch_copy_task, BatchCopyParams, |params| {
+fn batch_copy_task(params: &BatchCopyParams) {
     let tensor = params.compute_manager.tensor_read(params.tensor_id);
     let batch = Tensor::new_cpu(tensor.desc().clone(), tensor.read().into());
 
@@ -843,4 +843,4 @@ zp_define_task_fn!(batch_copy_task, BatchCopyParams, |params| {
         let slot = params.out_ptr.add(params.output_index);
         ptr::write(slot, batch);
     }
-});
+}

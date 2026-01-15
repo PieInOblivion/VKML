@@ -7,7 +7,7 @@ use std::sync::{
 
 use vulkanalia::vk;
 use vulkanalia::vk::DeviceV1_0;
-use zero_pool::{global_pool, zp_define_task_fn};
+use zero_pool::global_pool;
 
 use crate::tensor::DeviceId;
 use crate::tensor_graph::{OperationId, TensorId};
@@ -169,7 +169,7 @@ struct ChunkTaskParams {
     state: Weak<ExecutionState>,
 }
 
-zp_define_task_fn!(chunk_execute_task, ChunkTaskParams, |params| {
+fn chunk_execute_task(params: &ChunkTaskParams) {
     let Some(state) = params.state.upgrade() else {
         return;
     };
@@ -179,7 +179,7 @@ zp_define_task_fn!(chunk_execute_task, ChunkTaskParams, |params| {
         state.signal_completion();
         panic!("execute_chunk failed: {err}");
     }
-});
+}
 
 pub fn execute_plan(
     compute_manager: &ComputeManager,

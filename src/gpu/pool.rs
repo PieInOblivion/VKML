@@ -5,7 +5,7 @@ use vulkanalia::{
     loader::{LIBRARY, LibloadingLoader},
     vk::{self, InstanceV1_0},
 };
-use zero_pool::{global_pool, zp_define_task_fn};
+use zero_pool::global_pool;
 
 use crate::{error::VKMLError, gpu::vk_gpu::Gpu};
 
@@ -198,7 +198,7 @@ struct GpuInitParams {
     out_ptr: *mut Arc<Gpu>,
 }
 
-zp_define_task_fn!(gpu_init_task, GpuInitParams, |params| {
+fn gpu_init_task(params: &GpuInitParams) {
     let gpu = Arc::new(
         Gpu::new_shared(params.instance.clone(), params.physical_device)
             .expect("Failed to initialise GPU"),
@@ -208,4 +208,4 @@ zp_define_task_fn!(gpu_init_task, GpuInitParams, |params| {
         let slot = params.out_ptr.add(params.index);
         ptr::write(slot, gpu);
     }
-});
+}
