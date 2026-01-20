@@ -462,14 +462,14 @@ impl GpuAllocator {
         &self,
         gpu: &Arc<Gpu>,
         source: &GPUMemory,
-    ) -> Result<Vec<u8>, VKMLError> {
+    ) -> Result<Box<[u8]>, VKMLError> {
         debug_assert!(
             !self.direct_host_mode(),
             "read_through_staging should not be used in direct host mode",
         );
 
         let total_bytes = source.size as usize;
-        let mut output = vec![0u8; total_bytes];
+        let mut buffer = Box::new_uninit_slice(total_bytes);
 
         let staging_mutex = self.get_or_create_staging_resources(gpu);
         let staging_guard = staging_mutex.lock().unwrap();
@@ -520,8 +520,8 @@ impl GpuAllocator {
                     vk::MemoryMapFlags::empty(),
                 )? as *const u8;
 
-                let dst_slice = &mut output[offset..offset + chunk_size];
-                std::ptr::copy_nonoverlapping(data_ptr, dst_slice.as_mut_ptr(), chunk_size);
+                let buffer_ptr = buffer.as_mut_ptr().add(offset) as *mut u8;
+                std::ptr::copy_nonoverlapping(data_ptr, buffer_ptr, chunk_size);
                 gpu.get_device().unmap_memory(staging_guard.buffer.memory);
 
                 gpu.get_device().reset_command_buffer(
@@ -532,6 +532,8 @@ impl GpuAllocator {
                 offset += chunk_size;
             }
         }
+
+        let output = unsafe { buffer.assume_init() };
 
         Ok(output)
     }

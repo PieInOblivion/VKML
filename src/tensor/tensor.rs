@@ -64,9 +64,12 @@ impl Tensor {
     pub fn read(&self) -> Cow<'_, [u8]> {
         match &self.storage {
             TensorStorage::Cpu(data) => Cow::Borrowed(data),
-            TensorStorage::Gpu { memory, .. } => {
-                Cow::Owned(memory.read_memory().expect("Failed to read GPU memory"))
-            }
+            TensorStorage::Gpu { memory, .. } => Cow::Owned(
+                memory
+                    .read_memory()
+                    .expect("Failed to read GPU memory")
+                    .into_vec(),
+            ),
         }
     }
 

@@ -311,7 +311,7 @@ impl Gpu {
     pub fn read_through_staging(
         self: &Arc<Self>,
         source: &GPUMemory,
-    ) -> Result<Vec<u8>, VKMLError> {
+    ) -> Result<Box<[u8]>, VKMLError> {
         self.allocator.read_through_staging(self, source)
     }
 

@@ -73,13 +73,13 @@ impl GPUMemory {
     }
 
     /// Read raw bytes from GPU memory. Falls back to staging when not host-visible.
-    pub fn read_memory(&self) -> Result<Vec<u8>, VKMLError> {
+    pub fn read_memory(&self) -> Result<Box<[u8]>, VKMLError> {
         if self
             .properties
             .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
         {
             let gpu = self.upgrade_gpu()?;
-            let mut output_data = vec![0u8; self.size as usize];
+            let mut buffer = Box::new_uninit_slice(self.size as usize);
 
             unsafe {
                 let data_ptr = gpu.get_device().map_memory(
@@ -89,16 +89,15 @@ impl GPUMemory {
                     vk::MemoryMapFlags::empty(),
                 )? as *const u8;
 
-                std::ptr::copy_nonoverlapping(
-                    data_ptr,
-                    output_data.as_mut_ptr(),
-                    output_data.len(),
-                );
+                let buffer_ptr = buffer.as_mut_ptr() as *mut u8;
+                std::ptr::copy_nonoverlapping(data_ptr, buffer_ptr, buffer.len());
 
                 gpu.get_device().unmap_memory(self.memory);
             }
 
-            Ok(output_data)
+            let output = unsafe { buffer.assume_init() };
+
+            Ok(output)
         } else {
             let gpu = self.upgrade_gpu()?;
             gpu.read_through_staging(self)
