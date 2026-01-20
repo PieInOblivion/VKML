@@ -193,14 +193,8 @@ impl Gpu {
             // caches for descriptor set layouts and pipeline layouts indexed by binding count
             // uses max_push_descriptors as a reasonable upper bound
             let max_bindings = push_props.max_push_descriptors as usize;
-            let descriptor_set_layouts = (0..=max_bindings)
-                .map(|_| OnceLock::new())
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let pipeline_layouts = (0..=max_bindings)
-                .map(|_| OnceLock::new())
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
+            let descriptor_set_layouts = (0..=max_bindings).map(|_| OnceLock::new()).collect();
+            let pipeline_layouts = (0..=max_bindings).map(|_| OnceLock::new()).collect();
 
             // Check compute capability
             let (has_compute, max_compute_queue_count) = queue_families
@@ -506,7 +500,7 @@ impl Gpu {
     fn get_descriptor_set_layout(&self, binding_count: usize) -> vk::DescriptorSetLayout {
         *self.descriptor_set_layouts[binding_count].get_or_init(|| unsafe {
             // N identical storage buffer bindings
-            let bindings: Vec<vk::DescriptorSetLayoutBinding> = (0..binding_count)
+            let bindings: Box<[vk::DescriptorSetLayoutBinding]> = (0..binding_count)
                 .map(|i| vk::DescriptorSetLayoutBinding {
                     binding: i as u32,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
@@ -578,7 +572,7 @@ impl Gpu {
                 .iter()
                 .take_while(|&&c| c != 0)
                 .map(|&c| c as u8)
-                .collect::<Vec<u8>>(),
+                .collect::<Box<[u8]>>(),
         )
         .to_string()
     }
@@ -677,7 +671,7 @@ impl Gpu {
     /// Bind GPU storage buffers to descriptor set bindings
     pub fn bind_storage_buffers(&self, command_buffer: vk::CommandBuffer, buffers: &[&GPUMemory]) {
         unsafe {
-            let buffer_infos: Vec<_> = buffers
+            let buffer_infos: Box<_> = buffers
                 .iter()
                 .map(|mem| vk::DescriptorBufferInfo {
                     buffer: mem.buffer,
@@ -686,7 +680,7 @@ impl Gpu {
                 })
                 .collect();
 
-            let write_descriptor_sets: Vec<_> = buffer_infos
+            let write_descriptor_sets: Box<_> = buffer_infos
                 .iter()
                 .enumerate()
                 .map(|(i, info)| vk::WriteDescriptorSet {
@@ -745,7 +739,7 @@ impl Gpu {
         buffers: &[Option<&GPUMemory>],
     ) {
         unsafe {
-            let buffer_infos: Vec<_> = buffers
+            let buffer_infos: Box<_> = buffers
                 .iter()
                 .map(|mem_opt| {
                     if let Some(mem) = mem_opt {
@@ -764,7 +758,7 @@ impl Gpu {
                 })
                 .collect();
 
-            let write_descriptor_sets: Vec<_> = buffer_infos
+            let write_descriptor_sets: Box<_> = buffer_infos
                 .iter()
                 .enumerate()
                 .map(|(i, info)| vk::WriteDescriptorSet {

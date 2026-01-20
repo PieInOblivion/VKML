@@ -533,7 +533,7 @@ impl ComputeManager {
         let out_ptr: *mut TensorCell = self.tensors.as_mut_ptr();
         let manager_ptr = NonNull::from(&*self);
 
-        let tasks: Vec<SingleAllocParams> = (0..count)
+        let tasks: Box<[SingleAllocParams]> = (0..count)
             .map(|i| SingleAllocParams {
                 index: i,
                 initialisers_ptr: initialisers.as_mut_ptr(),
@@ -649,7 +649,7 @@ impl ComputeManager {
             dest.write(bytes.as_ref());
         } else {
             // multiple tensors to load to device x, do on thread pool
-            let load_params: Vec<_> = batches
+            let load_params: Box<_> = batches
                 .into_iter()
                 .enumerate()
                 .map(|(batch_idx, batch)| BatchLoadParams {
@@ -748,7 +748,7 @@ impl ComputeManager {
         let mut output_batches: Vec<Tensor> = Vec::with_capacity(output_count);
         let out_ptr: *mut Tensor = output_batches.as_mut_ptr();
 
-        let copy_params: Vec<_> = tensor_ids
+        let copy_params: Box<_> = tensor_ids
             .iter()
             .enumerate()
             .map(|(idx, &tensor_id)| BatchCopyParams {

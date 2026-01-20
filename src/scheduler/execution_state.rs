@@ -19,15 +19,15 @@ use super::execution_plan::ExecutionPlan;
 struct ExecutionState {
     plan: Arc<ExecutionPlan>,
     compute_manager: NonNull<ComputeManager>,
-    chunk_dependencies_remaining: Vec<AtomicUsize>,
+    chunk_dependencies_remaining: Box<[AtomicUsize]>,
     outputs_remaining: AtomicUsize,
     main_thread: std::thread::Thread,
-    chunk_task_params: Vec<ChunkTaskParams>,
+    chunk_task_params: Box<[ChunkTaskParams]>,
 }
 
 impl ExecutionState {
     fn new(plan: Arc<ExecutionPlan>, manager: &ComputeManager) -> Result<Arc<Self>, VKMLError> {
-        let chunk_dependencies_remaining: Vec<AtomicUsize> = plan
+        let chunk_dependencies_remaining = plan
             .chunks
             .iter()
             .map(|chunk| AtomicUsize::new(chunk.initial_dep_count))
@@ -38,7 +38,7 @@ impl ExecutionState {
         let manager_ptr = NonNull::from(manager);
 
         let state = Arc::new_cyclic(move |weak_self| {
-            let chunk_task_params: Vec<ChunkTaskParams> = (0..plan.total_chunks())
+            let chunk_task_params = (0..plan.total_chunks())
                 .map(|chunk_id| ChunkTaskParams {
                     chunk_id,
                     state: weak_self.clone(),
