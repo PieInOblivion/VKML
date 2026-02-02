@@ -19,7 +19,7 @@ rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
 bytemuck = "1.23"
-zero-pool = "0.6"
+zero-pool = "0.7"
 onnx-extractor = "0.3"
 
 #[dev-dependencies]

@@ -546,7 +546,7 @@ impl ComputeManager {
             .collect();
 
         global_pool()
-            .submit_batch_uniform(single_allocate_task, &tasks)
+            .submit_batch(single_allocate_task, &tasks)
             .wait();
 
         unsafe { self.tensors.set_len(count) };
@@ -660,7 +660,7 @@ impl ComputeManager {
                 .collect();
 
             global_pool()
-                .submit_batch_uniform(batch_load_task, &load_params)
+                .submit_batch(batch_load_task, &load_params)
                 .wait();
         }
 
@@ -760,7 +760,7 @@ impl ComputeManager {
             .collect();
 
         global_pool()
-            .submit_batch_uniform(batch_copy_task, &copy_params)
+            .submit_batch(batch_copy_task, &copy_params)
             .wait();
 
         unsafe { output_batches.set_len(output_count) };
