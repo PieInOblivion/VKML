@@ -512,7 +512,7 @@ impl ComputeManager {
         }
 
         // Now actually allocate the tensors using the final host-visibility map.
-        self.allocate_tensors(tensor_locations, initialisers, &host_visible_plan)?;
+        self.allocate_tensors(tensor_locations, initialisers, &host_visible_plan);
 
         // Cache the dependency graph (recompute after we've modified operations)
         let new_dep_graph = self.tensor_graph.dependency_graph();
@@ -526,7 +526,7 @@ impl ComputeManager {
         tensor_locations: Vec<Option<DeviceId>>,
         mut initialisers: Vec<Initialiser>,
         host_visible_plan: &[bool],
-    ) -> Result<(), VKMLError> {
+    ) {
         let count = self.tensor_graph.tensor_descs.len();
 
         self.tensors.reserve(count);
@@ -550,8 +550,6 @@ impl ComputeManager {
             .wait();
 
         unsafe { self.tensors.set_len(count) };
-
-        Ok(())
     }
 
     pub fn allocate_tensor(
