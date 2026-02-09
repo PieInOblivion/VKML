@@ -15,7 +15,6 @@ lto = true
 
 [dependencies]
 vulkanalia = { version = "0.34", features = ["libloading"] }
-rand = "0.9"
 thiserror = "2"
 sys-info = "0.9"
 bytemuck = "1.23"
