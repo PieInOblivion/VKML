@@ -66,11 +66,11 @@ impl GpuAllocator {
     }
 
     pub fn set_host_visible_reserved(&self, bytes: u64) {
-        self.host_visible_reserved.store(bytes, Ordering::Relaxed);
+        self.host_visible_reserved.store(bytes, Ordering::Release);
     }
 
     pub fn host_visible_reserved(&self) -> u64 {
-        self.host_visible_reserved.load(Ordering::Relaxed)
+        self.host_visible_reserved.load(Ordering::Acquire)
     }
 
     pub fn staging_buffer_info(&self) -> Option<(vk::DeviceSize, vk::MemoryPropertyFlags)> {
