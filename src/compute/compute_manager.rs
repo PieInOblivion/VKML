@@ -565,10 +565,9 @@ impl ComputeManager {
             DeviceId::Cpu => {
                 self.cpu.memory_tracking.allocate(expected_size as u64);
 
-                let buffer = if matches!(initialiser, Initialiser::None) {
-                    vec![0u8; expected_size].into_boxed_slice()
-                } else {
-                    initialiser.into_cpu_buffer()
+                let buffer = match initialiser {
+                    Initialiser::None => vec![0u8; expected_size].into(),
+                    init => init.into_cpu_buffer(),
                 };
 
                 if buffer.len() != expected_size {
@@ -584,29 +583,32 @@ impl ComputeManager {
             DeviceId::Gpu(idx) => {
                 let gpu = &self.gpus.get_gpu(*idx);
 
-                if matches!(initialiser, Initialiser::None) {
-                    let gpu_mem =
-                        gpu.allocate_uninitialised_gpu_memory(expected_size, host_visible)?;
+                match initialiser {
+                    Initialiser::None => {
+                        let gpu_mem =
+                            gpu.allocate_uninitialised_gpu_memory(expected_size, host_visible)?;
 
-                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
-                } else {
-                    let slice = initialiser.as_slice();
-
-                    if slice.len() != expected_size {
-                        return Err(VKMLError::ComputeManager(format!(
-                            "Initialiser size mismatch: expected {} got {}",
-                            expected_size,
-                            slice.len()
-                        )));
+                        Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
                     }
+                    _ => {
+                        let slice = initialiser.as_slice();
 
-                    let gpu_mem = if host_visible {
-                        gpu.move_to_gpu_host_visible(slice)?
-                    } else {
-                        gpu.move_to_gpu_host_not_visible(slice)?
-                    };
+                        if slice.len() != expected_size {
+                            return Err(VKMLError::ComputeManager(format!(
+                                "Initialiser size mismatch: expected {} got {}",
+                                expected_size,
+                                slice.len()
+                            )));
+                        }
 
-                    Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
+                        let gpu_mem = if host_visible {
+                            gpu.move_to_gpu_host_visible(slice)?
+                        } else {
+                            gpu.move_to_gpu_host_not_visible(slice)?
+                        };
+
+                        Ok(Tensor::new_gpu(desc.clone(), *idx, gpu_mem))
+                    }
                 }
             }
         }
