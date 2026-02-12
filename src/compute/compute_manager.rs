@@ -290,7 +290,7 @@ impl ComputeManager {
                 }
             };
 
-            let current_device = available_memory[dev_idx].0.clone();
+            let current_device = available_memory[dev_idx].0;
 
             // Prepare new input/output lists for remapping
             let mut new_inputs = Vec::with_capacity(input_tensors.len());
@@ -302,7 +302,7 @@ impl ComputeManager {
                 match &tensor_locations[tid] {
                     None => {
                         // allocate original tensor on this device
-                        tensor_locations[tid] = Some(current_device.clone());
+                        tensor_locations[tid] = Some(current_device);
                         let sz = tensor_size(tid);
                         available_memory[dev_idx].1 =
                             available_memory[dev_idx].1.saturating_sub(sz);
@@ -328,11 +328,7 @@ impl ComputeManager {
                             available_memory[dev_idx].1 =
                                 available_memory[dev_idx].1.saturating_sub(sz);
 
-                            new_tensors.push((
-                                tensor_desc,
-                                current_device.clone(),
-                                original_layer_id,
-                            ));
+                            new_tensors.push((tensor_desc, current_device, original_layer_id));
 
                             // create transfer instruction from src -> dst and schedule it before this op
                             let src_device = tensor_locations[tid].clone().unwrap();
@@ -340,11 +336,11 @@ impl ComputeManager {
                                 tid,
                                 new_tensor_id,
                                 src_device,
-                                current_device.clone(),
+                                current_device,
                             );
                             transfer_operations.push((op_id, transfer_instr));
 
-                            tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
+                            tensor_remappings[tid].push((current_device, new_tensor_id));
                             new_inputs.push(new_tensor_id);
                             remapping_needed = true;
                         }
@@ -360,7 +356,7 @@ impl ComputeManager {
             for &tid in &output_tensors {
                 match &tensor_locations[tid] {
                     None => {
-                        tensor_locations[tid] = Some(current_device.clone());
+                        tensor_locations[tid] = Some(current_device);
                         let sz = tensor_size(tid);
                         available_memory[dev_idx].1 =
                             available_memory[dev_idx].1.saturating_sub(sz);
@@ -384,12 +380,8 @@ impl ComputeManager {
                             available_memory[dev_idx].1 =
                                 available_memory[dev_idx].1.saturating_sub(sz);
 
-                            new_tensors.push((
-                                tensor_desc,
-                                current_device.clone(),
-                                original_layer_id,
-                            ));
-                            tensor_remappings[tid].push((current_device.clone(), new_tensor_id));
+                            new_tensors.push((tensor_desc, current_device, original_layer_id));
+                            tensor_remappings[tid].push((current_device, new_tensor_id));
                             new_outputs.push(new_tensor_id);
                             remapping_needed = true;
                         }

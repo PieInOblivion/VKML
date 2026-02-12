@@ -1,7 +1,7 @@
 use crate::{gpu::gpu_memory::GPUMemory, tensor::desc::TensorDesc};
 use std::borrow::Cow;
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum DeviceId {
     Cpu,
     Gpu(usize),

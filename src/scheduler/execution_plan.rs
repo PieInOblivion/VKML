@@ -139,7 +139,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
             None => {
                 let new_id = chunk_operations.len();
                 chunk_operations.push(Vec::new());
-                chunk_devices.push(device.clone());
+                chunk_devices.push(device);
                 active_chunk_per_slot[slot] = Some(new_id);
                 new_id
             }
@@ -155,7 +155,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
         .map(|(idx, ops)| {
             let layers = organise_chain_into_layers(ops, predecessors, successors, op_count);
             ExecutionChunk {
-                device: chunk_devices[idx].clone(),
+                device: chunk_devices[idx],
                 operation_layers: layers,
                 predecessors: Vec::new(),
                 dependents: Vec::new(),
@@ -248,7 +248,7 @@ pub fn create_execution_plan(compute_manager: &ComputeManager) -> Result<Executi
     }
 
     // snapshot devices for dependents checks to avoid mutable/immutable borrow conflicts
-    let devices_snapshot: Vec<DeviceId> = chunks.iter().map(|c| c.device.clone()).collect();
+    let devices_snapshot: Vec<DeviceId> = chunks.iter().map(|c| c.device).collect();
 
     for chunk in chunks.iter_mut().take(chunk_count) {
         let needs_wait = match chunk.device {
