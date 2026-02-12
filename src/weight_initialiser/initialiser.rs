@@ -33,18 +33,18 @@ impl Initialiser {
     // consumes self
     pub fn into_cpu_buffer(self) -> Box<[u8]> {
         match self {
-            Initialiser::Bytes(bytes) => bytes.to_vec().into_boxed_slice(),
+            Initialiser::Bytes(bytes) => bytes.to_vec().into(),
             Initialiser::BytesVec(parts) => {
                 let total_len: usize = parts.iter().map(|b| b.len()).sum();
                 let mut vec = Vec::with_capacity(total_len);
                 for bytes in parts {
                     vec.extend_from_slice(&bytes);
                 }
-                vec.into_boxed_slice()
+                vec.into()
             }
             Initialiser::OwnedBox(boxed) => boxed,
-            Initialiser::OwnedVec(vec) => vec.into_boxed_slice(),
-            Initialiser::Constant(vec) => vec.into_boxed_slice(),
+            Initialiser::OwnedVec(vec) => vec.into(),
+            Initialiser::Constant(vec) => vec.into(),
 
             Initialiser::None => unimplemented!("None"),
             Initialiser::Xavier => unimplemented!("Xavier"),
