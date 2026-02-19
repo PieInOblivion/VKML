@@ -6,7 +6,7 @@ authors = ["PieInOblivion"]
 license = "MIT"
 description = "High-level Vulkan-based machine learning library"
 readme = "README.md"
-repository = "https://github.com/PieInOblivion/VKML"
+repository = "https://github.com/void-research/vkml"
 keywords = ["vulkan", "machine-learning", "gpu", "compute", "ml"]
 categories = ["science", "graphics", "hardware-support"]
 
@@ -18,8 +18,8 @@ vulkanalia = { version = "0.35", features = ["libloading"] }
 thiserror = "2"
 sys-info = "0.9"
 bytemuck = "1.23"
-zero-pool = { git = "https://github.com/PieInOblivion/zero-pool" }
-onnx-extractor = { git = "https://github.com/PieInOblivion/onnx-extractor" }
+zero-pool = { git = "https://github.com/void-research/zero-pool" }
+onnx-extractor = { git = "https://github.com/void-research/onnx-extractor" }
 
 #[dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
