@@ -26,9 +26,9 @@ impl GpuPool {
                 s_type: vk::StructureType::APPLICATION_INFO,
                 next: ptr::null(),
                 application_name: aname.as_ptr(),
-                application_version: vk::make_version(1, 4, 0),
+                application_version: vk::make_version(0, 0, 1),
                 engine_name: aname.as_ptr(),
-                engine_version: vk::make_version(1, 4, 0),
+                engine_version: vk::make_version(0, 0, 1),
                 api_version: vk::make_version(1, 4, 0),
             };
 
